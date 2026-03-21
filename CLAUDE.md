@@ -55,6 +55,25 @@ Suggested Price     = true_cost / (1 - target_margin)
 Profit Per Package  = suggested_price - true_cost
 ```
 
+### Safe Drive Discount
+
+Tiered pricing system that rewards clients with no OD history.
+
+**Rules:**
+- New clients start at a bumped price above the suggested price
+- Each completed jump with no OD reduces the price by a fixed amount
+- Any OD resets their jump count to 0, returning them to new client price
+- Price never drops below the calculated suggested price (the floor)
+
+**Formula:**
+```
+client_price = MAX(suggested_price, (suggested_price + safe_drive_bump) - (clean_jump_count × discount_per_clean_jump))
+```
+
+**Public page:** Show the Safe Drive discount as a feature — "Return clients earn lower prices with every clean jump. Any OD resets your count."
+
+**Admin dashboard:** Show each client's current clean jump count and their current applicable price.
+
 ### Reserve & Availability
 
 ```
@@ -74,6 +93,8 @@ Remaining Availability    = max_simultaneous_packages - active_transactions
 | Rehab bonus        | $1,000,000 |
 | Target margin      | 15%        |
 | Worst case clients | 3          |
+| Safe drive bump    | TBD        |
+| Discount per clean jump | TBD   |
 
 ## Transaction Lifecycle
 
@@ -105,6 +126,8 @@ rehab_bonus         bigint
 target_margin       decimal   -- e.g. 0.15
 worst_case_clients  integer
 current_reserve     bigint    -- operator updates manually
+safe_drive_bump     bigint    -- amount added above suggested price for new clients
+discount_per_clean_jump bigint -- amount deducted per clean jump
 ```
 
 ### `transactions` table
@@ -125,6 +148,7 @@ purchased_at        timestamptz
 closes_at           timestamptz  -- purchased_at + 7 days
 closed_at           timestamptz
 created_at          timestamptz default now()
+client_clean_jump_count integer  -- increments on closed_clean, resets to 0 on any OD status
 ```
 
 ## Pages
