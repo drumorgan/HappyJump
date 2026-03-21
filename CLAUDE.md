@@ -155,15 +155,20 @@ All calls go through Supabase Edge Function proxy. Client never sees API keys.
 
 Cache market prices (refresh every 15 min max). Client-submitted API key used only once for identity verification, never stored.
 
+## Git Workflow
+
+**All work happens on `main`. No feature branches.** Push directly to `main` — this triggers the deploy workflow.
+
 ## Deployment
 
 ```
-GitHub push → GitHub Actions → FTP to InMotion cPanel subdomain
+Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdomain
 ```
 
 - Vite builds to `dist/`
-- FTP deploys `dist/` to `public_html/happyjump.girovagabondo.com/`
+- FTP deploys `dist/` to document root at `/home/nopape6/happyjump.girovagabondo.com/` (FTP_SERVER_DIR=/)
 - Supabase Edge Functions deployed separately via Supabase CLI
+- **Hosting:** InMotion cPanel, subdomain document root is `/home/nopape6/happyjump.girovagabondo.com/` (NOT inside `public_html/`)
 
 ## Important Gotchas
 
