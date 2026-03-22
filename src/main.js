@@ -1,11 +1,4 @@
-const TORN_API = 'https://api.torn.com';
-
-// Items relevant to Happy Jump
-const ITEM_IDS = {
-  xanax: 206,
-  ecstasy: 197,
-  edvd: 389,
-};
+import { getConfig, validatePlayer, fetchTornProxy, fetchMarketPrices, createTransaction, getAvailability } from './api.js';
 
 const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
@@ -25,18 +18,13 @@ form.addEventListener('submit', async (e) => {
   toastEl.classList.add('hidden');
 
   try {
-    // Fetch user data and market data in parallel
+    // Fetch user data (via Edge Function proxy) and market data in parallel
     const [userData, marketData] = await Promise.all([
-      fetchTorn(key, 'user', '', 'basic,profile,personalstats,crimes,battlestats'),
+      fetchTornProxy(key, 'user', '', 'basic,profile,personalstats,crimes,battlestats'),
       fetchMarketPrices(key),
     ]);
 
     loadingEl.classList.add('hidden');
-
-    if (userData.error) {
-      throw new Error(`Torn API error ${userData.error.code}: ${userData.error.error}`);
-    }
-
     renderResults(userData, marketData);
     showToast('Data loaded successfully!', 'success');
   } catch (err) {
@@ -46,39 +34,6 @@ form.addEventListener('submit', async (e) => {
     btn.disabled = false;
   }
 });
-
-async function fetchTorn(key, section, id, selections) {
-  const idPart = id ? `/${id}` : '';
-  const url = `${TORN_API}/${section}${idPart}?selections=${selections}&key=${key}`;
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`HTTP ${res.status} from Torn API`);
-  return res.json();
-}
-
-async function fetchMarketPrices(key) {
-  // Fetch item market data for our 3 drug items
-  const prices = {};
-  try {
-    // Use torn section to get item details (market values)
-    const itemIds = Object.values(ITEM_IDS).join(',');
-    const data = await fetchTorn(key, 'torn', '', 'items');
-    if (data.error) return { error: data.error };
-
-    for (const [name, id] of Object.entries(ITEM_IDS)) {
-      const item = data.items?.[id];
-      if (item) {
-        prices[name] = {
-          name: item.name,
-          market_value: item.market_value,
-          image: item.image,
-        };
-      }
-    }
-  } catch (err) {
-    return { error: err.message };
-  }
-  return prices;
-}
 
 function renderResults(user, market) {
   resultsEl.innerHTML = '';
@@ -176,7 +131,6 @@ function renderBattleStatsCard(u) {
 }
 
 function renderPersonalStatsCard(ps) {
-  // Pick the most interesting personal stats
   const pick = [
     ['Attacks Won', ps.attackswon],
     ['Attacks Lost', ps.attackslost],
@@ -261,7 +215,7 @@ function renderHappyJumpCard(market) {
 }
 
 function renderRawCard(title, data) {
-  const card = makeCard(title, true); // collapsed by default
+  const card = makeCard(title, true);
   const body = card.querySelector('.card-body');
   body.innerHTML = `<div class="raw-json">${esc(JSON.stringify(data, null, 2))}</div>`;
   return card;
