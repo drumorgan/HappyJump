@@ -164,14 +164,16 @@ function showPlayerView(player, config, history, apiKey) {
   if (activeTxn) {
     activeDealSection.classList.remove('hidden');
     const body = document.getElementById('active-deal-body');
-    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    const statusLabel = activeTxn.status === 'requested'
+      ? 'Waiting for Giro to initiate the trade in-game'
+      : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
     if (activeTxn.purchased_at) {
       const closesAt = new Date(activeTxn.closes_at);
       const now = new Date();
       const daysLeft = Math.max(0, Math.ceil((closesAt - now) / (1000 * 60 * 60 * 24)));
-      details += `<div class="deal-detail">Closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}</div>`;
+      details += `<div class="deal-detail">Insurance closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''} — closes clean if no OD reported</div>`;
     }
     body.innerHTML = details;
   } else {
@@ -184,12 +186,12 @@ function showPlayerView(player, config, history, apiKey) {
 
   if (hasActive) {
     buyBtn.disabled = true;
-    buyBtn.textContent = 'Deal In Progress';
-    buyStatus.textContent = 'You have an active deal. Wait for it to close before purchasing again.';
+    buyBtn.textContent = 'Request In Progress';
+    buyStatus.textContent = 'You have an active deal. Wait for it to close before requesting again.';
   } else {
     buyBtn.disabled = false;
-    buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
-    buyStatus.textContent = '';
+    buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
+    buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
 
     // Wire up buy action (replace handler each time)
     buyBtn.onclick = async () => {
@@ -202,9 +204,9 @@ function showPlayerView(player, config, history, apiKey) {
           torn_faction: player.torn_faction,
           torn_level: player.torn_level,
         });
-        showToast('Package requested! Giro will be in touch.', 'success');
-        buyBtn.textContent = 'Deal In Progress';
-        buyStatus.textContent = 'Your request has been submitted. The operator will complete the trade in-game.';
+        showToast('Request submitted! Giro will initiate a trade with you in-game.', 'success');
+        buyBtn.textContent = 'Request In Progress';
+        buyStatus.textContent = 'Your request has been submitted. Giro will trade with you in-game to deliver the package and collect payment.';
 
         // Refresh history to show active deal
         const updatedHistory = await getPlayerTransactions(player.torn_id);
@@ -213,7 +215,7 @@ function showPlayerView(player, config, history, apiKey) {
       } catch (err) {
         showToast(err.message, 'error');
         buyBtn.disabled = false;
-        buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
+        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
       }
     };
   }
@@ -240,7 +242,9 @@ function renderActiveDeal(transactions) {
   if (activeTxn) {
     activeDealSection.classList.remove('hidden');
     const body = document.getElementById('active-deal-body');
-    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    const statusLabel = activeTxn.status === 'requested'
+      ? 'Waiting for Giro to initiate the trade in-game'
+      : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
     body.innerHTML = details;
