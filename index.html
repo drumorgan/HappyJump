@@ -3,20 +3,192 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Happy Jump — Supabase Test</title>
+  <title>Happy Jump — Insured Drug Packages</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
   <div class="container">
-    <h1>Happy Jump — Supabase Connection Test</h1>
-    <p class="subtitle">Testing read/write to Supabase database.</p>
-
-    <button id="test-btn">Run Supabase Test</button>
+    <!-- Header -->
+    <header class="site-header">
+      <h1>Happy Jump</h1>
+      <p class="tagline">Insured drug packages for Torn City</p>
+    </header>
 
     <div id="toast" class="toast hidden"></div>
-    <div id="output" style="margin-top:1rem; white-space:pre-wrap; font-family:monospace; font-size:0.9rem;"></div>
+
+    <!-- Anonymous storefront (visible before API key) -->
+    <section id="storefront">
+      <!-- Package info card -->
+      <div class="card">
+        <div class="card-header">
+          <span>The Happy Jump Package</span>
+        </div>
+        <div class="card-body">
+          <div class="package-contents">
+            <div class="package-item">
+              <span class="item-qty">4x</span>
+              <span class="item-name">Xanax</span>
+            </div>
+            <div class="package-item">
+              <span class="item-qty">5x</span>
+              <span class="item-name">Erotic DVD</span>
+            </div>
+            <div class="package-item">
+              <span class="item-qty">1x</span>
+              <span class="item-name">Ecstasy</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Insurance info -->
+      <div class="card">
+        <div class="card-header">
+          <span>OD Insurance Included</span>
+        </div>
+        <div class="card-body">
+          <table class="data-table">
+            <tr>
+              <td class="label">Xanax OD (any of 4)</td>
+              <td class="value" id="anon-xan-payout">—</td>
+            </tr>
+            <tr>
+              <td class="label">Ecstasy OD</td>
+              <td class="value" id="anon-ecs-payout">—</td>
+            </tr>
+            <tr>
+              <td class="label">Rehab Bonus</td>
+              <td class="value" id="anon-rehab">—</td>
+            </tr>
+          </table>
+          <p class="insurance-note">If you OD at any step, we replace everything + pay a rehab bonus. No questions asked.</p>
+        </div>
+      </div>
+
+      <!-- Pricing card (anonymous = new client rate) -->
+      <div class="card highlight-card">
+        <div class="card-header">
+          <span>Package Price</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price" id="anon-price">Loading...</div>
+          <div class="price-note">New client rate (18% margin)</div>
+          <div id="anon-availability" class="availability">Checking availability...</div>
+        </div>
+      </div>
+
+      <!-- Safe Drive Tiers -->
+      <div class="card">
+        <div class="card-header">
+          <span>Safe Drive Loyalty Program</span>
+        </div>
+        <div class="card-body">
+          <p class="tier-intro">Complete clean jumps (no OD) to unlock lower rates.</p>
+          <div class="tier-ladder">
+            <div class="tier-row" data-tier="new">
+              <span class="tier-badge new-client">New Client</span>
+              <span class="tier-detail">0 clean jumps — 18% margin</span>
+            </div>
+            <div class="tier-row" data-tier="safe">
+              <span class="tier-badge safe-driver">Safe Driver</span>
+              <span class="tier-detail">1+ clean jumps — 15% margin</span>
+            </div>
+            <div class="tier-row" data-tier="road">
+              <span class="tier-badge road-warrior">Road Warrior</span>
+              <span class="tier-detail">3+ clean jumps — 12% margin</span>
+            </div>
+            <div class="tier-row" data-tier="legend">
+              <span class="tier-badge highway-legend">Highway Legend</span>
+              <span class="tier-detail">5+ clean jumps — 10% margin</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- API key form -->
+      <div class="card">
+        <div class="card-header">
+          <span>Purchase a Package</span>
+        </div>
+        <div class="card-body">
+          <p class="form-intro">Enter your Torn API key to see your personal rate and purchase.</p>
+          <form id="api-form">
+            <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
+            <button type="submit" id="submit-btn">Look Up</button>
+          </form>
+          <p class="key-note">Your key is used once to verify identity and is never stored.</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Personalized view (hidden until API key validated) -->
+    <section id="player-view" class="hidden">
+      <!-- Player welcome -->
+      <div class="card" id="player-card">
+        <div class="card-body">
+          <div class="player-welcome">
+            <div class="player-name" id="pv-name"></div>
+            <div class="player-meta" id="pv-meta"></div>
+            <div id="pv-tier-badge" style="margin-top:0.5rem"></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Personal pricing -->
+      <div class="card highlight-card" id="personal-pricing-card">
+        <div class="card-header">
+          <span>Your Package Price</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price" id="pv-price"></div>
+          <div class="price-note" id="pv-price-note"></div>
+        </div>
+      </div>
+
+      <!-- Active deal banner -->
+      <div id="active-deal-section" class="hidden">
+        <div class="card active-deal-card">
+          <div class="card-header">
+            <span>Active Deal</span>
+          </div>
+          <div class="card-body" id="active-deal-body"></div>
+        </div>
+      </div>
+
+      <!-- Buy button area -->
+      <div id="buy-section">
+        <button id="buy-btn" class="buy-button" disabled>Purchase Happy Jump</button>
+        <div id="buy-status"></div>
+      </div>
+
+      <!-- Transaction history -->
+      <div id="history-section" class="hidden">
+        <div class="card">
+          <div class="card-header">
+            <span>Your History</span>
+            <span class="toggle">▾ hide</span>
+          </div>
+          <div class="card-body" id="history-body"></div>
+        </div>
+      </div>
+
+      <!-- Safe Drive progress on tier ladder -->
+      <div class="card">
+        <div class="card-header">
+          <span>Safe Drive Progress</span>
+        </div>
+        <div class="card-body">
+          <div class="tier-ladder" id="pv-tier-ladder"></div>
+        </div>
+      </div>
+
+      <!-- Back link -->
+      <button id="back-btn" class="back-button">Sign Out</button>
+    </section>
+
+    <div id="loading" class="loading hidden">Loading...</div>
   </div>
 
-  <script type="module" src="/src/test.js"></script>
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

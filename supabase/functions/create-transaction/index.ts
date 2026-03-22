@@ -53,7 +53,21 @@ serve(async (req) => {
     const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
     const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
     const trueCost = packageCost + expectedLiability;
-    const suggestedPrice = Math.round(trueCost / (1 - Number(config.target_margin)));
+    const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
+
+    // Check if player already has an active deal
+    const { count: playerActiveCount } = await supabase
+      .from('transactions')
+      .select('id', { count: 'exact', head: true })
+      .eq('torn_id', String(torn_id))
+      .in('status', ['requested', 'purchased']);
+
+    if ((playerActiveCount || 0) > 0) {
+      return new Response(
+        JSON.stringify({ error: 'You already have an active deal. Wait for it to close before purchasing again.' }),
+        { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      );
+    }
 
     // Check availability
     const maxPackages = Math.floor(config.current_reserve / ecstasyPayout);
@@ -69,6 +83,20 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
+
+    // Determine player's tier based on clean jump history
+    const { data: playerHistory } = await supabase
+      .from('transactions')
+      .select('status')
+      .eq('torn_id', String(torn_id))
+      .eq('status', 'closed_clean');
+
+    const cleanCount = playerHistory?.length || 0;
+    let tierMargin;
+    if (cleanCount >= 5) tierMargin = 0.10;
+    else if (cleanCount >= 3) tierMargin = 0.12;
+    else if (cleanCount >= 1) tierMargin = 0.15;
+    else tierMargin = 0.18;
 
     // Insert transaction
     const { data: txn, error: txnErr } = await supabase
