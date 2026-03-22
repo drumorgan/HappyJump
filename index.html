@@ -3,22 +3,30 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Happy Jump Insurance</title>
-  <style>
-    body {
-      font-family: system-ui, sans-serif;
-      background: #0f0f0f;
-      color: #eee;
-      display: flex;
-      justify-content: center;
-      align-items: center;
-      min-height: 100vh;
-      margin: 0;
-    }
-    h1 { color: #e94560; }
-  </style>
+  <title>Happy Jump — Torn API Test</title>
+  <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
-  <h1>Happy Jump Insurance</h1>
+  <div class="container">
+    <h1>Happy Jump — Torn API Test</h1>
+    <p class="subtitle">Enter your Torn API key to see what data we can pull.</p>
+
+    <form id="api-form">
+      <input
+        type="text"
+        id="api-key"
+        placeholder="Paste your Torn API key here"
+        autocomplete="off"
+        spellcheck="false"
+      />
+      <button type="submit" id="submit-btn">Fetch Data</button>
+    </form>
+
+    <div id="toast" class="toast hidden"></div>
+    <div id="loading" class="loading hidden">Fetching data from Torn API…</div>
+    <div id="results" class="hidden"></div>
+  </div>
+
+  <script type="module" src="/src/main.js"></script>
 </body>
 </html>

@@ -1,0 +1,228 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: system-ui, -apple-system, sans-serif;
+  background: #0f0f0f;
+  color: #e0e0e0;
+  min-height: 100vh;
+  padding: 2rem 1rem;
+}
+
+.container {
+  max-width: 900px;
+  margin: 0 auto;
+}
+
+h1 {
+  color: #e94560;
+  margin-bottom: 0.25rem;
+  font-size: 1.8rem;
+}
+
+.subtitle {
+  color: #888;
+  margin-bottom: 1.5rem;
+}
+
+/* Form */
+#api-form {
+  display: flex;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+#api-key {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: #1a1a2e;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #eee;
+  font-size: 1rem;
+  font-family: monospace;
+}
+
+#api-key:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+#submit-btn {
+  padding: 0.75rem 1.5rem;
+  background: #e94560;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+#submit-btn:hover {
+  background: #d63851;
+}
+
+#submit-btn:disabled {
+  background: #555;
+  cursor: not-allowed;
+}
+
+/* Toast */
+.toast {
+  padding: 0.75rem 1rem;
+  border-radius: 6px;
+  margin-bottom: 1rem;
+  font-weight: 500;
+}
+
+.toast.error {
+  background: #3a1a1a;
+  border: 1px solid #e94560;
+  color: #ff6b81;
+}
+
+.toast.success {
+  background: #1a3a1a;
+  border: 1px solid #2ecc71;
+  color: #6bff8e;
+}
+
+/* Loading */
+.loading {
+  color: #888;
+  padding: 1rem 0;
+  font-style: italic;
+}
+
+.hidden {
+  display: none;
+}
+
+/* Results */
+#results {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+}
+
+.card {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.card-header {
+  background: #16213e;
+  padding: 0.75rem 1rem;
+  font-weight: 600;
+  color: #e94560;
+  font-size: 1.1rem;
+  cursor: pointer;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  user-select: none;
+}
+
+.card-header:hover {
+  background: #1a2745;
+}
+
+.card-header .toggle {
+  font-size: 0.8rem;
+  color: #666;
+}
+
+.card-body {
+  padding: 1rem;
+}
+
+.card-body.collapsed {
+  display: none;
+}
+
+/* Data table inside cards */
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.data-table td {
+  padding: 0.4rem 0.75rem;
+  border-bottom: 1px solid #2a2a3e;
+  vertical-align: top;
+}
+
+.data-table tr:last-child td {
+  border-bottom: none;
+}
+
+.data-table .label {
+  color: #888;
+  white-space: nowrap;
+  width: 1%;
+  font-family: monospace;
+  font-size: 0.9rem;
+}
+
+.data-table .value {
+  color: #eee;
+  word-break: break-word;
+}
+
+/* Player header card */
+.player-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+}
+
+.player-name {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+}
+
+.player-meta {
+  color: #888;
+  font-size: 0.95rem;
+}
+
+.player-meta span {
+  margin-right: 1rem;
+}
+
+/* Status badge */
+.status-badge {
+  display: inline-block;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.status-badge.green { background: #1a3a1a; color: #6bff8e; }
+.status-badge.red { background: #3a1a1a; color: #ff6b81; }
+.status-badge.blue { background: #1a1a3a; color: #6b8eff; }
+.status-badge.yellow { background: #3a3a1a; color: #ffe66b; }
+
+/* Raw JSON toggle */
+.raw-json {
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  padding: 1rem;
+  font-family: monospace;
+  font-size: 0.8rem;
+  color: #aaa;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 400px;
+  overflow-y: auto;
+}
