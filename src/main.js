@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices } from './api.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -59,6 +59,19 @@ async function initStorefront() {
     document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
     document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
     document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
+    const rehabEcs = document.getElementById('anon-rehab-ecs');
+    if (rehabEcs) rehabEcs.textContent = $(config.rehab_bonus);
+
+    // Render anonymous tier ladder from config
+    const anonLadder = document.getElementById('anon-tier-ladder');
+    if (anonLadder) {
+      anonLadder.innerHTML = TIERS.map((t) =>
+        `<div class="tier-row" data-tier="${t.key}">
+          <span class="tier-badge ${t.css}">${esc(t.name)}</span>
+          <span class="tier-detail">${t.min}+ clean jumps — ${Math.round(t.margin * 100)}% margin</span>
+        </div>`
+      ).join('');
+    }
 
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {
@@ -85,18 +98,28 @@ form.addEventListener('submit', async (e) => {
   toastEl.classList.add('hidden');
 
   try {
-    const player = await validatePlayer(key);
-    const config = await getConfig();
+    const [player, config] = await Promise.all([validatePlayer(key), getConfig()]);
+    loadTierMargins(config);
 
-    // History fetch is non-critical — degrade gracefully
+    // Fetch live prices and history in parallel — both non-critical
     let history = { transactions: [], clean_count: 0, has_active_deal: false };
     try {
-      history = await getPlayerTransactions(player.torn_id);
+      const [histResult, prices] = await Promise.all([
+        getPlayerTransactions(player.torn_id),
+        fetchMarketPrices(key).catch(() => null),
+      ]);
+      history = histResult;
+
+      // Update config with live market prices if available
+      if (prices) {
+        if (prices.xanax) config.xanax_price = prices.xanax.market_value;
+        if (prices.edvd) config.edvd_price = prices.edvd.market_value;
+        if (prices.ecstasy) config.ecstasy_price = prices.ecstasy.market_value;
+      }
     } catch (histErr) {
-      console.warn('History fetch failed:', histErr.message);
+      console.warn('History/prices fetch failed:', histErr.message);
     }
 
-    loadTierMargins(config);
     loadingEl.classList.add('hidden');
     showPlayerView(player, config, history, key);
   } catch (err) {

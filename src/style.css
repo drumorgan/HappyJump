@@ -191,9 +191,106 @@ body {
   font-weight: 500;
 }
 
+/* Intro text */
+.intro-text {
+  color: #ccc;
+  font-size: 0.95rem;
+  line-height: 1.6;
+}
+
+.intro-text strong {
+  color: #fff;
+}
+
+/* Steps */
+.steps {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.step {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-start;
+}
+
+.step-number {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 28px;
+  height: 28px;
+  background: #e94560;
+  color: #fff;
+  font-weight: 700;
+  font-size: 0.85rem;
+  border-radius: 50%;
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+
+.step-text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  color: #ccc;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.step-text strong {
+  color: #fff;
+  font-size: 0.95rem;
+}
+
+/* Coverage blocks */
+.coverage-block {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.coverage-scenario {
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+  padding: 0.75rem 0;
+}
+
+.coverage-label {
+  color: #e94560;
+  font-weight: 600;
+  font-size: 0.95rem;
+}
+
+.coverage-detail {
+  color: #ccc;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.coverage-detail strong {
+  color: #fff;
+}
+
+.coverage-value {
+  color: #6bff8e;
+  font-size: 0.9rem;
+}
+
+.coverage-value strong {
+  color: #6bff8e;
+}
+
+.coverage-divider {
+  height: 1px;
+  background: #2a2a3e;
+}
+
 .insurance-note {
   margin-top: 0.75rem;
-  color: #6bff8e;
+  color: #888;
   font-size: 0.85rem;
   text-align: center;
   font-style: italic;
