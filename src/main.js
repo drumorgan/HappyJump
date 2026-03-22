@@ -59,8 +59,6 @@ async function initStorefront() {
     document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
     document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
     document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
-    const rehabEcs = document.getElementById('anon-rehab-ecs');
-    if (rehabEcs) rehabEcs.textContent = $(config.rehab_bonus);
 
     // Render anonymous tier ladder from config
     const anonLadder = document.getElementById('anon-tier-ladder');

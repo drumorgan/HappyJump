@@ -10,8 +10,8 @@
   <div class="container">
     <!-- Header -->
     <header class="site-header">
-      <h1>Happy Jump</h1>
-      <p class="tagline">Insured drug packages for Torn City</p>
+      <h1>Insured Happy Jump</h1>
+      <p class="tagline">by Giro Vagabondo</p>
     </header>
 
     <div id="toast" class="toast hidden"></div>
@@ -19,15 +19,84 @@
     <!-- Anonymous storefront (visible before API key) -->
     <section id="storefront">
 
-      <!-- What is Happy Jump -->
+      <!-- Hero pitch -->
       <div class="card">
-        <div class="card-header">
-          <span>What is Happy Jump?</span>
-        </div>
         <div class="card-body">
-          <p class="intro-text">Happy Jump sells <strong>insured drug packages</strong> for completing a Happy Jump in Torn City. If you OD at any step, we cover the loss — no questions asked.</p>
+          <p class="intro-text">You've done the math. You know the risk.</p>
+          <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
+          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong>$23,000,000+</strong> and two days of your life.</p>
         </div>
       </div>
+
+      <div class="section-divider"></div>
+
+      <!-- What You Get -->
+      <div class="card">
+        <div class="card-header">
+          <span>What You Get</span>
+        </div>
+        <div class="card-body">
+          <p class="intro-text">For one flat price, I source your entire jump package and guarantee your investment.</p>
+          <div class="package-contents" style="margin-top:1rem">
+            <div class="package-item">
+              <span class="item-qty">4x</span>
+              <span class="item-name">Xanax</span>
+            </div>
+            <div class="package-item">
+              <span class="item-qty">5x</span>
+              <span class="item-name">Erotic DVD</span>
+            </div>
+            <div class="package-item">
+              <span class="item-qty">1x</span>
+              <span class="item-name">Ecstasy</span>
+            </div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem;color:#888">Delivered ready to jump. No market hunting. No timing stress. No spreadsheets.</p>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <!-- Full OD Protection -->
+      <div class="card">
+        <div class="card-header">
+          <span>Full OD Protection</span>
+        </div>
+        <div class="card-body">
+          <div class="coverage-block">
+            <div class="coverage-scenario">
+              <span class="coverage-label">If you OD on any Xanax:</span>
+              <span class="coverage-detail">You receive a full <strong>4x Xanax replacement</strong> — no questions, no hassle, pick up where you left off.</span>
+              <span class="coverage-value">Payout: <strong id="anon-xan-payout">—</strong></span>
+            </div>
+            <div class="coverage-divider"></div>
+            <div class="coverage-scenario">
+              <span class="coverage-label">If you OD on Ecstasy:</span>
+              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
+              <span class="coverage-value">Payout: <strong id="anon-ecs-payout">—</strong></span>
+            </div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services replace your drugs.<br>We replace your drugs <em>and</em> cover your rehab.</p>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <!-- Transparent Pricing -->
+      <div class="card highlight-card">
+        <div class="card-header">
+          <span>Transparent Pricing</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price" id="anon-price">Loading...</div>
+          <div class="price-note">Current package price — new client rate</div>
+          <p class="intro-text" style="margin-top:0.75rem;font-size:0.85rem;color:#888">Price updates live with the item market. What you see is what you pay.</p>
+          <div id="anon-availability" class="availability">Checking availability...</div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
 
       <!-- How It Works -->
       <div class="card">
@@ -39,94 +108,67 @@
             <div class="step">
               <span class="step-number">1</span>
               <div class="step-text">
-                <strong>Request a Package</strong>
-                <span>Click the purchase button below to submit a request. This doesn't cost anything yet — it just puts you in the queue. Your package includes:</span>
-              </div>
-            </div>
-            <div class="package-contents">
-              <div class="package-item">
-                <span class="item-qty">4x</span>
-                <span class="item-name">Xanax</span>
-              </div>
-              <div class="package-item">
-                <span class="item-qty">5x</span>
-                <span class="item-name">Erotic DVD</span>
-              </div>
-              <div class="package-item">
-                <span class="item-qty">1x</span>
-                <span class="item-name">Ecstasy</span>
+                <strong>Enter your Torn API key below</strong>
               </div>
             </div>
             <div class="step">
               <span class="step-number">2</span>
               <div class="step-text">
-                <strong>In-Game Trade</strong>
-                <span>Giro Vagabondo will initiate a trade with you in Torn to deliver the items and collect payment. Once the trade is complete, your <strong>7-day insurance window</strong> starts.</span>
+                <strong>I verify your identity — takes seconds</strong>
               </div>
             </div>
             <div class="step">
               <span class="step-number">3</span>
               <div class="step-text">
-                <strong>Use the items in order</strong>
-                <span>Take Xanax (4 times), watch all 5 EDVDs, then take Ecstasy. If everything goes clean — congrats, you've completed a Happy Jump!</span>
+                <strong>Send payment, I deliver your package in-game</strong>
               </div>
             </div>
             <div class="step">
               <span class="step-number">4</span>
               <div class="step-text">
-                <strong>OD? You're covered.</strong>
-                <span>If you OD at any step within the 7-day window, contact Giro. We'll send replacement items plus a cash rehab bonus. After 7 days with no OD, your deal closes clean — and that counts toward your loyalty tier.</span>
+                <strong>Jump with confidence — you're fully covered for 7 days</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">5</span>
+              <div class="step-text">
+                <strong>Clean jump? Great. OD? Message me, replacement is on the way.</strong>
               </div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- Insurance Coverage -->
+      <div class="section-divider"></div>
+
+      <!-- Why Buy Insurance -->
       <div class="card">
         <div class="card-header">
-          <span>Insurance Coverage</span>
+          <span>Why Buy Insurance?</span>
         </div>
         <div class="card-body">
-          <div class="coverage-block">
-            <div class="coverage-scenario">
-              <span class="coverage-label">OD on any Xanax (pills 1–4)</span>
-              <span class="coverage-detail">We send you <strong>4 replacement Xanax</strong> + a <strong id="anon-rehab">—</strong> rehab bonus</span>
-              <span class="coverage-value">Total payout: <strong id="anon-xan-payout">—</strong></span>
-            </div>
-            <div class="coverage-divider"></div>
-            <div class="coverage-scenario">
-              <span class="coverage-label">OD on the Ecstasy</span>
-              <span class="coverage-detail">We send you an <strong>entire new package</strong> (4 Xanax + 5 EDVD + 1 Ecstasy) + a <strong id="anon-rehab-ecs">—</strong> rehab bonus</span>
-              <span class="coverage-value">Total payout: <strong id="anon-ecs-payout">—</strong></span>
-            </div>
-          </div>
-          <p class="insurance-note">Insurance is valid for 7 days after your package is delivered.</p>
+          <p class="intro-text">Because 4.43% sounds small until it happens on a $23M stack.</p>
+          <p class="intro-text" style="margin-top:0.75rem">Over 25 jumps you should expect at least one Ecstasy OD. That's one moment where your month's trading profits evaporate. Insurance converts that unpredictable disaster into a flat, predictable cost.</p>
+          <p class="intro-text" style="margin-top:0.75rem"><strong>One premium. Complete protection. Jump with confidence.</strong></p>
         </div>
       </div>
 
-      <!-- Pricing card (anonymous = new client rate) -->
-      <div class="card highlight-card">
+      <div class="section-divider"></div>
+
+      <!-- Safe Drive Discount -->
+      <div class="card">
         <div class="card-header">
-          <span>Package Price</span>
+          <span>Safe Drive Discount</span>
         </div>
         <div class="card-body">
-          <div class="big-price" id="anon-price">Loading...</div>
-          <div class="price-note">New client rate</div>
-          <div id="anon-availability" class="availability">Checking availability...</div>
+          <p class="intro-text">Every clean jump earns you a lower price on your next one.</p>
+          <p class="intro-text" style="margin-top:0.75rem">New clients start at our standard rate. Five clean jumps in a row and you're paying our loyalty rate — permanently, until an OD resets your count.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Because reliable jumpers deserve reliable pricing.</p>
+          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:1rem"></div>
         </div>
       </div>
 
-      <!-- Safe Drive Tiers -->
-      <div class="card">
-        <div class="card-header">
-          <span>Safe Drive Loyalty Program</span>
-        </div>
-        <div class="card-body">
-          <p class="tier-intro">Complete clean jumps (no OD) to unlock lower rates.</p>
-          <div class="tier-ladder" id="anon-tier-ladder"></div>
-        </div>
-      </div>
+      <div class="section-divider"></div>
 
       <!-- API key form -->
       <div class="card">
@@ -134,7 +176,7 @@
           <span>Get Started</span>
         </div>
         <div class="card-body">
-          <p class="form-intro">Enter a <strong>Limited Access</strong> Torn API key to see your personal rate and purchase. We only need basic info (name, level, faction) to verify your identity.</p>
+          <p class="form-intro">Enter a <strong>Limited Access</strong> Torn API key to verify your identity and see your personal rate.</p>
           <form id="api-form">
             <input type="text" id="api-key" placeholder="Your Limited Access API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>

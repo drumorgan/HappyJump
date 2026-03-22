@@ -134,6 +134,13 @@ body {
   color: #ff6b81;
 }
 
+/* Section divider */
+.section-divider {
+  height: 1px;
+  background: #2a2a3e;
+  margin: 0.5rem 0;
+}
+
 /* Package contents */
 .package-contents {
   display: flex;
