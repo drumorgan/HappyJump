@@ -3,30 +3,20 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Happy Jump — Torn API Test</title>
+  <title>Happy Jump — Supabase Test</title>
   <link rel="stylesheet" href="/src/style.css" />
 </head>
 <body>
   <div class="container">
-    <h1>Happy Jump — Torn API Test</h1>
-    <p class="subtitle">Enter your Torn API key to see what data we can pull.</p>
+    <h1>Happy Jump — Supabase Connection Test</h1>
+    <p class="subtitle">Testing read/write to Supabase database.</p>
 
-    <form id="api-form">
-      <input
-        type="text"
-        id="api-key"
-        placeholder="Paste your Torn API key here"
-        autocomplete="off"
-        spellcheck="false"
-      />
-      <button type="submit" id="submit-btn">Fetch Data</button>
-    </form>
+    <button id="test-btn">Run Supabase Test</button>
 
     <div id="toast" class="toast hidden"></div>
-    <div id="loading" class="loading hidden">Fetching data from Torn API…</div>
-    <div id="results" class="hidden"></div>
+    <div id="output" style="margin-top:1rem; white-space:pre-wrap; font-family:monospace; font-size:0.9rem;"></div>
   </div>
 
-  <script type="module" src="/src/main.js"></script>
+  <script type="module" src="/src/test.js"></script>
 </body>
 </html>
