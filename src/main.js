@@ -1,260 +1,290 @@
-import { getConfig, validatePlayer, fetchTornProxy, fetchMarketPrices, createTransaction, getAvailability } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions } from './api.js';
 
+// --- DOM refs ---
+const toastEl = document.getElementById('toast');
+const storefrontEl = document.getElementById('storefront');
+const playerViewEl = document.getElementById('player-view');
+const loadingEl = document.getElementById('loading');
 const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
-const btn = document.getElementById('submit-btn');
-const resultsEl = document.getElementById('results');
-const loadingEl = document.getElementById('loading');
-const toastEl = document.getElementById('toast');
+const submitBtn = document.getElementById('submit-btn');
 
+// --- Tier definitions ---
+const TIERS = [
+  { key: 'new', name: 'New Client', min: 0, margin: 0.18, css: 'new-client' },
+  { key: 'safe', name: 'Safe Driver', min: 1, margin: 0.15, css: 'safe-driver' },
+  { key: 'road', name: 'Road Warrior', min: 3, margin: 0.12, css: 'road-warrior' },
+  { key: 'legend', name: 'Highway Legend', min: 5, margin: 0.10, css: 'highway-legend' },
+];
+
+function getTier(cleanCount) {
+  for (let i = TIERS.length - 1; i >= 0; i--) {
+    if (cleanCount >= TIERS[i].min) return TIERS[i];
+  }
+  return TIERS[0];
+}
+
+// --- Price calculation ---
+function calcPricing(config, margin) {
+  const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
+  const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
+  const ecstasyPayout = packageCost + config.rehab_bonus;
+  const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+  const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
+  const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+  const trueCost = packageCost + expectedLiability;
+  const suggestedPrice = Math.round(trueCost / (1 - margin));
+
+  return { packageCost, xanaxPayout, ecstasyPayout, trueCost, suggestedPrice };
+}
+
+const $ = (v) => '$' + Math.round(v).toLocaleString();
+
+// --- Init: load anonymous storefront data ---
+async function initStorefront() {
+  try {
+    const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
+    const pricing = calcPricing(config, 0.18); // new client rate for anonymous view
+
+    document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
+    document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
+    document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
+    document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
+
+    const availEl = document.getElementById('anon-availability');
+    if (avail.available > 0) {
+      availEl.textContent = `${avail.available} package${avail.available !== 1 ? 's' : ''} available`;
+    } else {
+      availEl.textContent = 'Sold out — check back later';
+      availEl.classList.add('sold-out');
+    }
+  } catch (err) {
+    showToast(err.message, 'error');
+  }
+}
+
+initStorefront();
+
+// --- Form submit: validate player ---
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
   const key = input.value.trim();
   if (!key) return showToast('Please enter an API key.', 'error');
 
-  btn.disabled = true;
-  resultsEl.classList.add('hidden');
+  submitBtn.disabled = true;
   loadingEl.classList.remove('hidden');
   toastEl.classList.add('hidden');
 
   try {
-    // Fetch user data (via Edge Function proxy) and market data in parallel
-    const [userData, marketData] = await Promise.all([
-      fetchTornProxy(key, 'user', '', 'basic,profile,personalstats,crimes,battlestats'),
-      fetchMarketPrices(key),
+    const player = await validatePlayer(key);
+    const [config, history] = await Promise.all([
+      getConfig(),
+      getPlayerTransactions(player.torn_id),
     ]);
 
     loadingEl.classList.add('hidden');
-    renderResults(userData, marketData);
-    showToast('Data loaded successfully!', 'success');
+    showPlayerView(player, config, history, key);
   } catch (err) {
     loadingEl.classList.add('hidden');
     showToast(err.message, 'error');
   } finally {
-    btn.disabled = false;
+    submitBtn.disabled = false;
   }
 });
 
-function renderResults(user, market) {
-  resultsEl.innerHTML = '';
-  resultsEl.classList.remove('hidden');
+// --- Show personalized player view ---
+function showPlayerView(player, config, history, apiKey) {
+  storefrontEl.classList.add('hidden');
+  playerViewEl.classList.remove('hidden');
 
-  // 1. Player identity card
-  resultsEl.appendChild(renderPlayerCard(user));
+  const cleanCount = history.clean_count || 0;
+  const hasActive = history.has_active_deal;
+  const tier = getTier(cleanCount);
+  const pricing = calcPricing(config, tier.margin);
+  const isReturning = (history.transactions || []).length > 0;
 
-  // 2. Profile details
-  resultsEl.appendChild(renderProfileCard(user));
+  // Welcome
+  const greeting = isReturning ? 'Welcome back' : 'Welcome';
+  document.getElementById('pv-name').textContent = `${greeting}, ${player.torn_name}`;
+  document.getElementById('pv-meta').textContent = `Level ${player.torn_level} | ${player.torn_faction || 'No faction'} | ${cleanCount} clean jump${cleanCount !== 1 ? 's' : ''}`;
 
-  // 3. Battle stats (if available)
-  if (user.strength !== undefined) {
-    resultsEl.appendChild(renderBattleStatsCard(user));
+  // Tier badge
+  document.getElementById('pv-tier-badge').innerHTML =
+    `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
+
+  // Personal pricing
+  document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
+  document.getElementById('pv-price-note').textContent =
+    `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
+
+  // Active deal
+  const activeDealSection = document.getElementById('active-deal-section');
+  const activeTxn = (history.transactions || []).find(
+    (t) => t.status === 'requested' || t.status === 'purchased'
+  );
+
+  if (activeTxn) {
+    activeDealSection.classList.remove('hidden');
+    const body = document.getElementById('active-deal-body');
+    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
+    details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+    if (activeTxn.purchased_at) {
+      const closesAt = new Date(activeTxn.closes_at);
+      const now = new Date();
+      const daysLeft = Math.max(0, Math.ceil((closesAt - now) / (1000 * 60 * 60 * 24)));
+      details += `<div class="deal-detail">Closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}</div>`;
+    }
+    body.innerHTML = details;
+  } else {
+    activeDealSection.classList.add('hidden');
   }
 
-  // 4. Personal stats (if available)
-  if (user.personalstats) {
-    resultsEl.appendChild(renderPersonalStatsCard(user.personalstats));
+  // Buy button
+  const buyBtn = document.getElementById('buy-btn');
+  const buyStatus = document.getElementById('buy-status');
+
+  if (hasActive) {
+    buyBtn.disabled = true;
+    buyBtn.textContent = 'Deal In Progress';
+    buyStatus.textContent = 'You have an active deal. Wait for it to close before purchasing again.';
+  } else {
+    buyBtn.disabled = false;
+    buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
+    buyStatus.textContent = '';
+
+    // Wire up buy action (replace handler each time)
+    buyBtn.onclick = async () => {
+      buyBtn.disabled = true;
+      buyBtn.textContent = 'Processing...';
+      try {
+        const txn = await createTransaction({
+          torn_id: player.torn_id,
+          torn_name: player.torn_name,
+          torn_faction: player.torn_faction,
+          torn_level: player.torn_level,
+        });
+        showToast('Package requested! Giro will be in touch.', 'success');
+        buyBtn.textContent = 'Deal In Progress';
+        buyStatus.textContent = 'Your request has been submitted. The operator will complete the trade in-game.';
+
+        // Refresh history to show active deal
+        const updatedHistory = await getPlayerTransactions(player.torn_id);
+        renderHistory(updatedHistory.transactions);
+        renderActiveDeal(updatedHistory.transactions);
+      } catch (err) {
+        showToast(err.message, 'error');
+        buyBtn.disabled = false;
+        buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
+      }
+    };
   }
 
-  // 5. Crime stats (if available)
-  if (user.criminalrecord) {
-    resultsEl.appendChild(renderCrimesCard(user.criminalrecord));
+  // History
+  renderHistory(history.transactions);
+
+  // Tier ladder with current highlight
+  renderTierLadder(cleanCount);
+
+  // Back button
+  document.getElementById('back-btn').onclick = () => {
+    playerViewEl.classList.add('hidden');
+    storefrontEl.classList.remove('hidden');
+    toastEl.classList.add('hidden');
+  };
+}
+
+function renderActiveDeal(transactions) {
+  const activeDealSection = document.getElementById('active-deal-section');
+  const activeTxn = (transactions || []).find(
+    (t) => t.status === 'requested' || t.status === 'purchased'
+  );
+  if (activeTxn) {
+    activeDealSection.classList.remove('hidden');
+    const body = document.getElementById('active-deal-body');
+    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
+    details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+    body.innerHTML = details;
+  }
+}
+
+function renderHistory(transactions) {
+  const section = document.getElementById('history-section');
+  const body = document.getElementById('history-body');
+  const header = section.querySelector('.card-header');
+
+  if (!transactions || transactions.length === 0) {
+    section.classList.add('hidden');
+    return;
   }
 
-  // 6. Market prices for Happy Jump items
-  if (market && !market.error) {
-    resultsEl.appendChild(renderMarketCard(market));
+  section.classList.remove('hidden');
+
+  // Toggle collapse
+  if (!header.dataset.bound) {
+    header.dataset.bound = '1';
+    const toggle = header.querySelector('.toggle');
+    header.addEventListener('click', () => {
+      body.classList.toggle('collapsed');
+      toggle.textContent = body.classList.contains('collapsed') ? '▸ show' : '▾ hide';
+    });
   }
 
-  // 7. Happy Jump pricing calculation
-  if (market && !market.error) {
-    resultsEl.appendChild(renderHappyJumpCard(market));
+  let html = '<table class="history-table"><thead><tr><th>Date</th><th>Status</th><th>Price</th></tr></thead><tbody>';
+
+  for (const txn of transactions) {
+    const date = new Date(txn.created_at).toLocaleDateString();
+    const pillClass = getStatusPillClass(txn.status);
+    const label = formatStatus(txn.status);
+    html += `<tr>
+      <td>${esc(date)}</td>
+      <td><span class="status-pill ${pillClass}">${esc(label)}</span></td>
+      <td>${$(txn.suggested_price)}</td>
+    </tr>`;
   }
 
-  // 8. Raw JSON
-  resultsEl.appendChild(renderRawCard('Raw User JSON', user));
+  html += '</tbody></table>';
+  body.innerHTML = html;
 }
 
-function renderPlayerCard(u) {
-  const card = makeCard('Player');
-  const body = card.querySelector('.card-body');
-
-  const statusColor = u.status?.color || 'green';
-
-  body.innerHTML = `
-    <div class="player-header">
-      <div>
-        <div class="player-name">${esc(u.name)} <span style="color:#888">[${u.player_id}]</span></div>
-        <div class="player-meta">
-          <span>Level ${u.level}</span>
-          <span>${esc(u.gender || '')}</span>
-          <span>Age: ${u.age ? u.age.toLocaleString() + ' days' : 'N/A'}</span>
-        </div>
-        <div style="margin-top:0.5rem">
-          Status: <span class="status-badge ${statusColor}">${esc(u.status?.description || 'Unknown')}</span>
-        </div>
-      </div>
-    </div>
-  `;
-  return card;
+function getStatusPillClass(status) {
+  if (status === 'closed_clean') return 'clean';
+  if (status === 'requested') return 'requested';
+  if (status === 'purchased') return 'purchased';
+  if (status === 'od_xanax' || status === 'od_ecstasy') return 'od';
+  if (status === 'payout_sent') return 'payout';
+  return '';
 }
 
-function renderProfileCard(u) {
-  const rows = [
-    ['Faction', u.faction ? `${esc(u.faction.faction_name)} [${u.faction.faction_id}]` : 'None'],
-    ['Job', u.job?.company_name || u.job?.job || 'None'],
-    ['Life', u.life ? `${u.life.current} / ${u.life.maximum}` : 'N/A'],
-    ['Last Action', u.last_action?.relative || 'N/A'],
-    ['Signup', u.signup || 'N/A'],
-    ['Awards', u.awards?.toLocaleString() ?? 'N/A'],
-    ['Karma', u.karma?.toLocaleString() ?? 'N/A'],
-    ['Forum Posts', u.forum_posts?.toLocaleString() ?? 'N/A'],
-    ['Friends', u.friends?.toLocaleString() ?? 'N/A'],
-    ['Enemies', u.enemies?.toLocaleString() ?? 'N/A'],
-    ['Donator', u.donator === 1 ? 'Yes' : u.donator === 0 ? 'No' : 'N/A'],
-    ['Married', u.married?.spouse_name ? `${esc(u.married.spouse_name)} [${u.married.spouse_id}]` : 'No'],
-    ['Property', u.property || 'N/A'],
-    ['Revivable', u.revivable === 1 ? 'Yes' : u.revivable === 0 ? 'No' : 'N/A'],
-  ];
-  return makeTableCard('Profile Details', rows);
+function formatStatus(status) {
+  const map = {
+    requested: 'Requested',
+    purchased: 'In Progress',
+    closed_clean: 'Clean',
+    od_xanax: 'Xanax OD',
+    od_ecstasy: 'Ecstasy OD',
+    payout_sent: 'Paid Out',
+  };
+  return map[status] || status;
 }
 
-function renderBattleStatsCard(u) {
-  const fmt = (v) => v !== undefined ? Number(v).toLocaleString() : 'Hidden';
-  const rows = [
-    ['Strength', fmt(u.strength)],
-    ['Speed', fmt(u.speed)],
-    ['Dexterity', fmt(u.dexterity)],
-    ['Defense', fmt(u.defense)],
-    ['Total', fmt((u.strength || 0) + (u.speed || 0) + (u.dexterity || 0) + (u.defense || 0))],
-  ];
-  return makeTableCard('Battle Stats', rows);
-}
+function renderTierLadder(cleanCount) {
+  const ladder = document.getElementById('pv-tier-ladder');
+  const currentTier = getTier(cleanCount);
 
-function renderPersonalStatsCard(ps) {
-  const pick = [
-    ['Attacks Won', ps.attackswon],
-    ['Attacks Lost', ps.attackslost],
-    ['Defends Won', ps.defendswon],
-    ['Defends Lost', ps.defendslost],
-    ['Xanax Used', ps.xantaken],
-    ['Ecstasy Used', ps.exttaken],
-    ['Energy Drinks Used', ps.energydrinkused],
-    ['Overdoses', ps.overdosed],
-    ['Times Hospitalized', ps.hospitalized],
-    ['Drugs Used', ps.drugsused],
-    ['Items Bought Abroad', ps.itemsboughtabroad],
-    ['Revives', ps.revives],
-    ['Networth', ps.networth ? '$' + Number(ps.networth).toLocaleString() : 'N/A'],
-    ['Bounties Placed', ps.bountiesplaced],
-    ['Bounties Collected', ps.bountiescollected],
-  ];
-
-  const rows = pick
-    .filter(([, v]) => v !== undefined && v !== null)
-    .map(([label, v]) => [label, typeof v === 'number' ? v.toLocaleString() : v]);
-
-  return makeTableCard('Personal Stats (selected)', rows);
-}
-
-function renderCrimesCard(cr) {
-  const rows = Object.entries(cr)
-    .filter(([, v]) => typeof v === 'number')
-    .map(([k, v]) => [k.replace(/_/g, ' '), v.toLocaleString()]);
-  return makeTableCard('Criminal Record', rows);
-}
-
-function renderMarketCard(market) {
-  const rows = Object.entries(market).map(([key, item]) => [
-    item.name,
-    '$' + Number(item.market_value).toLocaleString(),
-  ]);
-  return makeTableCard('Market Prices (Happy Jump Items)', rows);
-}
-
-function renderHappyJumpCard(market) {
-  const xanPrice = market.xanax?.market_value || 850000;
-  const edvdPrice = market.edvd?.market_value || 4000000;
-  const ecsPrice = market.ecstasy?.market_value || 70000;
-
-  const rehab = 1000000;
-  const margin = 0.15;
-  const xanOd = 0.03;
-  const ecsOd = 0.05;
-
-  const packageCost = 4 * xanPrice + 5 * edvdPrice + ecsPrice;
-  const xanPayout = 4 * xanPrice + rehab;
-  const ecsPayout = packageCost + rehab;
-  const pXanOd = 1 - Math.pow(1 - xanOd, 4);
-  const pEcsOd = Math.pow(1 - xanOd, 4) * ecsOd;
-  const expectedLiability = pXanOd * xanPayout + pEcsOd * ecsPayout;
-  const trueCost = packageCost + expectedLiability;
-  const suggestedPrice = trueCost / (1 - margin);
-  const profit = suggestedPrice - trueCost;
-
-  const $ = (v) => '$' + Math.round(v).toLocaleString();
-  const pct = (v) => (v * 100).toFixed(2) + '%';
-
-  const rows = [
-    ['Package Cost', $(packageCost)],
-    ['— 4x Xanax', $(4 * xanPrice)],
-    ['— 5x EDVD', $(5 * edvdPrice)],
-    ['— 1x Ecstasy', $(ecsPrice)],
-    ['', ''],
-    ['P(Xanax OD)', pct(pXanOd)],
-    ['P(Ecstasy OD)', pct(pEcsOd)],
-    ['Xanax Payout', $(xanPayout)],
-    ['Ecstasy Payout', $(ecsPayout)],
-    ['Expected Liability', $(expectedLiability)],
-    ['', ''],
-    ['True Cost', $(trueCost)],
-    ['Suggested Price (15% margin)', $(suggestedPrice)],
-    ['Profit Per Package', $(profit)],
-  ];
-
-  return makeTableCard('Happy Jump Pricing (calculated from live prices)', rows);
-}
-
-function renderRawCard(title, data) {
-  const card = makeCard(title, true);
-  const body = card.querySelector('.card-body');
-  body.innerHTML = `<div class="raw-json">${esc(JSON.stringify(data, null, 2))}</div>`;
-  return card;
+  ladder.innerHTML = TIERS.map((t) => {
+    const isCurrent = t.key === currentTier.key;
+    const isAchieved = cleanCount >= t.min;
+    return `<div class="tier-row ${isCurrent ? 'current-tier' : ''}">
+      <span class="tier-badge ${t.css}">${esc(t.name)}</span>
+      <span class="tier-detail">${t.min}+ clean jumps — ${Math.round(t.margin * 100)}% margin</span>
+      ${isAchieved ? '<span class="tier-check">&#10003;</span>' : ''}
+    </div>`;
+  }).join('');
 }
 
 // --- Helpers ---
-
-function makeCard(title, collapsed = false) {
-  const card = document.createElement('div');
-  card.className = 'card';
-  card.innerHTML = `
-    <div class="card-header">
-      <span>${esc(title)}</span>
-      <span class="toggle">${collapsed ? '▸ show' : '▾ hide'}</span>
-    </div>
-    <div class="card-body ${collapsed ? 'collapsed' : ''}"></div>
-  `;
-  const header = card.querySelector('.card-header');
-  const body = card.querySelector('.card-body');
-  const toggle = card.querySelector('.toggle');
-  header.addEventListener('click', () => {
-    body.classList.toggle('collapsed');
-    toggle.textContent = body.classList.contains('collapsed') ? '▸ show' : '▾ hide';
-  });
-  return card;
-}
-
-function makeTableCard(title, rows, collapsed = false) {
-  const card = makeCard(title, collapsed);
-  const body = card.querySelector('.card-body');
-  const rowsHtml = rows
-    .map(([label, value]) => {
-      if (!label && !value) return '<tr><td colspan="2" style="padding:0.2rem"></td></tr>';
-      return `<tr><td class="label">${esc(label)}</td><td class="value">${value}</td></tr>`;
-    })
-    .join('');
-  body.innerHTML = `<table class="data-table">${rowsHtml}</table>`;
-  return card;
-}
 
 function showToast(msg, type = 'error') {
   toastEl.textContent = msg;

@@ -85,6 +85,20 @@ export async function createTransaction(playerData) {
 }
 
 /**
+ * Fetch a player's transaction history by torn_id.
+ * Returns transactions, clean_count, and has_active_deal.
+ */
+export async function getPlayerTransactions(tornId) {
+  const { data, error } = await supabase.functions.invoke('get-player-transactions', {
+    body: { torn_id: String(tornId) },
+  });
+
+  if (error) throw new Error(`Failed to load history: ${error.message}`);
+  if (data.error) throw new Error(data.error);
+  return data;
+}
+
+/**
  * Get current availability: how many packages can be sold right now.
  * Reads config and counts active transactions.
  */
