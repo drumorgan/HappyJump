@@ -1,4 +1,5 @@
 import { supabase } from './supabaseClient.js';
+import { fetchMarketPrices } from './api.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -221,8 +222,10 @@ async function loadConfig() {
   document.getElementById('cfg-xanax-od').value = data.xanax_od_pct;
   document.getElementById('cfg-ecstasy-od').value = data.ecstasy_od_pct;
   document.getElementById('cfg-rehab').value = data.rehab_bonus;
-  document.getElementById('cfg-margin').value = data.target_margin;
-  document.getElementById('cfg-worst-case').value = data.worst_case_clients;
+  document.getElementById('cfg-margin-new').value = data.margin_new;
+  document.getElementById('cfg-margin-safe').value = data.margin_safe;
+  document.getElementById('cfg-margin-road').value = data.margin_road;
+  document.getElementById('cfg-margin-legend').value = data.margin_legend;
   document.getElementById('cfg-reserve').value = data.current_reserve;
 }
 
@@ -241,8 +244,10 @@ configForm.addEventListener('submit', async (e) => {
     xanax_od_pct: Number(document.getElementById('cfg-xanax-od').value),
     ecstasy_od_pct: Number(document.getElementById('cfg-ecstasy-od').value),
     rehab_bonus: Number(document.getElementById('cfg-rehab').value),
-    target_margin: Number(document.getElementById('cfg-margin').value),
-    worst_case_clients: Number(document.getElementById('cfg-worst-case').value),
+    margin_new: Number(document.getElementById('cfg-margin-new').value),
+    margin_safe: Number(document.getElementById('cfg-margin-safe').value),
+    margin_road: Number(document.getElementById('cfg-margin-road').value),
+    margin_legend: Number(document.getElementById('cfg-margin-legend').value),
     current_reserve: Number(document.getElementById('cfg-reserve').value),
   };
 
@@ -309,6 +314,32 @@ function esc(str) {
   el.textContent = str ?? '';
   return el.innerHTML;
 }
+
+// --- Fetch Live Prices ---
+document.getElementById('fetch-prices-btn').addEventListener('click', async () => {
+  const apiKey = document.getElementById('cfg-api-key').value.trim();
+  if (!apiKey) {
+    showToast('Enter your Torn API key to fetch live prices', 'error');
+    return;
+  }
+
+  const btn = document.getElementById('fetch-prices-btn');
+  btn.disabled = true;
+  btn.textContent = 'Fetching...';
+
+  try {
+    const prices = await fetchMarketPrices(apiKey);
+    if (prices.xanax) document.getElementById('cfg-xanax-price').value = prices.xanax.market_value;
+    if (prices.edvd) document.getElementById('cfg-edvd-price').value = prices.edvd.market_value;
+    if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = prices.ecstasy.market_value;
+    showToast('Prices updated from Torn market — click Save Config to apply', 'success');
+  } catch (err) {
+    showToast('Failed to fetch prices: ' + err.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Fetch Live Prices';
+  }
+});
 
 // --- Init ---
 checkSession();

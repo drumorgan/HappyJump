@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices } from './api.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -9,13 +9,21 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 
-// --- Tier definitions ---
+// --- Tier definitions (margins loaded from config) ---
 const TIERS = [
-  { key: 'new', name: 'New Client', min: 0, margin: 0.18, css: 'new-client' },
-  { key: 'safe', name: 'Safe Driver', min: 1, margin: 0.15, css: 'safe-driver' },
-  { key: 'road', name: 'Road Warrior', min: 3, margin: 0.12, css: 'road-warrior' },
-  { key: 'legend', name: 'Highway Legend', min: 5, margin: 0.10, css: 'highway-legend' },
+  { key: 'new', name: 'New Client', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
+  { key: 'safe', name: 'Safe Driver', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'safe-driver' },
+  { key: 'road', name: 'Road Warrior', min: 3, marginField: 'margin_road', margin: 0.12, css: 'road-warrior' },
+  { key: 'legend', name: 'Highway Legend', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'highway-legend' },
 ];
+
+function loadTierMargins(config) {
+  for (const tier of TIERS) {
+    if (config[tier.marginField] !== undefined) {
+      tier.margin = Number(config[tier.marginField]);
+    }
+  }
+}
 
 function getTier(cleanCount) {
   for (let i = TIERS.length - 1; i >= 0; i--) {
@@ -44,18 +52,43 @@ const $ = (v) => '$' + Math.round(v).toLocaleString();
 async function initStorefront() {
   try {
     const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
-    const pricing = calcPricing(config, 0.18); // new client rate for anonymous view
+    loadTierMargins(config);
+    const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
     document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
     document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
     document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
     document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
 
+    // Render anonymous tier ladder from config
+    const anonLadder = document.getElementById('anon-tier-ladder');
+    if (anonLadder) {
+      anonLadder.innerHTML = TIERS.map((t) =>
+        `<div class="tier-row" data-tier="${t.key}">
+          <span class="tier-badge ${t.css}">${esc(t.name)}</span>
+          <span class="tier-detail">${t.min}+ clean jumps — ${Math.round(t.margin * 100)}% margin</span>
+        </div>`
+      ).join('');
+    }
+
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {
       availEl.textContent = `${avail.available} package${avail.available !== 1 ? 's' : ''} available`;
     } else {
-      availEl.textContent = 'Sold out — check back later';
+      let soldOutMsg = 'Sold out';
+      if (avail.nextCloseAt) {
+        const closeDate = new Date(avail.nextCloseAt);
+        const now = new Date();
+        const daysUntil = Math.max(0, Math.ceil((closeDate - now) / (1000 * 60 * 60 * 24)));
+        if (daysUntil > 0) {
+          soldOutMsg += ` — next stock expected in ~${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
+        } else {
+          soldOutMsg += ' — stock expected soon';
+        }
+      } else {
+        soldOutMsg += ' — check back later';
+      }
+      availEl.textContent = soldOutMsg;
       availEl.classList.add('sold-out');
     }
   } catch (err) {
@@ -76,15 +109,26 @@ form.addEventListener('submit', async (e) => {
   toastEl.classList.add('hidden');
 
   try {
-    const player = await validatePlayer(key);
-    const config = await getConfig();
+    const [player, config] = await Promise.all([validatePlayer(key), getConfig()]);
+    loadTierMargins(config);
 
-    // History fetch is non-critical — degrade gracefully
+    // Fetch live prices and history in parallel — both non-critical
     let history = { transactions: [], clean_count: 0, has_active_deal: false };
     try {
-      history = await getPlayerTransactions(player.torn_id);
+      const [histResult, prices] = await Promise.all([
+        getPlayerTransactions(player.torn_id),
+        fetchMarketPrices(key).catch(() => null),
+      ]);
+      history = histResult;
+
+      // Update config with live market prices if available
+      if (prices) {
+        if (prices.xanax) config.xanax_price = prices.xanax.market_value;
+        if (prices.edvd) config.edvd_price = prices.edvd.market_value;
+        if (prices.ecstasy) config.ecstasy_price = prices.ecstasy.market_value;
+      }
     } catch (histErr) {
-      console.warn('History fetch failed:', histErr.message);
+      console.warn('History/prices fetch failed:', histErr.message);
     }
 
     loadingEl.classList.add('hidden');
@@ -131,14 +175,16 @@ function showPlayerView(player, config, history, apiKey) {
   if (activeTxn) {
     activeDealSection.classList.remove('hidden');
     const body = document.getElementById('active-deal-body');
-    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    const statusLabel = activeTxn.status === 'requested'
+      ? 'Waiting for Giro to initiate the trade in-game'
+      : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
     if (activeTxn.purchased_at) {
       const closesAt = new Date(activeTxn.closes_at);
       const now = new Date();
       const daysLeft = Math.max(0, Math.ceil((closesAt - now) / (1000 * 60 * 60 * 24)));
-      details += `<div class="deal-detail">Closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''}</div>`;
+      details += `<div class="deal-detail">Insurance closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''} — closes clean if no OD reported</div>`;
     }
     body.innerHTML = details;
   } else {
@@ -151,12 +197,12 @@ function showPlayerView(player, config, history, apiKey) {
 
   if (hasActive) {
     buyBtn.disabled = true;
-    buyBtn.textContent = 'Deal In Progress';
-    buyStatus.textContent = 'You have an active deal. Wait for it to close before purchasing again.';
+    buyBtn.textContent = 'Request In Progress';
+    buyStatus.textContent = 'You have an active deal. Wait for it to close before requesting again.';
   } else {
     buyBtn.disabled = false;
-    buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
-    buyStatus.textContent = '';
+    buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
+    buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
 
     // Wire up buy action (replace handler each time)
     buyBtn.onclick = async () => {
@@ -169,9 +215,9 @@ function showPlayerView(player, config, history, apiKey) {
           torn_faction: player.torn_faction,
           torn_level: player.torn_level,
         });
-        showToast('Package requested! Giro will be in touch.', 'success');
-        buyBtn.textContent = 'Deal In Progress';
-        buyStatus.textContent = 'Your request has been submitted. The operator will complete the trade in-game.';
+        showToast('Request submitted! Giro will initiate a trade with you in-game.', 'success');
+        buyBtn.textContent = 'Request In Progress';
+        buyStatus.textContent = 'Your request has been submitted. Giro will trade with you in-game to deliver the package and collect payment.';
 
         // Refresh history to show active deal
         const updatedHistory = await getPlayerTransactions(player.torn_id);
@@ -180,7 +226,7 @@ function showPlayerView(player, config, history, apiKey) {
       } catch (err) {
         showToast(err.message, 'error');
         buyBtn.disabled = false;
-        buyBtn.textContent = 'Purchase Happy Jump — ' + $(pricing.suggestedPrice);
+        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
       }
     };
   }
@@ -207,7 +253,9 @@ function renderActiveDeal(transactions) {
   if (activeTxn) {
     activeDealSection.classList.remove('hidden');
     const body = document.getElementById('active-deal-body');
-    const statusLabel = activeTxn.status === 'requested' ? 'Awaiting operator purchase' : 'In progress';
+    const statusLabel = activeTxn.status === 'requested'
+      ? 'Waiting for Giro to initiate the trade in-game'
+      : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
     body.innerHTML = details;

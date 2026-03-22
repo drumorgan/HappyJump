@@ -87,10 +87,10 @@ serve(async (req) => {
 
     const cleanCount = playerHistory?.length || 0;
     let tierMargin;
-    if (cleanCount >= 5) tierMargin = 0.10;
-    else if (cleanCount >= 3) tierMargin = 0.12;
-    else if (cleanCount >= 1) tierMargin = 0.15;
-    else tierMargin = 0.18;
+    if (cleanCount >= 5) tierMargin = Number(config.margin_legend);
+    else if (cleanCount >= 3) tierMargin = Number(config.margin_road);
+    else if (cleanCount >= 1) tierMargin = Number(config.margin_safe);
+    else tierMargin = Number(config.margin_new);
 
     // Calculate final price with tier margin
     const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);

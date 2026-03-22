@@ -10,21 +10,34 @@
   <div class="container">
     <!-- Header -->
     <header class="site-header">
-      <h1>Happy Jump</h1>
-      <p class="tagline">Insured drug packages for Torn City</p>
+      <h1>Insured Happy Jump</h1>
+      <p class="tagline">by Giro Vagabondo</p>
     </header>
 
     <div id="toast" class="toast hidden"></div>
 
     <!-- Anonymous storefront (visible before API key) -->
     <section id="storefront">
-      <!-- Package info card -->
+
+      <!-- Hero pitch -->
+      <div class="card">
+        <div class="card-body">
+          <p class="intro-text">You've done the math. You know the risk.</p>
+          <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
+          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong>$23,000,000+</strong> and two days of your life.</p>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <!-- What You Get -->
       <div class="card">
         <div class="card-header">
-          <span>The Happy Jump Package</span>
+          <span>What You Get</span>
         </div>
         <div class="card-body">
-          <div class="package-contents">
+          <p class="intro-text">For one flat price, I source your entire jump package and guarantee your investment.</p>
+          <div class="package-contents" style="margin-top:1rem">
             <div class="package-item">
               <span class="item-qty">4x</span>
               <span class="item-name">Xanax</span>
@@ -38,85 +51,137 @@
               <span class="item-name">Ecstasy</span>
             </div>
           </div>
+          <p class="intro-text" style="margin-top:1rem;color:#888">Delivered ready to jump. No market hunting. No timing stress. No spreadsheets.</p>
         </div>
       </div>
 
-      <!-- Insurance info -->
+      <div class="section-divider"></div>
+
+      <!-- Full OD Protection -->
       <div class="card">
         <div class="card-header">
-          <span>OD Insurance Included</span>
+          <span>Full OD Protection</span>
         </div>
         <div class="card-body">
-          <table class="data-table">
-            <tr>
-              <td class="label">Xanax OD (any of 4)</td>
-              <td class="value" id="anon-xan-payout">—</td>
-            </tr>
-            <tr>
-              <td class="label">Ecstasy OD</td>
-              <td class="value" id="anon-ecs-payout">—</td>
-            </tr>
-            <tr>
-              <td class="label">Rehab Bonus</td>
-              <td class="value" id="anon-rehab">—</td>
-            </tr>
-          </table>
-          <p class="insurance-note">If you OD at any step, we replace everything + pay a rehab bonus. No questions asked.</p>
+          <div class="coverage-block">
+            <div class="coverage-scenario">
+              <span class="coverage-label">If you OD on any Xanax:</span>
+              <span class="coverage-detail">You receive a full <strong>4x Xanax replacement</strong> — no questions, no hassle, pick up where you left off.</span>
+              <span class="coverage-value">Payout: <strong id="anon-xan-payout">—</strong></span>
+            </div>
+            <div class="coverage-divider"></div>
+            <div class="coverage-scenario">
+              <span class="coverage-label">If you OD on Ecstasy:</span>
+              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
+              <span class="coverage-value">Payout: <strong id="anon-ecs-payout">—</strong></span>
+            </div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services replace your drugs.<br>We replace your drugs <em>and</em> cover your rehab.</p>
         </div>
       </div>
 
-      <!-- Pricing card (anonymous = new client rate) -->
+      <div class="section-divider"></div>
+
+      <!-- Transparent Pricing -->
       <div class="card highlight-card">
         <div class="card-header">
-          <span>Package Price</span>
+          <span>Transparent Pricing</span>
         </div>
         <div class="card-body">
           <div class="big-price" id="anon-price">Loading...</div>
-          <div class="price-note">New client rate (18% margin)</div>
+          <div class="price-note">Current package price — new client rate</div>
+          <p class="intro-text" style="margin-top:0.75rem;font-size:0.85rem;color:#888">Price updates live with the item market. What you see is what you pay.</p>
           <div id="anon-availability" class="availability">Checking availability...</div>
         </div>
       </div>
 
-      <!-- Safe Drive Tiers -->
+      <div class="section-divider"></div>
+
+      <!-- How It Works -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Drive Loyalty Program</span>
+          <span>How It Works</span>
         </div>
         <div class="card-body">
-          <p class="tier-intro">Complete clean jumps (no OD) to unlock lower rates.</p>
-          <div class="tier-ladder">
-            <div class="tier-row" data-tier="new">
-              <span class="tier-badge new-client">New Client</span>
-              <span class="tier-detail">0 clean jumps — 18% margin</span>
+          <div class="steps">
+            <div class="step">
+              <span class="step-number">1</span>
+              <div class="step-text">
+                <strong>Enter your Torn API key below</strong>
+              </div>
             </div>
-            <div class="tier-row" data-tier="safe">
-              <span class="tier-badge safe-driver">Safe Driver</span>
-              <span class="tier-detail">1+ clean jumps — 15% margin</span>
+            <div class="step">
+              <span class="step-number">2</span>
+              <div class="step-text">
+                <strong>I verify your identity — takes seconds</strong>
+              </div>
             </div>
-            <div class="tier-row" data-tier="road">
-              <span class="tier-badge road-warrior">Road Warrior</span>
-              <span class="tier-detail">3+ clean jumps — 12% margin</span>
+            <div class="step">
+              <span class="step-number">3</span>
+              <div class="step-text">
+                <strong>Send payment, I deliver your package in-game</strong>
+              </div>
             </div>
-            <div class="tier-row" data-tier="legend">
-              <span class="tier-badge highway-legend">Highway Legend</span>
-              <span class="tier-detail">5+ clean jumps — 10% margin</span>
+            <div class="step">
+              <span class="step-number">4</span>
+              <div class="step-text">
+                <strong>Jump with confidence — you're fully covered for 7 days</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">5</span>
+              <div class="step-text">
+                <strong>Clean jump? Great. OD? Message me, replacement is on the way.</strong>
+              </div>
             </div>
           </div>
         </div>
       </div>
 
+      <div class="section-divider"></div>
+
+      <!-- Why Buy Insurance -->
+      <div class="card">
+        <div class="card-header">
+          <span>Why Buy Insurance?</span>
+        </div>
+        <div class="card-body">
+          <p class="intro-text">Because 4.43% sounds small until it happens on a $23M stack.</p>
+          <p class="intro-text" style="margin-top:0.75rem">Over 25 jumps you should expect at least one Ecstasy OD. That's one moment where your month's trading profits evaporate. Insurance converts that unpredictable disaster into a flat, predictable cost.</p>
+          <p class="intro-text" style="margin-top:0.75rem"><strong>One premium. Complete protection. Jump with confidence.</strong></p>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+
+      <!-- Safe Drive Discount -->
+      <div class="card">
+        <div class="card-header">
+          <span>Safe Drive Discount</span>
+        </div>
+        <div class="card-body">
+          <p class="intro-text">Every clean jump earns you a lower price on your next one.</p>
+          <p class="intro-text" style="margin-top:0.75rem">New clients start at our standard rate. Five clean jumps in a row and you're paying our loyalty rate — permanently, until an OD resets your count.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Because reliable jumpers deserve reliable pricing.</p>
+          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:1rem"></div>
+        </div>
+      </div>
+
+      <div class="section-divider"></div>
+
       <!-- API key form -->
       <div class="card">
         <div class="card-header">
-          <span>Purchase a Package</span>
+          <span>Get Started</span>
         </div>
         <div class="card-body">
-          <p class="form-intro">Enter your Torn API key to see your personal rate and purchase.</p>
+          <p class="form-intro">Enter a <strong>Limited Access</strong> Torn API key to verify your identity and see your personal rate.</p>
           <form id="api-form">
-            <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
+            <input type="text" id="api-key" placeholder="Your Limited Access API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is used once to verify identity and is never stored.</p>
+          <p class="key-note">Your key is used once to verify your identity and is never stored. A Limited Access key is all that's needed — go to Settings > API Key in Torn to create one.</p>
         </div>
       </div>
     </section>
