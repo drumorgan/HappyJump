@@ -53,7 +53,7 @@ export async function fetchTornProxy(apiKey, section, id, selections) {
  * Fetch market prices for Happy Jump items via the Torn API proxy.
  */
 export async function fetchMarketPrices(apiKey) {
-  const ITEM_IDS = { xanax: 206, ecstasy: 197, edvd: 389 };
+  const ITEM_IDS = { xanax: 206, ecstasy: 197, edvd: 272 };
   const data = await fetchTornProxy(apiKey, 'torn', '', 'items');
 
   const prices = {};

@@ -363,6 +363,14 @@ body {
 .tier-detail {
   color: #aaa;
   font-size: 0.85rem;
+  flex: 1;
+}
+
+.tier-price {
+  color: #fff;
+  font-weight: 600;
+  font-size: 0.9rem;
+  white-space: nowrap;
 }
 
 .tier-check {

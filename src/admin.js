@@ -226,7 +226,7 @@ async function loadConfig() {
   document.getElementById('cfg-margin-safe').value = data.margin_safe;
   document.getElementById('cfg-margin-road').value = data.margin_road;
   document.getElementById('cfg-margin-legend').value = data.margin_legend;
-  document.getElementById('cfg-reserve').value = data.current_reserve;
+  document.getElementById('cfg-reserve').value = '$' + Number(data.current_reserve).toLocaleString();
 }
 
 configForm.addEventListener('submit', async (e) => {
@@ -248,7 +248,7 @@ configForm.addEventListener('submit', async (e) => {
     margin_safe: Number(document.getElementById('cfg-margin-safe').value),
     margin_road: Number(document.getElementById('cfg-margin-road').value),
     margin_legend: Number(document.getElementById('cfg-margin-legend').value),
-    current_reserve: Number(document.getElementById('cfg-reserve').value),
+    current_reserve: Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, '')),
   };
 
   const { data, error } = await supabase.functions.invoke('update-config', {

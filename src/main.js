@@ -60,15 +60,17 @@ async function initStorefront() {
     document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
     document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
 
-    // Render anonymous tier ladder from config
+    // Render anonymous tier ladder with calculated prices
     const anonLadder = document.getElementById('anon-tier-ladder');
     if (anonLadder) {
-      anonLadder.innerHTML = TIERS.map((t) =>
-        `<div class="tier-row" data-tier="${t.key}">
+      anonLadder.innerHTML = TIERS.map((t) => {
+        const tierPricing = calcPricing(config, t.margin);
+        return `<div class="tier-row" data-tier="${t.key}">
           <span class="tier-badge ${t.css}">${esc(t.name)}</span>
-          <span class="tier-detail">${t.min}+ clean jumps — ${Math.round(t.margin * 100)}% margin</span>
-        </div>`
-      ).join('');
+          <span class="tier-detail">${t.min}+ clean jumps</span>
+          <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
+        </div>`;
+      }).join('');
     }
 
     const availEl = document.getElementById('anon-availability');
@@ -235,7 +237,7 @@ function showPlayerView(player, config, history, apiKey) {
   renderHistory(history.transactions);
 
   // Tier ladder with current highlight
-  renderTierLadder(cleanCount);
+  renderTierLadder(cleanCount, config);
 
   // Back button
   document.getElementById('back-btn').onclick = () => {
@@ -322,16 +324,18 @@ function formatStatus(status) {
   return map[status] || status;
 }
 
-function renderTierLadder(cleanCount) {
+function renderTierLadder(cleanCount, config) {
   const ladder = document.getElementById('pv-tier-ladder');
   const currentTier = getTier(cleanCount);
 
   ladder.innerHTML = TIERS.map((t) => {
     const isCurrent = t.key === currentTier.key;
     const isAchieved = cleanCount >= t.min;
+    const tierPricing = calcPricing(config, t.margin);
     return `<div class="tier-row ${isCurrent ? 'current-tier' : ''}">
       <span class="tier-badge ${t.css}">${esc(t.name)}</span>
-      <span class="tier-detail">${t.min}+ clean jumps — ${Math.round(t.margin * 100)}% margin</span>
+      <span class="tier-detail">${t.min}+ clean jumps</span>
+      <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
       ${isAchieved ? '<span class="tier-check">&#10003;</span>' : ''}
     </div>`;
   }).join('');
