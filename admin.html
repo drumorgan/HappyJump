@@ -1,0 +1,141 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Happy Jump — Admin</title>
+  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/admin.css" />
+</head>
+<body>
+  <div class="container admin-container">
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Login form -->
+    <section id="login-section">
+      <header class="site-header">
+        <h1>Happy Jump</h1>
+        <p class="tagline">Admin Dashboard</p>
+      </header>
+      <div class="card">
+        <div class="card-header"><span>Login</span></div>
+        <div class="card-body">
+          <form id="login-form">
+            <input type="email" id="login-email" placeholder="Email" required />
+            <input type="password" id="login-password" placeholder="Password" required />
+            <button type="submit" id="login-btn">Sign In</button>
+          </form>
+        </div>
+      </div>
+    </section>
+
+    <!-- Dashboard (hidden until login) -->
+    <section id="dashboard" class="hidden">
+      <header class="admin-header">
+        <h1>Happy Jump <span class="admin-label">Admin</span></h1>
+        <button id="logout-btn" class="back-button">Logout</button>
+      </header>
+
+      <!-- Stats bar -->
+      <div class="stats-bar" id="stats-bar">
+        <div class="stat-card">
+          <div class="stat-value" id="stat-active">—</div>
+          <div class="stat-label">Active</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-clean">—</div>
+          <div class="stat-label">Clean Closes</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-xan-od">—</div>
+          <div class="stat-label">Xanax ODs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-ecs-od">—</div>
+          <div class="stat-label">Ecstasy ODs</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-revenue">—</div>
+          <div class="stat-label">Revenue</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-value" id="stat-paid">—</div>
+          <div class="stat-label">Paid Out</div>
+        </div>
+      </div>
+
+      <!-- Transaction filters -->
+      <div class="filter-bar">
+        <label>Filter:</label>
+        <select id="status-filter">
+          <option value="all">All</option>
+          <option value="requested">Requested</option>
+          <option value="purchased">Purchased</option>
+          <option value="closed_clean">Clean Closes</option>
+          <option value="od_xanax">Xanax OD</option>
+          <option value="od_ecstasy">Ecstasy OD</option>
+          <option value="payout_sent">Payout Sent</option>
+        </select>
+        <button id="refresh-btn" class="refresh-btn">Refresh</button>
+      </div>
+
+      <!-- Transactions list -->
+      <div id="txn-list"></div>
+
+      <!-- Config panel -->
+      <div class="card" style="margin-top:1.5rem">
+        <div class="card-header" id="config-header">
+          <span>Configuration</span>
+          <span class="toggle">▸ show</span>
+        </div>
+        <div class="card-body collapsed" id="config-body">
+          <form id="config-form">
+            <div class="config-grid">
+              <div class="config-field">
+                <label>Xanax Price</label>
+                <input type="number" id="cfg-xanax-price" />
+              </div>
+              <div class="config-field">
+                <label>EDVD Price</label>
+                <input type="number" id="cfg-edvd-price" />
+              </div>
+              <div class="config-field">
+                <label>Ecstasy Price</label>
+                <input type="number" id="cfg-ecstasy-price" />
+              </div>
+              <div class="config-field">
+                <label>Xanax OD %</label>
+                <input type="number" id="cfg-xanax-od" step="0.01" />
+              </div>
+              <div class="config-field">
+                <label>Ecstasy OD %</label>
+                <input type="number" id="cfg-ecstasy-od" step="0.01" />
+              </div>
+              <div class="config-field">
+                <label>Rehab Bonus</label>
+                <input type="number" id="cfg-rehab" />
+              </div>
+              <div class="config-field">
+                <label>Target Margin</label>
+                <input type="number" id="cfg-margin" step="0.01" />
+              </div>
+              <div class="config-field">
+                <label>Worst Case Clients</label>
+                <input type="number" id="cfg-worst-case" />
+              </div>
+              <div class="config-field">
+                <label>Current Reserve</label>
+                <input type="number" id="cfg-reserve" />
+              </div>
+            </div>
+            <button type="submit" id="config-save-btn">Save Config</button>
+            <span id="config-status" class="config-status"></span>
+          </form>
+        </div>
+      </div>
+    </section>
+  </div>
+
+  <script type="module" src="/src/admin.js"></script>
+</body>
+</html>

@@ -43,18 +43,6 @@ serve(async (req) => {
       );
     }
 
-    // Calculate price snapshots
-    const packageCost =
-      4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-    const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
-    const ecstasyPayout = packageCost + config.rehab_bonus;
-
-    const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
-    const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
-    const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
-    const trueCost = packageCost + expectedLiability;
-    const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
-
     // Check if player already has an active deal
     const { count: playerActiveCount } = await supabase
       .from('transactions')
@@ -68,6 +56,12 @@ serve(async (req) => {
         { status: 400, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
+
+    // Calculate base costs (margin-independent)
+    const packageCost =
+      4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
+    const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
+    const ecstasyPayout = packageCost + config.rehab_bonus;
 
     // Check availability
     const maxPackages = Math.floor(config.current_reserve / ecstasyPayout);
@@ -97,6 +91,13 @@ serve(async (req) => {
     else if (cleanCount >= 3) tierMargin = 0.12;
     else if (cleanCount >= 1) tierMargin = 0.15;
     else tierMargin = 0.18;
+
+    // Calculate final price with tier margin
+    const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+    const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
+    const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+    const trueCost = packageCost + expectedLiability;
+    const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
 
     // Insert transaction
     const { data: txn, error: txnErr } = await supabase

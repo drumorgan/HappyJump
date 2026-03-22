@@ -77,10 +77,15 @@ form.addEventListener('submit', async (e) => {
 
   try {
     const player = await validatePlayer(key);
-    const [config, history] = await Promise.all([
-      getConfig(),
-      getPlayerTransactions(player.torn_id),
-    ]);
+    const config = await getConfig();
+
+    // History fetch is non-critical — degrade gracefully
+    let history = { transactions: [], clean_count: 0, has_active_deal: false };
+    try {
+      history = await getPlayerTransactions(player.torn_id);
+    } catch (histErr) {
+      console.warn('History fetch failed:', histErr.message);
+    }
 
     loadingEl.classList.add('hidden');
     showPlayerView(player, config, history, key);
