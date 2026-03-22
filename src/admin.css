@@ -238,6 +238,68 @@
 }
 
 /* Config panel */
+.config-section-label {
+  color: #e94560;
+  font-size: 0.85rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 0.5rem;
+  margin-top: 1rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.config-section-label:first-child {
+  margin-top: 0;
+}
+
+.config-section-hint {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.api-key-input {
+  padding: 0.4rem 0.6rem;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 0.8rem;
+  width: 180px;
+}
+
+.api-key-input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.btn-fetch-prices {
+  padding: 0.35rem 0.75rem;
+  background: #16213e;
+  border: 1px solid #2a2a3e;
+  border-radius: 4px;
+  color: #6b8eff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.btn-fetch-prices:hover {
+  background: #1a2745;
+  color: #8fa8ff;
+}
+
+.btn-fetch-prices:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .config-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));

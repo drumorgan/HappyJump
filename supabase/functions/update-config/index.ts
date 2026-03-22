@@ -44,7 +44,8 @@ serve(async (req) => {
     const allowed = [
       'xanax_price', 'edvd_price', 'ecstasy_price',
       'xanax_od_pct', 'ecstasy_od_pct', 'rehab_bonus',
-      'target_margin', 'worst_case_clients', 'current_reserve',
+      'margin_new', 'margin_safe', 'margin_road', 'margin_legend',
+      'current_reserve',
     ];
 
     const sanitized: Record<string, unknown> = { updated_at: new Date().toISOString() };

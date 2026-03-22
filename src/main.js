@@ -9,13 +9,21 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 
-// --- Tier definitions ---
+// --- Tier definitions (margins loaded from config) ---
 const TIERS = [
-  { key: 'new', name: 'New Client', min: 0, margin: 0.18, css: 'new-client' },
-  { key: 'safe', name: 'Safe Driver', min: 1, margin: 0.15, css: 'safe-driver' },
-  { key: 'road', name: 'Road Warrior', min: 3, margin: 0.12, css: 'road-warrior' },
-  { key: 'legend', name: 'Highway Legend', min: 5, margin: 0.10, css: 'highway-legend' },
+  { key: 'new', name: 'New Client', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
+  { key: 'safe', name: 'Safe Driver', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'safe-driver' },
+  { key: 'road', name: 'Road Warrior', min: 3, marginField: 'margin_road', margin: 0.12, css: 'road-warrior' },
+  { key: 'legend', name: 'Highway Legend', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'highway-legend' },
 ];
+
+function loadTierMargins(config) {
+  for (const tier of TIERS) {
+    if (config[tier.marginField] !== undefined) {
+      tier.margin = Number(config[tier.marginField]);
+    }
+  }
+}
 
 function getTier(cleanCount) {
   for (let i = TIERS.length - 1; i >= 0; i--) {
@@ -44,7 +52,8 @@ const $ = (v) => '$' + Math.round(v).toLocaleString();
 async function initStorefront() {
   try {
     const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
-    const pricing = calcPricing(config, 0.18); // new client rate for anonymous view
+    loadTierMargins(config);
+    const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
     document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
     document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
@@ -87,6 +96,7 @@ form.addEventListener('submit', async (e) => {
       console.warn('History fetch failed:', histErr.message);
     }
 
+    loadTierMargins(config);
     loadingEl.classList.add('hidden');
     showPlayerView(player, config, history, key);
   } catch (err) {

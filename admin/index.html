@@ -90,6 +90,13 @@
         </div>
         <div class="card-body collapsed" id="config-body">
           <form id="config-form">
+            <!-- Item Prices -->
+            <div class="config-section-label">Item Prices
+              <span class="config-section-hint">
+                <input type="text" id="cfg-api-key" placeholder="Torn API key" class="api-key-input" />
+                <button type="button" id="fetch-prices-btn" class="btn-fetch-prices">Fetch Live Prices</button>
+              </span>
+            </div>
             <div class="config-grid">
               <div class="config-field">
                 <label>Xanax Price</label>
@@ -103,6 +110,11 @@
                 <label>Ecstasy Price</label>
                 <input type="number" id="cfg-ecstasy-price" />
               </div>
+            </div>
+
+            <!-- OD Rates & Rehab -->
+            <div class="config-section-label">OD Rates &amp; Rehab</div>
+            <div class="config-grid">
               <div class="config-field">
                 <label>Xanax OD %</label>
                 <input type="number" id="cfg-xanax-od" step="0.01" />
@@ -115,19 +127,38 @@
                 <label>Rehab Bonus</label>
                 <input type="number" id="cfg-rehab" />
               </div>
+            </div>
+
+            <!-- Tier Margins -->
+            <div class="config-section-label">Tier Margins</div>
+            <div class="config-grid">
               <div class="config-field">
-                <label>Target Margin</label>
-                <input type="number" id="cfg-margin" step="0.01" />
+                <label>New Client (0 clean)</label>
+                <input type="number" id="cfg-margin-new" step="0.01" />
               </div>
               <div class="config-field">
-                <label>Worst Case Clients</label>
-                <input type="number" id="cfg-worst-case" />
+                <label>Safe Driver (1+ clean)</label>
+                <input type="number" id="cfg-margin-safe" step="0.01" />
               </div>
+              <div class="config-field">
+                <label>Road Warrior (3+ clean)</label>
+                <input type="number" id="cfg-margin-road" step="0.01" />
+              </div>
+              <div class="config-field">
+                <label>Highway Legend (5+ clean)</label>
+                <input type="number" id="cfg-margin-legend" step="0.01" />
+              </div>
+            </div>
+
+            <!-- Reserve -->
+            <div class="config-section-label">Reserve</div>
+            <div class="config-grid">
               <div class="config-field">
                 <label>Current Reserve</label>
                 <input type="number" id="cfg-reserve" />
               </div>
             </div>
+
             <button type="submit" id="config-save-btn">Save Config</button>
             <span id="config-status" class="config-status"></span>
           </form>
