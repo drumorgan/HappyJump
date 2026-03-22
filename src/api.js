@@ -100,27 +100,13 @@ export async function getPlayerTransactions(tornId) {
 
 /**
  * Get current availability: how many packages can be sold right now.
- * Reads config and counts active transactions.
+ * Calls the get-availability Edge Function (uses service role to read transactions).
+ * Returns { available, maxPackages, activeCount, nextCloseAt }.
  */
 export async function getAvailability() {
-  const config = await getConfig();
-
-  const packageCost =
-    4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-  const ecstasyPayout = packageCost + config.rehab_bonus;
-  const maxPackages = Math.floor(config.current_reserve / ecstasyPayout);
-
-  // Count active transactions (requested + purchased)
-  const { count, error } = await supabase
-    .from('transactions')
-    .select('id', { count: 'exact', head: true })
-    .in('status', ['requested', 'purchased']);
+  const { data, error } = await supabase.functions.invoke('get-availability');
 
   if (error) throw new Error(`Failed to check availability: ${error.message}`);
-
-  return {
-    available: Math.max(0, maxPackages - (count || 0)),
-    maxPackages,
-    activeCount: count || 0,
-  };
+  if (data.error) throw new Error(data.error);
+  return data;
 }

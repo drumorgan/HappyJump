@@ -77,7 +77,20 @@ async function initStorefront() {
     if (avail.available > 0) {
       availEl.textContent = `${avail.available} package${avail.available !== 1 ? 's' : ''} available`;
     } else {
-      availEl.textContent = 'Sold out — check back later';
+      let soldOutMsg = 'Sold out';
+      if (avail.nextCloseAt) {
+        const closeDate = new Date(avail.nextCloseAt);
+        const now = new Date();
+        const daysUntil = Math.max(0, Math.ceil((closeDate - now) / (1000 * 60 * 60 * 24)));
+        if (daysUntil > 0) {
+          soldOutMsg += ` — next stock expected in ~${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
+        } else {
+          soldOutMsg += ' — stock expected soon';
+        }
+      } else {
+        soldOutMsg += ' — check back later';
+      }
+      availEl.textContent = soldOutMsg;
       availEl.classList.add('sold-out');
     }
   } catch (err) {
