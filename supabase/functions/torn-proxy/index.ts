@@ -1,8 +1,6 @@
 // Torn API Proxy — routes Torn API calls through Supabase Edge Function
 // so client API keys are never exposed in browser network logs.
 
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-
 const TORN_API = 'https://api.torn.com';
 
 const corsHeaders = {
@@ -10,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   // Handle CORS preflight
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });

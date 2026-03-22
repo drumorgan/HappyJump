@@ -1,8 +1,6 @@
 // Validate Player — verifies a client's Torn identity via their API key.
 // Returns player info for confirmation. Key is used once, never stored.
 
-import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
-
 const TORN_API = 'https://api.torn.com';
 
 const corsHeaders = {
@@ -10,7 +8,7 @@ const corsHeaders = {
   'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
 };
 
-serve(async (req) => {
+Deno.serve(async (req) => {
   if (req.method === 'OPTIONS') {
     return new Response('ok', { headers: corsHeaders });
   }
