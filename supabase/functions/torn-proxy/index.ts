@@ -33,8 +33,10 @@ serve(async (req) => {
     const res = await fetch(url);
     const data = await res.json();
 
+    // Always return 200 so supabase.functions.invoke() doesn't throw.
+    // Torn API errors are passed in the JSON body for the client to handle.
     return new Response(JSON.stringify(data), {
-      status: res.status,
+      status: 200,
       headers: { ...corsHeaders, 'Content-Type': 'application/json' },
     });
   } catch (err) {
