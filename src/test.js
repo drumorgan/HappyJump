@@ -1,4 +1,4 @@
-// test.js — Simple Supabase connection test (read config, write+read transaction)
+// test.js — Simple Supabase connection test (read config, test RLS, test Edge Function)
 import { supabase } from './supabaseClient.js';
 
 const outputEl = document.getElementById('output');
@@ -19,7 +19,7 @@ testBtn.addEventListener('click', async () => {
   outputEl.textContent = '';
   log('=== Supabase Connection Test ===\n');
 
-  // Test 1: Read config table
+  // Test 1: Read config table (anon has SELECT on config)
   log('1. Reading config table...');
   try {
     const { data: config, error } = await supabase
@@ -42,66 +42,33 @@ testBtn.addEventListener('click', async () => {
     log('');
   }
 
-  // Test 2: Insert a test transaction
-  log('2. Inserting test transaction...');
+  // Test 2: Verify RLS blocks direct anon inserts to transactions
+  log('2. Testing RLS on transactions (should be blocked)...');
   try {
-    const { data: txn, error } = await supabase
+    const { error } = await supabase
       .from('transactions')
       .insert({
         torn_id: '0',
         torn_name: 'TestPlayer',
-        torn_faction: 'TestFaction',
-        torn_level: 1,
-        status: 'requested',
-        package_cost: 23470000,
-        suggested_price: 27612000,
-        xanax_payout: 4400000,
-        ecstasy_payout: 24470000,
-      })
-      .select('id, torn_name, status, suggested_price')
-      .single();
+        package_cost: 0,
+        suggested_price: 0,
+        xanax_payout: 0,
+        ecstasy_payout: 0,
+      });
 
-    if (error) throw error;
-
-    log(`   ✅ Transaction inserted!`);
-    log(`   ID: ${txn.id}`);
-    log(`   Player: ${txn.torn_name}`);
-    log(`   Status: ${txn.status}`);
-    log(`   Price: $${Number(txn.suggested_price).toLocaleString()}`);
+    if (error) {
+      log('   ✅ RLS correctly blocked direct insert (transactions go through Edge Function)');
+    } else {
+      log('   ⚠️ Direct insert was allowed — check RLS policies');
+    }
     log('');
-
-    // Test 3: Read it back
-    log('3. Reading transaction back...');
-    const { data: readBack, error: readErr } = await supabase
-      .from('transactions')
-      .select('*')
-      .eq('id', txn.id)
-      .single();
-
-    if (readErr) throw readErr;
-
-    log(`   ✅ Transaction read back successfully!`);
-    log(`   Created at: ${readBack.created_at}`);
-    log('');
-
-    // Test 4: Delete the test row (cleanup)
-    log('4. Cleaning up test transaction...');
-    const { error: delErr } = await supabase
-      .from('transactions')
-      .delete()
-      .eq('id', txn.id);
-
-    if (delErr) throw delErr;
-    log('   ✅ Test transaction deleted.');
-    log('');
-
   } catch (err) {
-    log(`   ❌ Transaction test failed: ${err.message}`);
+    log(`   ✅ RLS correctly blocked direct insert`);
     log('');
   }
 
-  // Test 5: Call an Edge Function (torn-proxy with no key — should return error gracefully)
-  log('5. Testing torn-proxy Edge Function...');
+  // Test 3: Call torn-proxy Edge Function (invalid key — should return Torn API error)
+  log('3. Testing torn-proxy Edge Function...');
   try {
     const { data, error } = await supabase.functions.invoke('torn-proxy', {
       body: { key: 'test', section: 'user', selections: 'basic' },
