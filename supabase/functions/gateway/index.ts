@@ -4,6 +4,7 @@
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
+import { SMTPClient } from 'https://deno.land/x/denomailer@1.6.0/mod.ts';
 
 const TORN_API = 'https://api.torn.com';
 
@@ -53,6 +54,43 @@ function computeTier(cleanCount: number): string {
 // Count total clean closes (not streak — tiers are cumulative).
 function computeTotalClean(txns: any[]): number {
   return txns.filter((t: any) => t.status === 'closed_clean').length;
+}
+
+// ── Email notifications ─────────────────────────────────────────────
+
+async function sendNotificationEmail(subject: string, body: string) {
+  const host = Deno.env.get('SMTP_HOST');
+  const user = Deno.env.get('SMTP_USER');
+  const pass = Deno.env.get('SMTP_PASS');
+  const notify = Deno.env.get('NOTIFY_EMAIL');
+
+  if (!host || !user || !pass || !notify) return;
+
+  try {
+    const client = new SMTPClient({
+      connection: {
+        hostname: host,
+        port: Number(Deno.env.get('SMTP_PORT') || 465),
+        tls: true,
+        auth: { username: user, password: pass },
+      },
+    });
+
+    await client.send({
+      from: user,
+      to: notify,
+      subject,
+      content: body,
+    });
+
+    await client.close();
+  } catch (e) {
+    console.error('Email notification failed:', e);
+  }
+}
+
+function formatMoney(amount: number): string {
+  return '$' + amount.toLocaleString('en-US');
 }
 
 // ── Route handlers ───────────────────────────────────────────────────
@@ -187,6 +225,27 @@ async function handleCreateTransaction(body: any) {
     .single();
 
   if (txnErr) return json({ error: txnErr.message }, 500);
+
+  // Fire-and-forget email notification for new purchase request
+  const tier = computeTier(cleanCount);
+  sendNotificationEmail(
+    `🛒 New Purchase Request — ${torn_name} [${torn_id}]`,
+    [
+      `New Happy Jump purchase request!`,
+      ``,
+      `Player: ${torn_name} [${torn_id}]`,
+      `Faction: ${torn_faction || 'None'}`,
+      `Level: ${torn_level || 'Unknown'}`,
+      `Tier: ${tier} (${cleanCount} clean closes)`,
+      ``,
+      `Package Price: ${formatMoney(suggestedPrice)}`,
+      `Package Cost: ${formatMoney(packageCost)}`,
+      ``,
+      `Transaction ID: ${txn.id}`,
+      ``,
+      `Log in to the admin dashboard to mark as purchased.`,
+    ].join('\n'),
+  );
 
   // Upsert client record
   const { data: allTxns } = await supabase
@@ -413,6 +472,23 @@ async function handleReportOd(body: any) {
   }, { onConflict: 'torn_id' });
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
+
+  // Fire-and-forget email notification for OD payout request
+  sendNotificationEmail(
+    `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
+    [
+      `OD verified and payout required!`,
+      ``,
+      `Player: ${identData.name} [${tornId}]`,
+      `OD Type: ${drugLabel}`,
+      `Payout Amount: ${formatMoney(payoutAmount)}`,
+      ``,
+      `Transaction ID: ${txn_id}`,
+      ``,
+      `Log in to the admin dashboard to send the payout.`,
+    ].join('\n'),
+  );
+
   return json({
     verified: true,
     od_type: odStatus,
