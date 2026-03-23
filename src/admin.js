@@ -289,7 +289,7 @@ async function handleAction(txnId, tornId, newStatus, btn) {
   }
 
   console.log(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
-  await Promise.all([loadStats(), loadTransactions()]);
+  await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 }
 
 // --- Client stat sync ---
