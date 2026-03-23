@@ -212,7 +212,8 @@ async function handleTornProxy(body: any) {
 
 async function handleCreateTransaction(body: any) {
   const { torn_id, torn_name, torn_faction, torn_level } = body;
-  const productType = body.product_type === 'insurance' ? 'insurance' : 'package';
+  const validProducts = ['package', 'insurance', 'ecstasy_only'];
+  const productType = validProducts.includes(body.product_type) ? body.product_type : 'package';
   if (!torn_id || !torn_name) {
     return json({ error: 'Missing required player fields' }, 400);
   }
@@ -284,13 +285,23 @@ async function handleCreateTransaction(body: any) {
   else tierMargin = Number(config.margin_new);
 
   // Calculate final price
-  const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
-  const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
-  const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+  let expectedLiability: number;
+  let snapshotXanaxPayout = xanaxPayout;
 
-  // Insurance-only: no drug cost, just expected liability + margin
-  const trueCost = productType === 'insurance' ? expectedLiability : packageCost + expectedLiability;
-  const snapshotPackageCost = productType === 'insurance' ? 0 : packageCost;
+  if (productType === 'ecstasy_only') {
+    // Ecstasy-only: covers only the Ecstasy step (flat OD rate, no Xanax coverage)
+    expectedLiability = Number(config.ecstasy_od_pct) * ecstasyPayout;
+    snapshotXanaxPayout = 0; // Xanax ODs not covered
+  } else {
+    const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+    const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
+    expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+  }
+
+  // Insurance-only and ecstasy-only: no drug cost, just expected liability + margin
+  const isInsuranceType = productType === 'insurance' || productType === 'ecstasy_only';
+  const trueCost = isInsuranceType ? expectedLiability : packageCost + expectedLiability;
+  const snapshotPackageCost = isInsuranceType ? 0 : packageCost;
   const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
 
   // Insert transaction
@@ -302,7 +313,7 @@ async function handleCreateTransaction(body: any) {
       status: 'requested',
       package_cost: snapshotPackageCost,
       suggested_price: suggestedPrice,
-      xanax_payout: xanaxPayout,
+      xanax_payout: snapshotXanaxPayout,
       ecstasy_payout: ecstasyPayout,
     })
     .select('id, status, suggested_price, product_type')
@@ -318,7 +329,12 @@ async function handleCreateTransaction(body: any) {
 
   // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
-  const productLabel = productType === 'insurance' ? 'Shield (Insurance Only)' : 'Package';
+  const productLabels: Record<string, string> = {
+    package: 'La Bella Vita (Package)',
+    insurance: 'Protezione Totale (Full Shield)',
+    ecstasy_only: "L'Ultimo Miglio (Ecstasy Only)",
+  };
+  const productLabel = productLabels[productType] || 'Package';
   await sendNotificationEmail(
     `🛒 New ${productLabel} Request — ${torn_name} [${torn_id}]`,
     [
@@ -331,7 +347,7 @@ async function handleCreateTransaction(body: any) {
       `Product: ${productLabel}`,
       ``,
       `Price: ${formatMoney(suggestedPrice)}`,
-      ...(productType === 'package' ? [`Drug Cost: ${formatMoney(packageCost)}`] : []),
+      ...(productType === 'package' ? [`Drug Cost: ${formatMoney(packageCost)}`] : [`Insurance Only — no drug cost`]),
       ``,
       `Transaction ID: ${txn.id}`,
       ``,
@@ -617,7 +633,7 @@ async function handleReportOd(body: any) {
   // Get the transaction and verify ownership
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, closes_at, status, xanax_payout, ecstasy_payout')
+    .select('id, torn_id, purchased_at, closes_at, status, product_type, xanax_payout, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -667,6 +683,14 @@ async function handleReportOd(body: any) {
     return json({
       verified: false,
       detail: `Overdose detected on ${odDrug}, which is not covered by Happy Jump insurance.`,
+    });
+  }
+
+  // Ecstasy-only policies do not cover Xanax ODs
+  if (txn.product_type === 'ecstasy_only' && odDrug === 'xanax') {
+    return json({
+      verified: false,
+      detail: `Xanax OD detected, but your L'Ultimo Miglio policy only covers Ecstasy ODs. Xanax ODs are not covered under this policy.`,
     });
   }
 
