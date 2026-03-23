@@ -72,7 +72,12 @@ async function sendNotificationEmail(subject: string, body: string) {
   const pass = Deno.env.get('SMTP_PASS');
   const notify = Deno.env.get('NOTIFY_EMAIL');
 
-  if (!host || !user || !pass || !notify) return;
+  console.log(`[EMAIL] Attempting to send: "${subject}" to ${notify || '(not set)'}`);
+
+  if (!host || !user || !pass || !notify) {
+    console.error('[EMAIL] Missing SMTP env vars — host:', !!host, 'user:', !!user, 'pass:', !!pass, 'notify:', !!notify);
+    return;
+  }
 
   try {
     const client = new SMTPClient({
@@ -92,8 +97,9 @@ async function sendNotificationEmail(subject: string, body: string) {
     });
 
     await client.close();
+    console.log('[EMAIL] Sent successfully');
   } catch (e) {
-    console.error('Email notification failed:', e);
+    console.error('[EMAIL] Send failed:', e?.message || e);
   }
 }
 
@@ -693,7 +699,7 @@ async function handleReportOd(body: any) {
       ``,
       `Player: ${identData.name} [${tornId}]`,
       `OD Type: ${drugLabel}`,
-      `Payout Amount: ${formatMoney(payoutAmount)}`,
+      `Payout Amount: ${formatMoney(Number(payoutAmount))}`,
       ``,
       `Transaction ID: ${txn_id}`,
       ``,
