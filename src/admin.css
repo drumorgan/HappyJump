@@ -74,7 +74,7 @@
 
 @media (min-width: 600px) {
   .stats-bar {
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 }
 
