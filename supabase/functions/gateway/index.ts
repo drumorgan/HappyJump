@@ -55,6 +55,32 @@ function computeTotalClean(txns: any[]): number {
   return txns.filter((t: any) => t.status === 'closed_clean').length;
 }
 
+// ── Email alerts ─────────────────────────────────────────────────────
+
+async function sendAlert(subject: string, html: string) {
+  const apiKey = Deno.env.get('RESEND_API_KEY');
+  const to = Deno.env.get('ALERT_EMAIL');
+  if (!apiKey || !to) return; // silently skip if not configured
+
+  try {
+    await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${apiKey}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        from: 'Happy Jump <alerts@happyjump.girovagabondo.com>',
+        to: [to],
+        subject,
+        html,
+      }),
+    });
+  } catch (_) {
+    // Don't let email failures break the main flow
+  }
+}
+
 // ── Route handlers ───────────────────────────────────────────────────
 
 async function handleValidatePlayer(body: any) {
@@ -216,6 +242,19 @@ async function handleCreateTransaction(body: any) {
     total_payouts: totalPayouts,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'torn_id' });
+
+  // Send alert email
+  const price = `$${(suggestedPrice / 1e6).toFixed(1)}M`;
+  sendAlert(
+    `📦 New Package Request — ${torn_name}`,
+    `<h2>New Happy Jump Request</h2>
+    <p><strong>Player:</strong> ${torn_name} [${torn_id}]</p>
+    <p><strong>Faction:</strong> ${torn_faction || 'None'}</p>
+    <p><strong>Level:</strong> ${torn_level}</p>
+    <p><strong>Price:</strong> ${price}</p>
+    <p><strong>Tier:</strong> ${computeTier(finalCleanCount)} (${finalCleanCount} clean jumps)</p>
+    <p><a href="https://www.torn.com/profiles.php?XID=${torn_id}">View Profile</a></p>`,
+  );
 
   return json(txn, 201);
 }
@@ -413,6 +452,19 @@ async function handleReportOd(body: any) {
   }, { onConflict: 'torn_id' });
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
+  const payoutStr = `$${(payoutAmount / 1e6).toFixed(1)}M`;
+
+  // Send alert email
+  sendAlert(
+    `🚨 OD Reported — ${identData.name} (${drugLabel})`,
+    `<h2>OD Report — Action Required</h2>
+    <p><strong>Player:</strong> ${identData.name} [${tornId}]</p>
+    <p><strong>OD Type:</strong> ${drugLabel}</p>
+    <p><strong>Payout Due:</strong> ${payoutStr}</p>
+    <p>Player is currently hospitalized. Log in to the admin dashboard to process the payout.</p>
+    <p><a href="https://www.torn.com/profiles.php?XID=${tornId}">View Profile</a></p>`,
+  );
+
   return json({
     verified: true,
     od_type: odStatus,
