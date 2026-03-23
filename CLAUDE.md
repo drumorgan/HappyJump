@@ -157,7 +157,7 @@ Cache market prices (refresh every 15 min max). Client-submitted API key used on
 
 ## Git Workflow
 
-**All work happens on `main`. No feature branches.** Push directly to `main` — this triggers the deploy workflow.
+**All work happens on `main`. No feature branches. No exceptions.** Push directly to `main` — this triggers the deploy workflow. When working from a Claude feature branch, always merge to `main` and push `main` so the code actually deploys. The live URL is the ONLY place the user tests — there is no local dev server, no staging, no preview. If code is not on `main`, it is not deployed, and the user cannot see it. NEVER ask "are you testing locally?" — the answer is always no.
 
 ## Deployment
 
