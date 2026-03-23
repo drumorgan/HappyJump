@@ -230,11 +230,12 @@ async function handleAction(txnId, tornId, newStatus, btn) {
     return;
   }
 
-  // Update reserves: +revenue on sale, -payout on payout_sent
-  if (newStatus === 'purchased' || newStatus === 'payout_sent') {
+  // Update reserves: liability was locked at transaction creation (requested status).
+  // closed_clean: release full lock | payout_sent: release lock minus actual payout
+  if (newStatus === 'closed_clean' || newStatus === 'payout_sent') {
     const { data: txn } = await supabase
       .from('transactions')
-      .select('suggested_price, payout_amount')
+      .select('ecstasy_payout, payout_amount')
       .eq('id', txnId)
       .single();
 
@@ -242,8 +243,8 @@ async function handleAction(txnId, tornId, newStatus, btn) {
       const { data: cfg } = await supabase.from('config').select('current_reserve').single();
       if (cfg) {
         let newReserve = cfg.current_reserve;
-        if (newStatus === 'purchased') newReserve += (txn.suggested_price || 0);
-        if (newStatus === 'payout_sent') newReserve -= (txn.payout_amount || 0);
+        if (newStatus === 'closed_clean') newReserve += (txn.ecstasy_payout || 0);
+        if (newStatus === 'payout_sent') newReserve += (txn.ecstasy_payout || 0) - (txn.payout_amount || 0);
 
         await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
       }

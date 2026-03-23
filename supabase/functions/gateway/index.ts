@@ -184,14 +184,8 @@ async function handleCreateTransaction(body: any) {
   const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
   const ecstasyPayout = packageCost + config.rehab_bonus;
 
-  // Check availability
-  const maxPackages = Math.floor(config.current_reserve / ecstasyPayout);
-  const { count: activeCount } = await supabase
-    .from('transactions')
-    .select('id', { count: 'exact', head: true })
-    .in('status', ['requested', 'purchased']);
-
-  const available = maxPackages - (activeCount || 0);
+  // Check availability — reserve already reflects locked liabilities for active sales
+  const available = Math.floor(config.current_reserve / ecstasyPayout);
   if (available <= 0) {
     return json({ error: 'No packages available right now. Check back later.' }, 400);
   }
@@ -233,6 +227,12 @@ async function handleCreateTransaction(body: any) {
     .single();
 
   if (txnErr) return json({ error: txnErr.message }, 500);
+
+  // Lock worst-case liability from reserve for this new active sale
+  await supabase
+    .from('config')
+    .update({ current_reserve: config.current_reserve - ecstasyPayout })
+    .eq('id', 1);
 
   // Fire-and-forget email notification for new purchase request
   const tier = computeTier(cleanCount);
@@ -336,14 +336,9 @@ async function handleGetAvailability() {
 
   const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
   const ecstasyPayout = packageCost + config.rehab_bonus;
-  const maxPackages = Math.floor(config.current_reserve / ecstasyPayout);
-
-  const { count: activeCount } = await supabase
-    .from('transactions')
-    .select('id', { count: 'exact', head: true })
-    .in('status', ['requested', 'purchased']);
-
-  const available = Math.max(0, maxPackages - (activeCount || 0));
+  // Reserve already reflects locked liabilities for active sales,
+  // so available = floor(reserve / worst_case_payout) with no active subtraction
+  const available = Math.max(0, Math.floor(config.current_reserve / ecstasyPayout));
 
   let nextCloseAt: string | null = null;
   if (available <= 0) {
@@ -359,7 +354,7 @@ async function handleGetAvailability() {
     nextCloseAt = nextClose?.closes_at || null;
   }
 
-  return json({ available, maxPackages, activeCount: activeCount || 0, nextCloseAt });
+  return json({ available, nextCloseAt });
 }
 
 async function handleUpdateConfig(req: Request, body: any) {
