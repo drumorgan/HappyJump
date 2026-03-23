@@ -50,6 +50,20 @@ function computeTier(cleanCount: number): string {
   return 'new';
 }
 
+// Count consecutive clean closes from most recent backwards.
+// An OD (or payout_sent) breaks the streak.
+function computeCleanStreak(txns: any[]): number {
+  const completed = txns
+    .filter((t: any) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
+    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  let streak = 0;
+  for (const t of completed) {
+    if (t.status === 'closed_clean') streak++;
+    else break;
+  }
+  return streak;
+}
+
 // ── Route handlers ───────────────────────────────────────────────────
 
 async function handleValidatePlayer(body: any) {
@@ -145,14 +159,14 @@ async function handleCreateTransaction(body: any) {
     return json({ error: 'No packages available right now. Check back later.' }, 400);
   }
 
-  // Determine tier
+  // Determine tier based on consecutive clean streak
   const { data: playerHistory } = await supabase
     .from('transactions')
-    .select('status')
+    .select('status, created_at')
     .eq('torn_id', String(torn_id))
-    .eq('status', 'closed_clean');
+    .in('status', ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
 
-  const cleanCount = playerHistory?.length || 0;
+  const cleanCount = computeCleanStreak(playerHistory || []);
 
   let tierMargin;
   if (cleanCount >= 5) tierMargin = Number(config.margin_legend);
@@ -186,11 +200,11 @@ async function handleCreateTransaction(body: any) {
   // Upsert client record
   const { data: allTxns } = await supabase
     .from('transactions')
-    .select('status, suggested_price, payout_amount')
+    .select('status, suggested_price, payout_amount, created_at')
     .eq('torn_id', String(torn_id));
 
   const txns = allTxns || [];
-  const finalCleanCount = txns.filter((t: any) => t.status === 'closed_clean').length;
+  const finalCleanCount = computeCleanStreak(txns);
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
@@ -237,7 +251,7 @@ async function handleGetPlayerTransactions(body: any) {
   if (txnResult.error) return json({ error: txnResult.error.message }, 500);
 
   const transactions = txnResult.data || [];
-  const cleanCount = transactions.filter((t: any) => t.status === 'closed_clean').length;
+  const cleanCount = computeCleanStreak(transactions);
   const hasActiveDeal = transactions.some(
     (t: any) => t.status === 'requested' || t.status === 'purchased',
   );
@@ -320,6 +334,101 @@ async function handleUpdateConfig(req: Request, body: any) {
   return json(data);
 }
 
+async function handleReportOd(body: any) {
+  const { api_key, txn_id } = body;
+  if (!api_key || !txn_id) {
+    return json({ error: 'Missing api_key or txn_id' }, 400);
+  }
+
+  // Validate the API key and get player identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  const tornId = String(identData.player_id);
+  const supabase = serviceClient();
+
+  // Get the transaction and verify ownership
+  const { data: txn, error: txnErr } = await supabase
+    .from('transactions')
+    .select('id, torn_id, purchased_at, closes_at, status, xanax_payout, ecstasy_payout')
+    .eq('id', txn_id)
+    .single();
+
+  if (txnErr || !txn) return json({ error: 'Transaction not found' }, 404);
+  if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
+  if (txn.status !== 'purchased') return json({ error: 'Transaction is not in active insurance window' }, 400);
+
+  // Check the player's current status for OD
+  const status = (identData.status?.description || '').toLowerCase();
+  const state = (identData.status?.state || '').toLowerCase();
+
+  const isHospitalized = state === 'hospital';
+  const odMatch = status.match(/overdos\w*\s+on\s+(\w+)/i);
+  const odDrug = odMatch ? odMatch[1].toLowerCase() : null;
+
+  if (!isHospitalized || !odDrug) {
+    return json({
+      verified: false,
+      detail: `Could not verify OD. Current status: "${identData.status?.description || 'unknown'}". You must report while still hospitalized from the OD.`,
+    });
+  }
+
+  if (odDrug !== 'xanax' && odDrug !== 'ecstasy') {
+    return json({
+      verified: false,
+      detail: `Overdose detected on ${odDrug}, which is not covered by Happy Jump insurance.`,
+    });
+  }
+
+  // Verified — update the transaction
+  const odStatus = odDrug === 'xanax' ? 'od_xanax' : 'od_ecstasy';
+  const payoutAmount = odDrug === 'xanax' ? txn.xanax_payout : txn.ecstasy_payout;
+
+  const { error: updateErr } = await supabase
+    .from('transactions')
+    .update({ status: odStatus, payout_amount: payoutAmount })
+    .eq('id', txn_id);
+
+  if (updateErr) return json({ error: updateErr.message }, 500);
+
+  // Sync client stats (clean streak recomputed from transactions)
+  const { data: allTxns } = await supabase
+    .from('transactions')
+    .select('status, suggested_price, payout_amount, created_at')
+    .eq('torn_id', tornId);
+
+  const txns = allTxns || [];
+  const cleanCount = computeCleanStreak(txns);
+  const txnCount = txns.length;
+  const totalSpent = txns
+    .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
+    .reduce((s: number, t: any) => s + (t.suggested_price || 0), 0);
+  const totalPayouts = txns
+    .filter((t: any) => t.status === 'payout_sent')
+    .reduce((s: number, t: any) => s + (t.payout_amount || 0), 0);
+
+  await supabase.from('clients').upsert({
+    torn_id: tornId,
+    torn_name: identData.name,
+    clean_count: cleanCount,
+    tier: computeTier(cleanCount),
+    transaction_count: txnCount,
+    total_spent: totalSpent,
+    total_payouts: totalPayouts,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'torn_id' });
+
+  const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
+  return json({
+    verified: true,
+    od_type: odStatus,
+    detail: `OD on ${drugLabel} verified. Giro has been notified and will send your payout.`,
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -344,6 +453,8 @@ serve(async (req) => {
         return await handleGetAvailability();
       case 'update-config':
         return await handleUpdateConfig(req, body);
+      case 'report-od':
+        return await handleReportOd(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

@@ -233,10 +233,22 @@ function computeTier(cleanCount) {
   return 'new';
 }
 
+function computeCleanStreak(txns) {
+  const completed = txns
+    .filter((t) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  let streak = 0;
+  for (const t of completed) {
+    if (t.status === 'closed_clean') streak++;
+    else break;
+  }
+  return streak;
+}
+
 async function syncClientStats(tornId) {
   const { data: txns, error } = await supabase
     .from('transactions')
-    .select('status, suggested_price, payout_amount')
+    .select('status, suggested_price, payout_amount, created_at')
     .eq('torn_id', tornId);
 
   if (error) {
@@ -245,7 +257,7 @@ async function syncClientStats(tornId) {
   }
 
   const list = txns || [];
-  const cleanCount = list.filter((t) => t.status === 'closed_clean').length;
+  const cleanCount = computeCleanStreak(list);
   const txnCount = list.length;
   const totalSpent = list
     .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
@@ -295,8 +307,8 @@ function getTierBadgeClass(tier) {
 }
 
 function getTierName(tier) {
-  const map = { new: 'New Client', safe: 'Safe Driver', road: 'Road Warrior', legend: 'Highway Legend' };
-  return map[tier] || 'New Client';
+  const map = { new: 'Standard', safe: 'Safe Driver', road: 'Road Warrior', legend: 'Highway Legend' };
+  return map[tier] || 'Standard';
 }
 
 function renderClients(clients) {

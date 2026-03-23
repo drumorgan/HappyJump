@@ -594,3 +594,48 @@ body {
   border-color: #888;
   color: #ccc;
 }
+
+/* OD Report */
+.od-report-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
+
+.btn-report-od {
+  background: #8b0000;
+  color: #fff;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-report-od:hover {
+  background: #a00;
+}
+
+.btn-report-od:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.od-report-success {
+  margin-top: 0.75rem;
+  color: #4caf50;
+  font-weight: 500;
+}
+
+.od-report-error {
+  margin-top: 0.75rem;
+  color: #ef5350;
+  font-weight: 500;
+}
+
+.od-verified {
+  color: #ff9800;
+  font-weight: 600;
+}
