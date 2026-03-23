@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices } from './api.js';
+import { fetchMarketPrices, updateConfig } from './api.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -447,44 +447,18 @@ configForm.addEventListener('submit', async (e) => {
     current_reserve: Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, '')),
   };
 
-  let data, error;
   try {
-    // Refresh session to ensure access token is valid before calling edge function
-    const { error: refreshErr } = await supabase.auth.refreshSession();
-    if (refreshErr) {
-      error = { message: 'Session expired — please log in again' };
-      showToast('Session expired — please log in again', 'error');
-      saveBtn.disabled = false;
-      return;
-    }
-
-    const res = await supabase.functions.invoke('update-config', {
-      body: updates,
-    });
-    data = res.data;
-    error = res.error;
-    // If error has a ReadableStream body, read it for the real message
-    if (error?.context?.body instanceof ReadableStream) {
-      const text = await new Response(error.context.body).text();
-      try { const parsed = JSON.parse(text); error = { message: parsed.error || parsed.message || text }; }
-      catch { error = { message: text }; }
-    }
+    await updateConfig(updates);
+    saveBtn.disabled = false;
+    statusEl.textContent = 'Saved';
+    statusEl.style.color = '#6bff8e';
+    showToast('Config updated', 'success');
   } catch (e) {
-    error = { message: e.message };
-  }
-
-  saveBtn.disabled = false;
-
-  if (error || data?.error) {
+    saveBtn.disabled = false;
     statusEl.textContent = 'Save failed';
     statusEl.style.color = '#ff6b81';
-    showToast('Config save failed: ' + (data?.error || error?.message || 'Unknown error'), 'error');
-    return;
+    showToast('Config save failed: ' + e.message, 'error');
   }
-
-  statusEl.textContent = 'Saved';
-  statusEl.style.color = '#6bff8e';
-  showToast('Config updated', 'success');
 });
 
 // Config panel toggle

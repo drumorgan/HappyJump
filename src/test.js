@@ -67,20 +67,20 @@ testBtn.addEventListener('click', async () => {
     log('');
   }
 
-  // Test 3: Call torn-proxy Edge Function (invalid key — should return Torn API error)
-  log('3. Testing torn-proxy Edge Function...');
+  // Test 3: Call gateway Edge Function with torn-proxy action (invalid key — should return Torn API error)
+  log('3. Testing gateway (torn-proxy action)...');
   try {
-    const { data, error } = await supabase.functions.invoke('torn-proxy', {
-      body: { key: 'test', section: 'user', selections: 'basic' },
+    const { data, error } = await supabase.functions.invoke('gateway', {
+      body: { action: 'torn-proxy', key: 'test', section: 'user', selections: 'basic' },
     });
 
     if (error) throw error;
 
     // Torn API will return an error for invalid key — that's expected
     if (data.error) {
-      log(`   ✅ Edge Function responded! Torn API said: "${data.error.error}" (expected for test key)`);
+      log(`   ✅ Gateway responded! Torn API said: "${data.error.error}" (expected for test key)`);
     } else {
-      log('   ✅ Edge Function responded with data!');
+      log('   ✅ Gateway responded with data!');
     }
     log('');
   } catch (err) {

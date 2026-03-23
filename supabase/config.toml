@@ -1,6 +1,14 @@
 [project]
 id = ""
 
+# Gateway is the single entry point — all client calls route through it.
+# JWT verification disabled because public actions have no auth,
+# and admin actions (update-config) verify auth internally.
+[functions.gateway]
+verify_jwt = false
+
+# Legacy functions kept for backward compatibility during rollover.
+# These can be removed once gateway is deployed and confirmed working.
 [functions.create-transaction]
 verify_jwt = false
 
