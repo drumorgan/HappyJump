@@ -6,23 +6,3 @@ id = ""
 # and admin actions (update-config) verify auth internally.
 [functions.gateway]
 verify_jwt = false
-
-# Legacy functions kept for backward compatibility during rollover.
-# These can be removed once gateway is deployed and confirmed working.
-[functions.create-transaction]
-verify_jwt = false
-
-[functions.get-availability]
-verify_jwt = false
-
-[functions.get-player-transactions]
-verify_jwt = false
-
-[functions.torn-proxy]
-verify_jwt = false
-
-[functions.update-config]
-verify_jwt = false
-
-[functions.validate-player]
-verify_jwt = false

@@ -2,7 +2,6 @@ import { supabase } from './supabaseClient.js';
 import { fetchMarketPrices, updateConfig } from './api.js';
 
 // --- DOM refs ---
-const toastEl = document.getElementById('toast');
 const loginSection = document.getElementById('login-section');
 const dashboard = document.getElementById('dashboard');
 const loginForm = document.getElementById('login-form');
@@ -47,7 +46,7 @@ loginForm.addEventListener('submit', async (e) => {
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
-    showToast(error.message, 'error');
+    console.log(error.message, 'error');
     return;
   }
   showDashboard();
@@ -57,7 +56,7 @@ logoutBtn.addEventListener('click', async () => {
   await supabase.auth.signOut();
   dashboard.classList.add('hidden');
   loginSection.classList.remove('hidden');
-  showToast('Logged out', 'success');
+  console.log('Logged out', 'success');
 });
 
 // --- Dashboard ---
@@ -74,7 +73,7 @@ async function loadStats() {
     .select('status, suggested_price, payout_amount');
 
   if (error) {
-    showToast('Failed to load stats: ' + error.message, 'error');
+    console.log('Failed to load stats: ' + error.message, 'error');
     return;
   }
 
@@ -112,7 +111,7 @@ async function loadTransactions() {
 
   const { data: txns, error } = await query;
   if (error) {
-    showToast('Failed to load transactions: ' + error.message, 'error');
+    console.log('Failed to load transactions: ' + error.message, 'error');
     return;
   }
 
@@ -211,7 +210,7 @@ async function handleAction(txnId, tornId, newStatus, btn) {
     .eq('id', txnId);
 
   if (error) {
-    showToast('Update failed: ' + error.message, 'error');
+    console.log('Update failed: ' + error.message, 'error');
     btn.disabled = false;
     btn.textContent = btn.dataset.action;
     return;
@@ -222,7 +221,7 @@ async function handleAction(txnId, tornId, newStatus, btn) {
     await syncClientStats(tornId);
   }
 
-  showToast(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
+  console.log(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
   await Promise.all([loadStats(), loadTransactions()]);
 }
 
@@ -283,7 +282,7 @@ async function loadClients() {
 
   const { data: clients, error } = await query;
   if (error) {
-    showToast('Failed to load clients: ' + error.message, 'error');
+    console.log('Failed to load clients: ' + error.message, 'error');
     return;
   }
 
@@ -361,9 +360,9 @@ function renderClients(clients) {
       btn.textContent = 'Save';
 
       if (error) {
-        showToast('Failed to save notes: ' + error.message, 'error');
+        console.log('Failed to save notes: ' + error.message, 'error');
       } else {
-        showToast('Notes saved', 'success');
+        console.log('Notes saved', 'success');
       }
     });
   });
@@ -384,11 +383,11 @@ function renderClients(clients) {
         .eq('torn_id', tornId);
 
       if (error) {
-        showToast('Failed to update: ' + error.message, 'error');
+        console.log('Failed to update: ' + error.message, 'error');
         btn.disabled = false;
         btn.textContent = isCurrentlyBlocked ? 'Unblock' : 'Block';
       } else {
-        showToast(newBlocked ? 'Client blocked' : 'Client unblocked', 'success');
+        console.log(newBlocked ? 'Client blocked' : 'Client unblocked', 'success');
         await loadClients();
       }
     });
@@ -408,7 +407,7 @@ async function loadConfig() {
     .single();
 
   if (error) {
-    showToast('Failed to load config: ' + error.message, 'error');
+    console.log('Failed to load config: ' + error.message, 'error');
     return;
   }
 
@@ -452,12 +451,12 @@ configForm.addEventListener('submit', async (e) => {
     saveBtn.disabled = false;
     statusEl.textContent = 'Saved';
     statusEl.style.color = '#6bff8e';
-    showToast('Config updated', 'success');
+    console.log('Config updated', 'success');
   } catch (e) {
     saveBtn.disabled = false;
     statusEl.textContent = 'Save failed';
     statusEl.style.color = '#ff6b81';
-    showToast('Config save failed: ' + e.message, 'error');
+    console.log('Config save failed: ' + e.message, 'error');
   }
 });
 
@@ -496,11 +495,6 @@ function formatStatus(status) {
   return map[status] || status;
 }
 
-function showToast(msg, type = 'error') {
-  toastEl.textContent = msg;
-  toastEl.className = `toast ${type}`;
-}
-
 function esc(str) {
   const el = document.createElement('span');
   el.textContent = str ?? '';
@@ -511,7 +505,7 @@ function esc(str) {
 document.getElementById('fetch-prices-btn').addEventListener('click', async () => {
   const apiKey = document.getElementById('cfg-api-key').value.trim();
   if (!apiKey) {
-    showToast('Enter your Torn API key to fetch live prices', 'error');
+    console.log('Enter your Torn API key to fetch live prices', 'error');
     return;
   }
 
@@ -524,9 +518,9 @@ document.getElementById('fetch-prices-btn').addEventListener('click', async () =
     if (prices.xanax) document.getElementById('cfg-xanax-price').value = '$' + Number(prices.xanax.market_value).toLocaleString();
     if (prices.edvd) document.getElementById('cfg-edvd-price').value = '$' + Number(prices.edvd.market_value).toLocaleString();
     if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = '$' + Number(prices.ecstasy.market_value).toLocaleString();
-    showToast('Prices updated from Torn market — click Save Config to apply', 'success');
+    console.log('Prices updated from Torn market — click Save Config to apply', 'success');
   } catch (err) {
-    showToast('Failed to fetch prices: ' + err.message, 'error');
+    console.log('Failed to fetch prices: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Fetch Live Prices';
