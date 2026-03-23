@@ -109,7 +109,7 @@ async function loadStats() {
     return;
   }
 
-  const active = txns.filter((t) => t.status === 'requested' || t.status === 'purchased').length;
+  const active = txns.filter((t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status)).length;
   const clean = txns.filter((t) => t.status === 'closed_clean').length;
 
   // Count ODs including payout_sent transactions (status changed from od_* to payout_sent)
@@ -150,7 +150,7 @@ async function loadTransactions() {
     .order('created_at', { ascending: false });
 
   if (filter === 'active') {
-    query = query.in('status', ['requested', 'purchased']);
+    query = query.in('status', ['requested', 'purchased', 'od_xanax', 'od_ecstasy']);
   } else if (filter !== 'all') {
     query = query.eq('status', filter);
   }
