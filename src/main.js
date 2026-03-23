@@ -260,21 +260,17 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-tier-badge').innerHTML =
     `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
 
-  // When there's an active deal, hide product tabs and pricing card,
-  // and set selectedProduct to match the active deal so the tier ladder shows relevant prices
-  const pvProductTabs = document.getElementById('pv-product-tabs');
+  // When there's an active deal, set selectedProduct to match it and hide the pricing card.
+  // Keep product tabs visible so they can browse tier prices for either product.
   const personalPricingCard = document.getElementById('personal-pricing-card');
-  if (hasActive) {
-    const activeTxn = (history.transactions || []).find(
-      (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
-    );
-    if (activeTxn?.product_type) {
-      selectedProduct = activeTxn.product_type;
-    }
-    pvProductTabs.classList.add('hidden');
+  const activeTxn = (history.transactions || []).find(
+    (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
+  );
+  if (hasActive && activeTxn) {
+    const activeProduct = activeTxn.product_type === 'insurance' ? 'insurance' : 'package';
+    switchProduct(activeProduct);
     personalPricingCard.classList.add('hidden');
   } else {
-    pvProductTabs.classList.remove('hidden');
     personalPricingCard.classList.remove('hidden');
   }
 
