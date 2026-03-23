@@ -260,10 +260,17 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-tier-badge').innerHTML =
     `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
 
-  // Hide product tabs and pricing card when there's an active deal
+  // When there's an active deal, hide product tabs and pricing card,
+  // and set selectedProduct to match the active deal so the tier ladder shows relevant prices
   const pvProductTabs = document.getElementById('pv-product-tabs');
   const personalPricingCard = document.getElementById('personal-pricing-card');
   if (hasActive) {
+    const activeTxn = (history.transactions || []).find(
+      (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
+    );
+    if (activeTxn?.product_type) {
+      selectedProduct = activeTxn.product_type;
+    }
     pvProductTabs.classList.add('hidden');
     personalPricingCard.classList.add('hidden');
   } else {
