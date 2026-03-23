@@ -181,30 +181,8 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-price-note').textContent =
     `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
 
-  // Active deal
-  const activeDealSection = document.getElementById('active-deal-section');
-  const activeTxn = (history.transactions || []).find(
-    (t) => t.status === 'requested' || t.status === 'purchased'
-  );
-
-  if (activeTxn) {
-    activeDealSection.classList.remove('hidden');
-    const body = document.getElementById('active-deal-body');
-    const statusLabel = activeTxn.status === 'requested'
-      ? 'Waiting for Giro to initiate the trade in-game'
-      : 'Trade complete — insurance window active';
-    let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
-    details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
-    if (activeTxn.purchased_at) {
-      const closesAt = new Date(activeTxn.closes_at);
-      const now = new Date();
-      const daysLeft = Math.max(0, Math.ceil((closesAt - now) / (1000 * 60 * 60 * 24)));
-      details += `<div class="deal-detail">Insurance closes in ${daysLeft} day${daysLeft !== 1 ? 's' : ''} — closes clean if no OD reported</div>`;
-    }
-    body.innerHTML = details;
-  } else {
-    activeDealSection.classList.add('hidden');
-  }
+  // Active deal (uses shared renderer that includes Report OD button)
+  renderActiveDeal(history.transactions);
 
   // Buy button
   const buyBtn = document.getElementById('buy-btn');
