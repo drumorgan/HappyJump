@@ -70,7 +70,7 @@ async function showDashboard() {
 async function loadStats() {
   const { data: txns, error } = await supabase
     .from('transactions')
-    .select('status, suggested_price, payout_amount, xanax_payout, ecstasy_payout');
+    .select('status, suggested_price, package_cost, payout_amount, xanax_payout, ecstasy_payout');
 
   if (error) {
     console.log('Failed to load stats: ' + error.message, 'error');
@@ -94,7 +94,12 @@ async function loadStats() {
     .reduce((sum, t) => sum + (t.suggested_price || 0), 0);
 
   const paid = txns.reduce((sum, t) => sum + (t.payout_amount || 0), 0);
-  const net = revenue - paid;
+
+  // Net profit = insurance margin (price - drug cost) minus payouts
+  const margin = txns
+    .filter((t) => closedStatuses.includes(t.status))
+    .reduce((sum, t) => sum + ((t.suggested_price || 0) - (t.package_cost || 0)), 0);
+  const net = margin - paid;
 
   document.getElementById('stat-active').textContent = active;
   document.getElementById('stat-clean').textContent = clean;
