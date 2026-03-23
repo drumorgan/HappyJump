@@ -280,6 +280,23 @@ function renderActiveDeal(transactions) {
       : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+    if (activeTxn.status === 'purchased' && activeTxn.closes_at) {
+      const closesAt = new Date(activeTxn.closes_at);
+      const now = new Date();
+      const diff = closesAt - now;
+      if (diff > 0) {
+        const days = Math.floor(diff / 86400000);
+        const hours = Math.floor((diff % 86400000) / 3600000);
+        const mins = Math.floor((diff % 3600000) / 60000);
+        const parts = [];
+        if (days > 0) parts.push(`${days}d`);
+        if (hours > 0) parts.push(`${hours}h`);
+        parts.push(`${mins}m`);
+        details += `<div class="deal-detail">Coverage expires in <strong>${parts.join(' ')}</strong></div>`;
+      } else {
+        details += `<div class="deal-detail">Coverage window has ended</div>`;
+      }
+    }
     body.innerHTML = details;
   }
 }
