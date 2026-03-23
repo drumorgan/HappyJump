@@ -124,6 +124,12 @@ body {
   font-size: 0.9rem;
 }
 
+.package-contents {
+  color: #aab;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
 .availability {
   margin-top: 0.75rem;
   color: #6bff8e;
