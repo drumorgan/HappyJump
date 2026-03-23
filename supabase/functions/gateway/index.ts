@@ -1,6 +1,6 @@
 // Gateway — single entry point for all Happy Jump edge function calls.
 // Deployed with --no-verify-jwt. Routes requests by `action` field.
-// Admin actions (update-config) verify auth internally.
+// Admin actions (update-config, admin-update-status, admin-update-client) verify auth internally.
 
 import { serve } from 'https://deno.land/std@0.177.0/http/server.ts';
 import { createClient } from 'https://esm.sh/@supabase/supabase-js@2';
@@ -62,6 +62,36 @@ function computeCleanStreak(txns: any[]): number {
     else break;
   }
   return streak;
+}
+
+// Recompute and upsert client stats from transactions.
+// Optional `extraFields` allows setting torn_name etc. when available.
+async function syncClientStats(supabase: any, tornId: string, extraFields?: Record<string, unknown>) {
+  const { data: allTxns } = await supabase
+    .from('transactions')
+    .select('status, suggested_price, payout_amount, created_at')
+    .eq('torn_id', tornId);
+
+  const txns = allTxns || [];
+  const cleanCount = computeCleanStreak(txns);
+  const txnCount = txns.length;
+  const totalSpent = txns
+    .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
+    .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
+  const totalPayouts = txns
+    .filter((t: any) => t.status === 'payout_sent')
+    .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
+
+  await supabase.from('clients').upsert({
+    torn_id: tornId,
+    clean_count: cleanCount,
+    tier: computeTier(cleanCount),
+    transaction_count: txnCount,
+    total_spent: totalSpent,
+    total_payouts: totalPayouts,
+    updated_at: new Date().toISOString(),
+    ...extraFields,
+  }, { onConflict: 'torn_id' });
 }
 
 // ── Email notifications ─────────────────────────────────────────────
@@ -134,32 +164,8 @@ async function autoCloseExpired(supabase: any) {
         .eq('id', 1);
     }
 
-    // Sync client stats
     if (txn.torn_id) {
-      const { data: allTxns } = await supabase
-        .from('transactions')
-        .select('status, suggested_price, payout_amount, created_at')
-        .eq('torn_id', txn.torn_id);
-
-      const txns = allTxns || [];
-      const cleanCount = computeCleanStreak(txns);
-      const txnCount = txns.length;
-      const totalSpent = txns
-        .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-        .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
-      const totalPayouts = txns
-        .filter((t: any) => t.status === 'payout_sent')
-        .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
-
-      await supabase.from('clients').upsert({
-        torn_id: txn.torn_id,
-        clean_count: cleanCount,
-        tier: computeTier(cleanCount),
-        transaction_count: txnCount,
-        total_spent: totalSpent,
-        total_payouts: totalPayouts,
-        updated_at: now,
-      }, { onConflict: 'torn_id' });
+      await syncClientStats(supabase, txn.torn_id);
     }
   }
 }
@@ -325,33 +331,11 @@ async function handleCreateTransaction(body: any) {
   );
 
   // Upsert client record
-  const { data: allTxns } = await supabase
-    .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at')
-    .eq('torn_id', String(torn_id));
-
-  const txns = allTxns || [];
-  const finalCleanCount = computeCleanStreak(txns);
-  const txnCount = txns.length;
-  const totalSpent = txns
-    .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
-  const totalPayouts = txns
-    .filter((t: any) => t.status === 'payout_sent')
-    .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
-
-  await supabase.from('clients').upsert({
-    torn_id: String(torn_id),
+  await syncClientStats(supabase, String(torn_id), {
     torn_name,
     torn_faction: torn_faction || null,
     torn_level: torn_level || null,
-    clean_count: finalCleanCount,
-    tier: computeTier(finalCleanCount),
-    transaction_count: txnCount,
-    total_spent: totalSpent,
-    total_payouts: totalPayouts,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'torn_id' });
+  });
 
   return json(txn, 201);
 }
@@ -380,7 +364,7 @@ async function handleGetPlayerTransactions(body: any) {
   const transactions = txnResult.data || [];
   const cleanCount = computeCleanStreak(transactions);
   const hasActiveDeal = transactions.some(
-    (t: any) => t.status === 'requested' || t.status === 'purchased',
+    (t: any) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
   );
 
   return json({
@@ -499,33 +483,35 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
 
   // Sync client stats
   if (torn_id) {
-    const { data: allTxns } = await supabase
-      .from('transactions')
-      .select('status, suggested_price, payout_amount, created_at')
-      .eq('torn_id', String(torn_id));
-
-    const txns = allTxns || [];
-    const cleanCount = computeCleanStreak(txns);
-    const txnCount = txns.length;
-    const totalSpent = txns
-      .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-      .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
-    const totalPayouts = txns
-      .filter((t: any) => t.status === 'payout_sent')
-      .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
-
-    await supabase.from('clients').upsert({
-      torn_id: String(torn_id),
-      clean_count: cleanCount,
-      tier: computeTier(cleanCount),
-      transaction_count: txnCount,
-      total_spent: totalSpent,
-      total_payouts: totalPayouts,
-      updated_at: new Date().toISOString(),
-    }, { onConflict: 'torn_id' });
+    await syncClientStats(supabase, String(torn_id));
   }
 
   return json({ success: true, status: new_status });
+}
+
+async function handleAdminUpdateClient(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { torn_id } = body;
+  if (!torn_id) return json({ error: 'Missing torn_id' }, 400);
+
+  const allowed = ['admin_notes', 'is_blocked'];
+  const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
+  for (const key of allowed) {
+    if (body[key] !== undefined) {
+      updates[key] = body[key];
+    }
+  }
+
+  const supabase = serviceClient();
+  const { error } = await supabase
+    .from('clients')
+    .update(updates)
+    .eq('torn_id', String(torn_id));
+
+  if (error) return json({ error: error.message }, 500);
+  return json({ success: true });
 }
 
 async function handleUpdateConfig(req: Request, body: any) {
@@ -684,31 +670,7 @@ async function handleReportOd(body: any) {
   );
 
   // Sync client stats (clean streak recomputed from transactions)
-  const { data: allTxns } = await supabase
-    .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at')
-    .eq('torn_id', tornId);
-
-  const txns = allTxns || [];
-  const cleanCount = computeCleanStreak(txns);
-  const txnCount = txns.length;
-  const totalSpent = txns
-    .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
-  const totalPayouts = txns
-    .filter((t: any) => t.status === 'payout_sent')
-    .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
-
-  await supabase.from('clients').upsert({
-    torn_id: tornId,
-    torn_name: identData.name,
-    clean_count: cleanCount,
-    tier: computeTier(cleanCount),
-    transaction_count: txnCount,
-    total_spent: totalSpent,
-    total_payouts: totalPayouts,
-    updated_at: new Date().toISOString(),
-  }, { onConflict: 'torn_id' });
+  await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
   return json({
     verified: true,
@@ -742,6 +704,8 @@ serve(async (req) => {
         return await handleGetAvailability();
       case 'admin-update-status':
         return await handleAdminUpdateStatus(req, body);
+      case 'admin-update-client':
+        return await handleAdminUpdateClient(req, body);
       case 'update-config':
         return await handleUpdateConfig(req, body);
       case 'report-od':

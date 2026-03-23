@@ -121,6 +121,13 @@ export async function adminUpdateStatus(txnId, tornId, newStatus) {
 }
 
 /**
+ * Admin: update client record (notes, blocked status).
+ */
+export async function adminUpdateClient(tornId, updates) {
+  return gateway('admin-update-client', { torn_id: tornId, ...updates });
+}
+
+/**
  * Report and verify an OD — client provides their API key for verification.
  */
 export async function reportOd(apiKey, txnId) {
