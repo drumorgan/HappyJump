@@ -9,7 +9,7 @@ import { supabase } from './supabaseClient.js';
  */
 async function gateway(action, payload = {}) {
   const { data, error } = await supabase.functions.invoke('gateway', {
-    body: { action, ...payload },
+    body: { ...payload, action },
   });
 
   if (error) {

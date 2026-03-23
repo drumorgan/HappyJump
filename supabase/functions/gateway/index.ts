@@ -82,7 +82,7 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
     .filter((t: any) => t.status === 'payout_sent')
     .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
-  await supabase.from('clients').upsert({
+  const { error } = await supabase.from('clients').upsert({
     torn_id: tornId,
     clean_count: cleanCount,
     tier: computeTier(cleanCount),
@@ -92,6 +92,8 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
     updated_at: new Date().toISOString(),
     ...extraFields,
   }, { onConflict: 'torn_id' });
+
+  if (error) console.error(`[syncClientStats] Failed for ${tornId}:`, error.message);
 }
 
 // ── Email notifications ─────────────────────────────────────────────
@@ -496,13 +498,9 @@ async function handleAdminUpdateClient(req: Request, body: any) {
   const { torn_id } = body;
   if (!torn_id) return json({ error: 'Missing torn_id' }, 400);
 
-  const allowed = ['admin_notes', 'is_blocked'];
   const updates: Record<string, unknown> = { updated_at: new Date().toISOString() };
-  for (const key of allowed) {
-    if (body[key] !== undefined) {
-      updates[key] = body[key];
-    }
-  }
+  if (body.admin_notes !== undefined) updates.admin_notes = String(body.admin_notes);
+  if (body.is_blocked !== undefined) updates.is_blocked = Boolean(body.is_blocked);
 
   const supabase = serviceClient();
   const { error } = await supabase
