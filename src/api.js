@@ -114,6 +114,13 @@ export async function updateConfig(updates) {
 }
 
 /**
+ * Admin: update transaction status (handles reserve + client sync server-side).
+ */
+export async function adminUpdateStatus(txnId, tornId, newStatus) {
+  return gateway('admin-update-status', { txn_id: txnId, torn_id: tornId, new_status: newStatus });
+}
+
+/**
  * Report and verify an OD — client provides their API key for verification.
  */
 export async function reportOd(apiKey, txnId) {

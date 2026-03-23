@@ -148,11 +148,14 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 
 **All server-side logic goes through a single `gateway` Edge Function.** Do NOT create separate Edge Functions — add new actions to the gateway's router instead.
 
+**ALL database writes (inserts, updates) MUST go through the gateway** using the service role key. The client-side Supabase client (anon key) should only be used for reads. Never do direct `supabase.from(...).update(...)` or `.insert(...)` from frontend code — always route through a gateway action via `api.js`.
+
 - **Location:** `supabase/functions/gateway/index.ts`
 - **JWT verification:** OFF (disabled in Supabase dashboard). Public actions have no auth; admin actions verify auth internally.
 - **Routing:** Client sends `{ action: "action-name", ...payload }` — gateway switches on `action`.
 - **Client helper:** `src/api.js` has a `gateway()` function — all client calls go through it.
 - **Deploy:** `supabase functions deploy gateway --no-verify-jwt`
+- **IMPORTANT:** When gateway code changes, you MUST explicitly tell the user to redeploy the Edge Function with `supabase functions deploy gateway --no-verify-jwt`. Merging to main only deploys the frontend via FTP — it does NOT redeploy Edge Functions.
 
 ### Current actions
 
@@ -163,6 +166,7 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 | `create-transaction`     | None     | Create a new purchase request            |
 | `get-player-transactions`| None     | Fetch a player's transaction history     |
 | `get-availability`       | None     | Check package availability               |
+| `admin-update-status`    | Admin    | Update transaction status, manage reserves, sync client stats |
 | `update-config`          | Admin    | Update operator config (requires Supabase Auth session) |
 
 ## Torn API Integration
@@ -200,3 +204,5 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 - **Price snapshots:** Always snapshot pricing at time of transaction creation — config changes mid-week must not affect open transactions.
 - **1-week timer:** Starts at `purchased_at`, not `created_at`. Auto-close must be idempotent.
 - **Single gateway pattern:** NEVER create new Edge Functions. Add new actions to `supabase/functions/gateway/index.ts` and route via the `action` field. JWT must stay OFF — admin auth is handled inside the gateway.
+- **Bigint columns:** Supabase returns `bigint` columns as **strings**. Always wrap in `Number()` before arithmetic. The `+` operator concatenates strings — `"200000000" + "1000000"` = `"2000000001000000"` instead of `201000000`. Use `Number(value)` for all bigint fields: prices, payouts, reserve, etc.
+- **Edge Function deploy is separate:** Changes to `supabase/functions/gateway/index.ts` are NOT deployed by the GitHub Actions FTP pipeline. The Edge Function must be manually redeployed: `supabase functions deploy gateway --no-verify-jwt`.
