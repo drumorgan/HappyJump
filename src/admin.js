@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -16,6 +16,7 @@ const configBody = document.getElementById('config-body');
 const clientList = document.getElementById('client-list');
 const clientTierFilter = document.getElementById('client-tier-filter');
 const clientBlockedFilter = document.getElementById('client-blocked-filter');
+const clientSearch = document.getElementById('client-search');
 const refreshClientsBtn = document.getElementById('refresh-clients-btn');
 const toastEl = document.getElementById('toast');
 
@@ -141,7 +142,20 @@ async function loadTransactions() {
     return;
   }
 
-  renderTransactions(txns || []);
+  // Hide blocked players' transactions from active view
+  let filtered = txns || [];
+  if (filter === 'active') {
+    const { data: blockedClients } = await supabase
+      .from('clients')
+      .select('torn_id')
+      .eq('is_blocked', true);
+    const blockedIds = new Set((blockedClients || []).map((c) => c.torn_id));
+    if (blockedIds.size > 0) {
+      filtered = filtered.filter((t) => !blockedIds.has(t.torn_id));
+    }
+  }
+
+  renderTransactions(filtered);
 }
 
 function renderTransactions(txns) {
@@ -163,7 +177,9 @@ function renderTransactions(txns) {
     switch (t.status) {
       case 'requested':
         actionsHtml = `<div class="collect-banner">Collect: ${$(t.suggested_price)}</div>
-          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>`;
+          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>
+          <button class="btn-reject" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="rejected">Reject</button>
+          <button class="btn-reject-block" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-reject-block="true">Reject &amp; Block</button>`;
         break;
       case 'purchased':
         actionsHtml = `
@@ -202,6 +218,11 @@ function renderTransactions(txns) {
   txnList.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', () => handleAction(btn.dataset.id, btn.dataset.tornId, btn.dataset.action, btn));
   });
+
+  // Bind reject & block buttons
+  txnList.querySelectorAll('[data-reject-block]').forEach((btn) => {
+    btn.addEventListener('click', () => handleRejectAndBlock(btn.dataset.tornId, btn));
+  });
 }
 
 async function handleAction(txnId, tornId, newStatus, btn) {
@@ -221,6 +242,23 @@ async function handleAction(txnId, tornId, newStatus, btn) {
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 }
 
+async function handleRejectAndBlock(tornId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Updating...';
+
+  try {
+    const result = await adminRejectAndBlock(tornId);
+    showToast(`Rejected ${result.rejected_count || 0} transaction(s) and blocked player`, 'success');
+  } catch (err) {
+    showToast('Reject & block failed: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Reject & Block';
+    return;
+  }
+
+  await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
+}
+
 // --- Clients tab ---
 async function loadClients() {
   let query = supabase
@@ -234,7 +272,7 @@ async function loadClients() {
   }
 
   if (clientBlockedFilter.checked) {
-    query = query.eq('is_blocked', true);
+    query = query.or('is_blocked.is.null,is_blocked.eq.false');
   }
 
   const { data: clients, error } = await query;
@@ -243,7 +281,16 @@ async function loadClients() {
     return;
   }
 
-  renderClients(clients || []);
+  let filtered = clients || [];
+  const searchTerm = (clientSearch.value || '').trim().toLowerCase();
+  if (searchTerm) {
+    filtered = filtered.filter((c) =>
+      (c.torn_name || '').toLowerCase().includes(searchTerm) ||
+      String(c.torn_id).includes(searchTerm)
+    );
+  }
+
+  renderClients(filtered);
 }
 
 function getTierBadgeClass(tier) {
@@ -347,6 +394,7 @@ function renderClients(clients) {
 // Client filters
 clientTierFilter.addEventListener('change', loadClients);
 clientBlockedFilter.addEventListener('change', loadClients);
+clientSearch.addEventListener('input', loadClients);
 refreshClientsBtn.addEventListener('click', loadClients);
 
 // --- Config ---

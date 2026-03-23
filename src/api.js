@@ -129,6 +129,13 @@ export async function adminUpdateClient(tornId, updates) {
 }
 
 /**
+ * Admin: reject all pending transactions for a player and block them.
+ */
+export async function adminRejectAndBlock(tornId) {
+  return gateway('admin-reject-and-block', { torn_id: tornId });
+}
+
+/**
  * Report and verify an OD — client provides their API key for verification.
  */
 export async function reportOd(apiKey, txnId) {
