@@ -1,7 +1,34 @@
 // api.js — Supabase-backed API module for Happy Jump
-// All Torn API calls go through Edge Functions; config comes from the database.
+// All calls route through the single gateway Edge Function.
 
 import { supabase } from './supabaseClient.js';
+
+/**
+ * Call the gateway Edge Function with a given action + payload.
+ * All edge function calls go through this single entry point.
+ */
+async function gateway(action, payload = {}) {
+  const { data, error } = await supabase.functions.invoke('gateway', {
+    body: { action, ...payload },
+  });
+
+  if (error) {
+    // Extract real message from ReadableStream if present
+    if (error.context?.body instanceof ReadableStream) {
+      const text = await new Response(error.context.body).text();
+      try {
+        const parsed = JSON.parse(text);
+        throw new Error(parsed.error || parsed.message || text);
+      } catch (e) {
+        if (e instanceof SyntaxError) throw new Error(text);
+        throw e;
+      }
+    }
+    throw new Error(error.message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
+}
 
 /**
  * Fetch the operator config row (pricing variables, reserve, etc.)
@@ -19,29 +46,17 @@ export async function getConfig() {
 
 /**
  * Validate a player's identity via their Torn API key.
- * Calls the validate-player Edge Function.
- * Key is used once by the Edge Function and never stored.
  */
 export async function validatePlayer(apiKey) {
-  const { data, error } = await supabase.functions.invoke('validate-player', {
-    body: { key: apiKey },
-  });
-
-  if (error) throw new Error(`Validation failed: ${error.message}`);
-  if (data.error) throw new Error(data.error);
-  return data;
+  return gateway('validate-player', { key: apiKey });
 }
 
 /**
- * Proxy a Torn API call through the torn-proxy Edge Function.
- * Keeps the client's API key off browser network logs.
+ * Proxy a Torn API call through the gateway.
  */
 export async function fetchTornProxy(apiKey, section, id, selections) {
-  const { data, error } = await supabase.functions.invoke('torn-proxy', {
-    body: { key: apiKey, section, id, selections },
-  });
-
-  if (error) throw new Error(`Torn proxy error: ${error.message}`);
+  const data = await gateway('torn-proxy', { key: apiKey, section, id, selections });
+  // Torn API errors come in the response body, not as gateway errors
   if (data.error) {
     const err = data.error;
     throw new Error(typeof err === 'string' ? err : `Torn API error ${err.code}: ${err.error}`);
@@ -72,41 +87,28 @@ export async function fetchMarketPrices(apiKey) {
 
 /**
  * Create a new transaction (request a Happy Jump package).
- * Calls the create-transaction Edge Function which snapshots prices.
  */
 export async function createTransaction(playerData) {
-  const { data, error } = await supabase.functions.invoke('create-transaction', {
-    body: playerData,
-  });
-
-  if (error) throw new Error(`Transaction failed: ${error.message}`);
-  if (data.error) throw new Error(data.error);
-  return data;
+  return gateway('create-transaction', playerData);
 }
 
 /**
  * Fetch a player's transaction history by torn_id.
- * Returns transactions, clean_count, and has_active_deal.
  */
 export async function getPlayerTransactions(tornId) {
-  const { data, error } = await supabase.functions.invoke('get-player-transactions', {
-    body: { torn_id: String(tornId) },
-  });
-
-  if (error) throw new Error(`Failed to load history: ${error.message}`);
-  if (data.error) throw new Error(data.error);
-  return data;
+  return gateway('get-player-transactions', { torn_id: String(tornId) });
 }
 
 /**
  * Get current availability: how many packages can be sold right now.
- * Calls the get-availability Edge Function (uses service role to read transactions).
- * Returns { available, maxPackages, activeCount, nextCloseAt }.
  */
 export async function getAvailability() {
-  const { data, error } = await supabase.functions.invoke('get-availability');
+  return gateway('get-availability');
+}
 
-  if (error) throw new Error(`Failed to check availability: ${error.message}`);
-  if (data.error) throw new Error(data.error);
-  return data;
+/**
+ * Update operator config (admin only). Passes auth header automatically.
+ */
+export async function updateConfig(updates) {
+  return gateway('update-config', updates);
 }
