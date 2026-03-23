@@ -63,7 +63,39 @@ logoutBtn.addEventListener('click', async () => {
 async function showDashboard() {
   loginSection.classList.add('hidden');
   dashboard.classList.remove('hidden');
+  await autoCloseExpired();
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
+}
+
+// --- Auto-close expired transactions ---
+async function autoCloseExpired() {
+  const now = new Date().toISOString();
+  const { data: expired } = await supabase
+    .from('transactions')
+    .select('id, torn_id, ecstasy_payout')
+    .eq('status', 'purchased')
+    .lt('closes_at', now);
+
+  if (!expired || expired.length === 0) return;
+
+  for (const txn of expired) {
+    await supabase
+      .from('transactions')
+      .update({ status: 'closed_clean', closed_at: now })
+      .eq('id', txn.id);
+
+    // Release locked reserve
+    const { data: cfg } = await supabase.from('config').select('current_reserve').single();
+    if (cfg) {
+      await supabase
+        .from('config')
+        .update({ current_reserve: cfg.current_reserve + (txn.ecstasy_payout || 0) })
+        .eq('id', 1);
+    }
+
+    // Sync client stats
+    if (txn.torn_id) await syncClientStats(txn.torn_id);
+  }
 }
 
 // --- Stats ---
@@ -517,6 +549,7 @@ configHeader.addEventListener('click', () => {
 // Filter + refresh
 statusFilter.addEventListener('change', loadTransactions);
 refreshBtn.addEventListener('click', async () => {
+  await autoCloseExpired();
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 });
 
