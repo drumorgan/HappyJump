@@ -154,8 +154,8 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 - **JWT verification:** OFF (disabled in Supabase dashboard). Public actions have no auth; admin actions verify auth internally.
 - **Routing:** Client sends `{ action: "action-name", ...payload }` — gateway switches on `action`.
 - **Client helper:** `src/api.js` has a `gateway()` function — all client calls go through it.
-- **Deploy:** `supabase functions deploy gateway --no-verify-jwt`
-- **IMPORTANT:** When gateway code changes, you MUST explicitly tell the user to redeploy the Edge Function with `supabase functions deploy gateway --no-verify-jwt`. Merging to main only deploys the frontend via FTP — it does NOT redeploy Edge Functions.
+- **Deploy:** Manual copy-paste into Supabase dashboard (see below)
+- **IMPORTANT:** When gateway code changes, you MUST explicitly tell the user: "This change requires updating the Edge Function. After merging to main, go to the `supabase/functions/gateway/index.ts` file on GitHub, copy the full contents, then paste it into the Supabase dashboard Edge Function editor, replacing the old code." Merging to main only deploys the frontend via FTP — it does NOT update the Edge Function.
 
 ### Current actions
 
@@ -205,4 +205,4 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 - **1-week timer:** Starts at `purchased_at`, not `created_at`. Auto-close must be idempotent.
 - **Single gateway pattern:** NEVER create new Edge Functions. Add new actions to `supabase/functions/gateway/index.ts` and route via the `action` field. JWT must stay OFF — admin auth is handled inside the gateway.
 - **Bigint columns:** Supabase returns `bigint` columns as **strings**. Always wrap in `Number()` before arithmetic. The `+` operator concatenates strings — `"200000000" + "1000000"` = `"2000000001000000"` instead of `201000000`. Use `Number(value)` for all bigint fields: prices, payouts, reserve, etc.
-- **Edge Function deploy is separate:** Changes to `supabase/functions/gateway/index.ts` are NOT deployed by the GitHub Actions FTP pipeline. The Edge Function must be manually redeployed: `supabase functions deploy gateway --no-verify-jwt`.
+- **Edge Function deploy is manual:** Changes to `supabase/functions/gateway/index.ts` are NOT deployed by the GitHub Actions FTP pipeline. After merging, the user must manually copy the file contents from GitHub and paste them into the Supabase dashboard Edge Function editor.
