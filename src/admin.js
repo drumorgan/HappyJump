@@ -70,7 +70,7 @@ async function showDashboard() {
 async function loadStats() {
   const { data: txns, error } = await supabase
     .from('transactions')
-    .select('status, suggested_price, payout_amount');
+    .select('status, suggested_price, payout_amount, xanax_payout, ecstasy_payout');
 
   if (error) {
     console.log('Failed to load stats: ' + error.message, 'error');
@@ -79,8 +79,14 @@ async function loadStats() {
 
   const active = txns.filter((t) => t.status === 'requested' || t.status === 'purchased').length;
   const clean = txns.filter((t) => t.status === 'closed_clean').length;
-  const xanOd = txns.filter((t) => t.status === 'od_xanax').length;
-  const ecsOd = txns.filter((t) => t.status === 'od_ecstasy').length;
+
+  // Count ODs including payout_sent transactions (status changed from od_* to payout_sent)
+  let xanOd = txns.filter((t) => t.status === 'od_xanax').length;
+  let ecsOd = txns.filter((t) => t.status === 'od_ecstasy').length;
+  txns.filter((t) => t.status === 'payout_sent' && t.payout_amount).forEach((t) => {
+    if (t.payout_amount === t.xanax_payout) xanOd++;
+    else if (t.payout_amount === t.ecstasy_payout) ecsOd++;
+  });
 
   const closedStatuses = ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
   const revenue = txns
@@ -88,6 +94,7 @@ async function loadStats() {
     .reduce((sum, t) => sum + (t.suggested_price || 0), 0);
 
   const paid = txns.reduce((sum, t) => sum + (t.payout_amount || 0), 0);
+  const net = revenue - paid;
 
   document.getElementById('stat-active').textContent = active;
   document.getElementById('stat-clean').textContent = clean;
@@ -95,6 +102,8 @@ async function loadStats() {
   document.getElementById('stat-ecs-od').textContent = ecsOd;
   document.getElementById('stat-revenue').textContent = $(revenue);
   document.getElementById('stat-paid').textContent = $(paid);
+  document.getElementById('stat-net').textContent = $(net);
+  document.getElementById('stat-net').style.color = net >= 0 ? '#6bff8e' : '#ff6b81';
 }
 
 // --- Transactions ---
@@ -214,6 +223,26 @@ async function handleAction(txnId, tornId, newStatus, btn) {
     btn.disabled = false;
     btn.textContent = btn.dataset.action;
     return;
+  }
+
+  // Update reserves: +revenue on sale, -payout on payout_sent
+  if (newStatus === 'purchased' || newStatus === 'payout_sent') {
+    const { data: txn } = await supabase
+      .from('transactions')
+      .select('suggested_price, payout_amount')
+      .eq('id', txnId)
+      .single();
+
+    if (txn) {
+      const { data: cfg } = await supabase.from('config').select('current_reserve').single();
+      if (cfg) {
+        let newReserve = cfg.current_reserve;
+        if (newStatus === 'purchased') newReserve += (txn.suggested_price || 0);
+        if (newStatus === 'payout_sent') newReserve -= (txn.payout_amount || 0);
+
+        await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
+      }
+    }
   }
 
   // Sync client stats after status change
