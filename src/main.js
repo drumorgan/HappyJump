@@ -260,6 +260,17 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-tier-badge').innerHTML =
     `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
 
+  // Hide product tabs and pricing card when there's an active deal
+  const pvProductTabs = document.getElementById('pv-product-tabs');
+  const personalPricingCard = document.getElementById('personal-pricing-card');
+  if (hasActive) {
+    pvProductTabs.classList.add('hidden');
+    personalPricingCard.classList.add('hidden');
+  } else {
+    pvProductTabs.classList.remove('hidden');
+    personalPricingCard.classList.remove('hidden');
+  }
+
   // Helper to update player view pricing and buy button for selected product
   function updatePlayerPricing() {
     const pricing = getPricing(config, tier.margin, selectedProduct);
