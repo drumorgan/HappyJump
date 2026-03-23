@@ -297,9 +297,9 @@ async function handleCreateTransaction(body: any) {
     .update({ current_reserve: reserve - ecstasyPayout })
     .eq('id', 1);
 
-  // Fire-and-forget email notification for new purchase request
+  // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
-  sendNotificationEmail(
+  await sendNotificationEmail(
     `🛒 New Purchase Request — ${torn_name} [${torn_id}]`,
     [
       `New Happy Jump purchase request!`,
@@ -685,8 +685,8 @@ async function handleReportOd(body: any) {
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
 
-  // Fire-and-forget email notification for OD payout request
-  sendNotificationEmail(
+  // Await email so it completes before the response ends the isolate
+  await sendNotificationEmail(
     `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
     [
       `OD verified and payout required!`,
