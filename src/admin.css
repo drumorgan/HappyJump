@@ -192,6 +192,18 @@
   cursor: pointer;
 }
 
+.collect-banner {
+  background: #0f2a0f;
+  border: 1px solid #2a5a2a;
+  border-radius: 4px;
+  padding: 0.4rem 0.75rem;
+  margin-bottom: 0.5rem;
+  color: #6bff8e;
+  font-size: 1.1rem;
+  font-weight: 700;
+  font-family: monospace;
+}
+
 .btn-purchase {
   background: #1a3a1a;
   color: #6bff8e;
