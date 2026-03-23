@@ -288,6 +288,14 @@ function showPlayerView(player, config, history, apiKey) {
     document.getElementById('pv-price-note').textContent =
       `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
 
+    // Package contents
+    const contentsEl = document.getElementById('pv-contents');
+    if (isInsurance) {
+      contentsEl.textContent = 'OD insurance only — no items included';
+    } else {
+      contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
+    }
+
     // Buy button
     const buyBtn = document.getElementById('buy-btn');
     const buyStatus = document.getElementById('buy-status');
