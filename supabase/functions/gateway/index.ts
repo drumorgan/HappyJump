@@ -317,7 +317,7 @@ async function handleGetPlayerTransactions(body: any) {
   return json({
     torn_id: String(torn_id),
     transactions,
-    clean_count: clientResult.data?.clean_count ?? cleanCount,
+    clean_count: cleanCount,
     has_active_deal: hasActiveDeal,
     is_blocked: clientResult.data?.is_blocked ?? false,
     client: clientResult.data || null,
