@@ -155,9 +155,11 @@ function renderTransactions(txns) {
     const label = formatStatus(t.status);
     const date = new Date(t.created_at).toLocaleDateString();
     const faction = t.torn_faction ? ` | ${esc(t.torn_faction)}` : '';
-    const productBadge = t.product_type === 'insurance'
-      ? '<span class="product-badge shield">Shield</span>'
-      : '<span class="product-badge package">Package</span>';
+    const productBadge = t.product_type === 'ecstasy_only'
+      ? '<span class="product-badge ecstasy-only">Ultimo Miglio</span>'
+      : t.product_type === 'insurance'
+      ? '<span class="product-badge shield">Protezione</span>'
+      : '<span class="product-badge package">Bella Vita</span>';
 
     let actionsHtml = '';
     switch (t.status) {
@@ -247,13 +249,13 @@ async function loadClients() {
 }
 
 function getTierBadgeClass(tier) {
-  const map = { new: 'new-client', safe: 'safe-driver', road: 'road-warrior', legend: 'highway-legend' };
-  return map[tier] || 'new-client';
+  const map = { new: 'straniero', safe: 'amico', road: 'braccio-destro', legend: 'famiglia' };
+  return map[tier] || 'straniero';
 }
 
 function getTierName(tier) {
-  const map = { new: 'Standard', safe: 'Safe Driver', road: 'Road Warrior', legend: 'Highway Legend' };
-  return map[tier] || 'Standard';
+  const map = { new: 'Straniero', safe: 'Amico', road: 'Braccio Destro', legend: 'Famiglia' };
+  return map[tier] || 'Straniero';
 }
 
 function renderClients(clients) {

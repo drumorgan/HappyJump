@@ -10,7 +10,7 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;
-let selectedProduct = 'package'; // 'package' | 'insurance'
+let selectedProduct = 'package'; // 'package' | 'insurance' | 'ecstasy_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
@@ -18,10 +18,10 @@ function showToast(msg, type) { _showToast(toastEl, msg, type); }
 
 // --- Tier definitions (margins loaded from config) ---
 const TIERS = [
-  { key: 'new', name: 'Standard', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
-  { key: 'safe', name: 'Safe Driver', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'safe-driver' },
-  { key: 'road', name: 'Road Warrior', min: 3, marginField: 'margin_road', margin: 0.12, css: 'road-warrior' },
-  { key: 'legend', name: 'Highway Legend', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'highway-legend' },
+  { key: 'new', name: 'Straniero', min: 0, marginField: 'margin_new', margin: 0.18, css: 'straniero' },
+  { key: 'safe', name: 'Amico', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'amico' },
+  { key: 'road', name: 'Braccio Destro', min: 3, marginField: 'margin_road', margin: 0.12, css: 'braccio-destro' },
+  { key: 'legend', name: 'Famiglia', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'famiglia' },
 ];
 
 function loadTierMargins(config) {
@@ -76,8 +76,25 @@ function calcInsurancePricing(config, margin) {
   return { packageCost: 0, xanaxPayout, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
 }
 
+// Ecstasy-only insurance: covers only the Ecstasy step (5% OD rate, flat)
+function calcEcstasyOnlyPricing(config, margin) {
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const ecstasyPayout = packageCost + rehabBonus;
+  const expectedLiability = Number(config.ecstasy_od_pct) * ecstasyPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout: 0, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
+}
+
 function getPricing(config, margin, product) {
-  return product === 'insurance' ? calcInsurancePricing(config, margin) : calcPricing(config, margin);
+  if (product === 'insurance') return calcInsurancePricing(config, margin);
+  if (product === 'ecstasy_only') return calcEcstasyOnlyPricing(config, margin);
+  return calcPricing(config, margin);
 }
 
 
@@ -91,10 +108,12 @@ function updateAnonPricing() {
 
   document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
   const priceNote = document.getElementById('anon-price-note');
-  if (selectedProduct === 'insurance') {
-    priceNote.textContent = 'Current insurance premium — new client rate';
+  if (selectedProduct === 'ecstasy_only') {
+    priceNote.textContent = 'Current premium — Straniero rate';
+  } else if (selectedProduct === 'insurance') {
+    priceNote.textContent = 'Current premium — Straniero rate';
   } else {
-    priceNote.textContent = 'Current package price — new client rate';
+    priceNote.textContent = 'Current package price — Straniero rate';
   }
 
   // Update tier ladder prices for selected product
@@ -121,7 +140,8 @@ function switchProduct(product) {
 
   // Toggle product-specific sections in storefront
   document.querySelectorAll('#storefront .product-section').forEach((el) => {
-    el.classList.toggle('hidden', el.dataset.product !== product);
+    const products = (el.dataset.products || el.dataset.product || '').split(' ');
+    el.classList.toggle('hidden', !products.includes(product));
   });
 
   updateAnonPricing();
@@ -267,7 +287,8 @@ function showPlayerView(player, config, history, apiKey) {
     (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
   );
   if (hasActive && activeTxn) {
-    const activeProduct = activeTxn.product_type === 'insurance' ? 'insurance' : 'package';
+    const activeProduct = activeTxn.product_type === 'ecstasy_only' ? 'ecstasy_only'
+      : activeTxn.product_type === 'insurance' ? 'insurance' : 'package';
     switchProduct(activeProduct);
     personalPricingCard.classList.add('hidden');
   } else {
@@ -278,10 +299,11 @@ function showPlayerView(player, config, history, apiKey) {
   function updatePlayerPricing() {
     const pricing = getPricing(config, tier.margin, selectedProduct);
     const isInsurance = selectedProduct === 'insurance';
+    const isEcstasyOnly = selectedProduct === 'ecstasy_only';
 
     // Price header
-    document.getElementById('pv-price-header').textContent =
-      isInsurance ? 'Your Shield Premium' : 'Your Package Price';
+    const headers = { package: 'Your Package Price', insurance: 'Your Shield Premium', ecstasy_only: 'Your Ultimo Miglio Premium' };
+    document.getElementById('pv-price-header').textContent = headers[selectedProduct] || headers.package;
 
     // Personal pricing
     document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
@@ -290,8 +312,10 @@ function showPlayerView(player, config, history, apiKey) {
 
     // Package contents
     const contentsEl = document.getElementById('pv-contents');
-    if (isInsurance) {
-      contentsEl.textContent = 'OD insurance only — no items included';
+    if (isEcstasyOnly) {
+      contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
+    } else if (isInsurance) {
+      contentsEl.textContent = 'Full OD insurance — no items included';
     } else {
       contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
     }
@@ -307,11 +331,14 @@ function showPlayerView(player, config, history, apiKey) {
       buySection.classList.remove('hidden');
       buyBtn.disabled = false;
 
-      if (isInsurance) {
-        buyBtn.textContent = 'Request Happy Jump Shield — ' + $(pricing.suggestedPrice);
-        buyStatus.textContent = 'This submits an insurance request. Giro will collect the premium via in-game trade.';
+      if (isEcstasyOnly) {
+        buyBtn.textContent = "Request L'Ultimo Miglio — " + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits an insurance request for Ecstasy OD only. Giro will collect the premium via in-game trade.';
+      } else if (isInsurance) {
+        buyBtn.textContent = 'Request Protezione Totale — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits a full insurance request. Giro will collect the premium via in-game trade.';
       } else {
-        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
+        buyBtn.textContent = 'Request La Bella Vita — ' + $(pricing.suggestedPrice);
         buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
       }
 
@@ -327,7 +354,8 @@ function showPlayerView(player, config, history, apiKey) {
             torn_level: player.torn_level,
             product_type: selectedProduct,
           });
-          const productLabel = selectedProduct === 'insurance' ? 'Shield' : 'package';
+          const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio" };
+          const productLabel = productLabels[selectedProduct] || 'package';
           showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
           buyBtn.textContent = 'Request In Progress';
           buyStatus.textContent = `Your ${productLabel} request has been submitted. Giro will trade with you in-game.`;
@@ -508,7 +536,8 @@ function renderHistory(transactions) {
     const date = new Date(txn.created_at).toLocaleDateString();
     const pillClass = getStatusPillClass(txn.status);
     const label = formatStatus(txn.status);
-    const productLabel = txn.product_type === 'insurance' ? 'Shield' : 'Package';
+    const productLabels = { package: 'Bella Vita', insurance: 'Protezione', ecstasy_only: 'Ultimo Miglio' };
+    const productLabel = productLabels[txn.product_type] || 'Package';
     html += `<tr>
       <td>${esc(date)}</td>
       <td>${esc(productLabel)}</td>

@@ -33,9 +33,10 @@
       <div class="section-divider"></div>
 
       <!-- Product tabs -->
-      <div class="product-tabs">
-        <button class="product-tab active" data-product="package">Happy Jump Package</button>
-        <button class="product-tab" data-product="insurance">Happy Jump Shield</button>
+      <div class="product-tabs three-tabs">
+        <button class="product-tab active" data-product="package">La Bella Vita</button>
+        <button class="product-tab" data-product="insurance">Protezione Totale</button>
+        <button class="product-tab" data-product="ecstasy_only">L'Ultimo Miglio</button>
       </div>
 
       <!-- Hero pitch — package -->
@@ -51,7 +52,16 @@
       <div class="card product-section hidden" data-product="insurance">
         <div class="card-body">
           <p class="intro-text">Already have your drugs? Just got a payout and want to protect the new package?</p>
-          <p class="intro-text" style="margin-top:0.5rem">Happy Jump Shield gives you <strong>full OD insurance</strong> without buying the drugs. Same coverage, same payouts — just the protection.</p>
+          <p class="intro-text" style="margin-top:0.5rem"><strong>Protezione Totale</strong> gives you <strong>full OD insurance</strong> without buying the drugs. Same coverage, same payouts — just the protection.</p>
+        </div>
+      </div>
+
+      <!-- Hero pitch — ecstasy only -->
+      <div class="card product-section hidden" data-product="ecstasy_only">
+        <div class="card-body">
+          <p class="intro-text">Already popped your Xanax? Survived the hard part?</p>
+          <p class="intro-text" style="margin-top:0.5rem"><strong>L'Ultimo Miglio</strong> — the last mile. Insure just the Ecstasy step before you take it. If you OD, we replace the <strong>full package</strong> plus a rehab bonus.</p>
+          <p class="intro-text" style="margin-top:0.5rem;color:#888">The cheapest insurance in the game. Because you've already beaten the worst odds.</p>
         </div>
       </div>
 
@@ -99,10 +109,28 @@
         </div>
       </div>
 
+      <!-- What You Get — ecstasy only -->
+      <div class="card product-section hidden" data-product="ecstasy_only">
+        <div class="card-header">
+          <span>What You Get</span>
+        </div>
+        <div class="card-body">
+          <p class="intro-text">You've taken your Xanax. You survived. Now insure the final step — the Ecstasy — before you pop it.</p>
+          <div class="shield-features" style="margin-top:1rem">
+            <div class="shield-feature eco-feature">Ecstasy OD coverage (5% risk)</div>
+            <div class="shield-feature eco-feature">Full package replacement on OD</div>
+            <div class="shield-feature eco-feature">Rehab bonus included</div>
+            <div class="shield-feature eco-feature">7-day coverage window</div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem;color:#e94560"><strong>Xanax ODs are NOT covered</strong> — this policy assumes you've already taken and survived your Xanax.</p>
+          <p class="intro-text" style="margin-top:0.5rem;color:#888">The lowest premium available. Perfect for gamblers who like to take the Xanax risk themselves.</p>
+        </div>
+      </div>
+
       <div class="section-divider"></div>
 
-      <!-- Full OD Protection (shared) -->
-      <div class="card">
+      <!-- Full OD Protection (package + insurance) -->
+      <div class="card product-section" data-products="package insurance">
         <div class="card-header">
           <span>Full OD Protection</span>
         </div>
@@ -123,6 +151,25 @@
           <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
           <p class="intro-text" style="margin-top:0.75rem;color:#888">Coverage is valid for <strong style="color:#c8aa6e">7 days from purchase</strong>. Report any OD within that window and you're fully covered.</p>
           <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services replace your drugs.<br>We replace your drugs <em>and</em> cover your rehab.</p>
+        </div>
+      </div>
+
+      <!-- Ecstasy OD Protection (ecstasy_only) -->
+      <div class="card product-section hidden" data-product="ecstasy_only">
+        <div class="card-header">
+          <span>Ecstasy OD Protection</span>
+        </div>
+        <div class="card-body">
+          <div class="coverage-block">
+            <div class="coverage-scenario">
+              <span class="coverage-label">If you OD on Ecstasy:</span>
+              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
+              <span class="coverage-value">Payout: <strong>4x Xanax + 5x EDVD + 1x Ecstasy</strong> + rehab bonus</span>
+            </div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem;color:#e94560"><strong>Xanax ODs are not covered</strong> under this policy.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Coverage is valid for <strong style="color:#c8aa6e">7 days from purchase</strong>. Report any Ecstasy OD within that window and you're covered.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services give you a partial 4/3/1 refund.<br>We replace the <em>entire</em> package <em>and</em> cover your rehab.</p>
         </div>
       </div>
 
@@ -194,7 +241,7 @@
             <div class="step">
               <span class="step-number">2</span>
               <div class="step-text">
-                <strong>Request a Happy Jump Shield</strong>
+                <strong>Request Protezione Totale</strong>
               </div>
             </div>
             <div class="step">
@@ -206,7 +253,42 @@
             <div class="step">
               <span class="step-number">4</span>
               <div class="step-text">
-                <strong>Jump with your own drugs — you're covered</strong>
+                <strong>Jump with your own drugs — you're fully covered</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- How It Works — ecstasy only -->
+      <div class="card product-section hidden" data-product="ecstasy_only">
+        <div class="card-header">
+          <span>How It Works</span>
+        </div>
+        <div class="card-body">
+          <div class="steps">
+            <div class="step">
+              <span class="step-number">1</span>
+              <div class="step-text">
+                <strong>Take your 4x Xanax at your own risk</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">2</span>
+              <div class="step-text">
+                <strong>Survived? Enter your API key and request L'Ultimo Miglio</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">3</span>
+              <div class="step-text">
+                <strong>Send Giro the premium via in-game trade</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">4</span>
+              <div class="step-text">
+                <strong>Take your Ecstasy — if you OD, you get the full package back</strong>
               </div>
             </div>
           </div>
@@ -229,15 +311,15 @@
 
       <div class="section-divider"></div>
 
-      <!-- Safe Driver Discount -->
+      <!-- La Famiglia Loyalty -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Driver Discount</span>
+          <span>La Famiglia</span>
         </div>
         <div class="card-body">
-          <p class="intro-text">Every clean jump earns you a lower price on your next one.</p>
-          <p class="intro-text" style="margin-top:0.75rem">New clients start at our standard rate. Five clean jumps in a row and you're paying our loyalty rate — permanently, until an OD resets your count.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Because reliable jumpers deserve reliable pricing.</p>
+          <p class="intro-text">Every clean jump brings you closer to the inner circle.</p>
+          <p class="intro-text" style="margin-top:0.75rem">New clients start as a <strong>Straniero</strong> — a stranger. Prove yourself, and you rise through the ranks. Five clean jumps and you're <strong>Famiglia</strong> — family — with the best rate in the house.</p>
+          <p class="intro-text" style="margin-top:0.75rem;color:#888">Loyalty is rewarded. An OD resets your rank.</p>
           <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:1rem"></div>
         </div>
       </div>
@@ -274,9 +356,10 @@
       </div>
 
       <!-- Product selector (player view) -->
-      <div class="product-tabs" id="pv-product-tabs">
-        <button class="product-tab active" data-product="package">Happy Jump Package</button>
-        <button class="product-tab" data-product="insurance">Happy Jump Shield</button>
+      <div class="product-tabs three-tabs" id="pv-product-tabs">
+        <button class="product-tab active" data-product="package">La Bella Vita</button>
+        <button class="product-tab" data-product="insurance">Protezione Totale</button>
+        <button class="product-tab" data-product="ecstasy_only">L'Ultimo Miglio</button>
       </div>
 
       <!-- Personal pricing -->
@@ -318,10 +401,10 @@
         </div>
       </div>
 
-      <!-- Safe Drive progress on tier ladder -->
+      <!-- La Famiglia progress on tier ladder -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Driver Progress</span>
+          <span>La Famiglia Progress</span>
         </div>
         <div class="card-body">
           <div class="tier-ladder" id="pv-tier-ladder"></div>

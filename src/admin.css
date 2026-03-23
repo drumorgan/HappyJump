@@ -554,7 +554,7 @@
   font-weight: 600;
 }
 
-.tier-badge.new-client { background: #1a1a3a; color: #6b8eff; }
-.tier-badge.safe-driver { background: #1a3a1a; color: #6bff8e; }
-.tier-badge.road-warrior { background: #3a3a1a; color: #ffe66b; }
-.tier-badge.highway-legend { background: #3a1a3a; color: #c06bff; }
+.tier-badge.straniero { background: #3a3a1a; color: #ffe66b; }
+.tier-badge.amico { background: #1a3a1a; color: #6bff8e; }
+.tier-badge.braccio-destro { background: #1a1a3a; color: #6b8eff; }
+.tier-badge.famiglia { background: #3a1a3a; color: #c06bff; }

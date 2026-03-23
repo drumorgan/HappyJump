@@ -346,22 +346,22 @@ body {
   white-space: nowrap;
 }
 
-.tier-badge.new-client {
+.tier-badge.straniero {
   background: #3a3a1a;
   color: #ffe66b;
 }
 
-.tier-badge.safe-driver {
+.tier-badge.amico {
   background: #1a3a1a;
   color: #6bff8e;
 }
 
-.tier-badge.road-warrior {
+.tier-badge.braccio-destro {
   background: #1a1a3a;
   color: #6b8eff;
 }
 
-.tier-badge.highway-legend {
+.tier-badge.famiglia {
   background: #2a1a3a;
   color: #c06bff;
 }
@@ -668,8 +668,13 @@ body {
   transition: background 0.15s, color 0.15s;
 }
 
-.product-tab:first-child {
+.product-tab:not(:last-child) {
   border-right: 1px solid #2a2a3e;
+}
+
+.three-tabs .product-tab {
+  font-size: 0.85rem;
+  padding: 0.75rem 0.5rem;
 }
 
 .product-tab.active {
@@ -718,4 +723,14 @@ body {
 .product-badge.shield {
   background: #1a3a2a;
   color: #6bff8e;
+}
+
+.product-badge.ecstasy-only {
+  background: #3a2a1a;
+  color: #ffb86b;
+}
+
+/* Ecstasy-only shield feature accent */
+.shield-feature.eco-feature {
+  border-left-color: #ffb86b;
 }
