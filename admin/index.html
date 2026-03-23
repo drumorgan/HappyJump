@@ -64,23 +64,52 @@
         </div>
       </div>
 
-      <!-- Transaction filters -->
-      <div class="filter-bar">
-        <label>Filter:</label>
-        <select id="status-filter">
-          <option value="all">All</option>
-          <option value="requested">Requested</option>
-          <option value="purchased">Purchased</option>
-          <option value="closed_clean">Clean Closes</option>
-          <option value="od_xanax">Xanax OD</option>
-          <option value="od_ecstasy">Ecstasy OD</option>
-          <option value="payout_sent">Payout Sent</option>
-        </select>
-        <button id="refresh-btn" class="refresh-btn">Refresh</button>
+      <!-- Tab bar -->
+      <div class="tab-bar">
+        <button class="tab-btn active" data-tab="transactions">Transactions</button>
+        <button class="tab-btn" data-tab="clients">Clients</button>
       </div>
 
-      <!-- Transactions list -->
-      <div id="txn-list"></div>
+      <!-- Transactions tab -->
+      <div id="tab-transactions" class="tab-content active">
+        <!-- Transaction filters -->
+        <div class="filter-bar">
+          <label>Filter:</label>
+          <select id="status-filter">
+            <option value="all">All</option>
+            <option value="requested">Requested</option>
+            <option value="purchased">Purchased</option>
+            <option value="closed_clean">Clean Closes</option>
+            <option value="od_xanax">Xanax OD</option>
+            <option value="od_ecstasy">Ecstasy OD</option>
+            <option value="payout_sent">Payout Sent</option>
+          </select>
+          <button id="refresh-btn" class="refresh-btn">Refresh</button>
+        </div>
+
+        <!-- Transactions list -->
+        <div id="txn-list"></div>
+      </div>
+
+      <!-- Clients tab -->
+      <div id="tab-clients" class="tab-content">
+        <div class="filter-bar">
+          <label>Filter:</label>
+          <select id="client-tier-filter">
+            <option value="all">All Tiers</option>
+            <option value="legend">Highway Legend</option>
+            <option value="road">Road Warrior</option>
+            <option value="safe">Safe Driver</option>
+            <option value="new">New Client</option>
+          </select>
+          <label class="blocked-filter-label">
+            <input type="checkbox" id="client-blocked-filter" />
+            Blocked only
+          </label>
+          <button id="refresh-clients-btn" class="refresh-btn">Refresh</button>
+        </div>
+        <div id="client-list"></div>
+      </div>
 
       <!-- Config panel -->
       <div class="card" style="margin-top:1.5rem">

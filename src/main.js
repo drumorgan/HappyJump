@@ -135,6 +135,14 @@ form.addEventListener('submit', async (e) => {
       console.warn('History/prices fetch failed:', histErr.message);
     }
 
+    // Check if player is blocked
+    if (history.is_blocked) {
+      loadingEl.classList.add('hidden');
+      showToast('Your account has been blocked. Contact Giro for details.', 'error');
+      submitBtn.disabled = false;
+      return;
+    }
+
     loadingEl.classList.add('hidden');
     showPlayerView(player, config, history, key);
   } catch (err) {

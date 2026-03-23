@@ -371,3 +371,193 @@
 .status-pill.purchased { background: #3a3a1a; color: #ffe66b; }
 .status-pill.od { background: #3a1a1a; color: #ff6b81; }
 .status-pill.payout { background: #2a1a3a; color: #c06bff; }
+
+/* Tab bar */
+.tab-bar {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1rem;
+  border-bottom: 2px solid #2a2a3e;
+}
+
+.tab-btn {
+  padding: 0.6rem 1.25rem;
+  background: none;
+  border: none;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -2px;
+  color: #888;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.tab-btn:hover {
+  color: #ccc;
+}
+
+.tab-btn.active {
+  color: #e94560;
+  border-bottom-color: #e94560;
+}
+
+.tab-content {
+  display: none;
+}
+
+.tab-content.active {
+  display: block;
+}
+
+/* Client cards */
+.client-card {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  padding: 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.client-card.client-blocked {
+  border-color: #ff6b81;
+  background: #1a1a2e;
+}
+
+.client-top {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  margin-bottom: 0.5rem;
+}
+
+.blocked-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  background: #3a1a1a;
+  color: #ff6b81;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.client-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem;
+  font-size: 0.85rem;
+  color: #aaa;
+  margin-bottom: 0.75rem;
+}
+
+.client-stats span {
+  white-space: nowrap;
+}
+
+.client-notes-row {
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.client-notes-input {
+  flex: 1;
+  min-width: 150px;
+  padding: 0.4rem 0.6rem;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 4px;
+  color: #eee;
+  font-size: 0.85rem;
+}
+
+.client-notes-input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.btn-save-notes {
+  padding: 0.35rem 0.75rem;
+  background: #16213e;
+  border: 1px solid #2a2a3e;
+  border-radius: 4px;
+  color: #6b8eff;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-save-notes:hover {
+  background: #1a2745;
+  color: #8fa8ff;
+}
+
+.btn-save-notes:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.btn-block {
+  padding: 0.35rem 0.75rem;
+  background: #3a1a1a;
+  border: 1px solid #4a2a2a;
+  border-radius: 4px;
+  color: #ff6b81;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-block:hover {
+  background: #4a2a2a;
+}
+
+.btn-unblock {
+  padding: 0.35rem 0.75rem;
+  background: #1a3a1a;
+  border: 1px solid #2a4a2a;
+  border-radius: 4px;
+  color: #6bff8e;
+  font-size: 0.8rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-unblock:hover {
+  background: #2a4a2a;
+}
+
+.btn-block:disabled,
+.btn-unblock:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.blocked-filter-label {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+  color: #888;
+  font-size: 0.85rem;
+  cursor: pointer;
+}
+
+.blocked-filter-label input[type="checkbox"] {
+  accent-color: #e94560;
+}
+
+/* Tier badges in admin (reuse storefront styles) */
+.tier-badge {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  font-weight: 600;
+}
+
+.tier-badge.new-client { background: #1a1a3a; color: #6b8eff; }
+.tier-badge.safe-driver { background: #1a3a1a; color: #6bff8e; }
+.tier-badge.road-warrior { background: #3a3a1a; color: #ffe66b; }
+.tier-badge.highway-legend { background: #3a1a3a; color: #c06bff; }

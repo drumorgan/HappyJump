@@ -13,8 +13,24 @@ const txnList = document.getElementById('txn-list');
 const configForm = document.getElementById('config-form');
 const configHeader = document.getElementById('config-header');
 const configBody = document.getElementById('config-body');
+const clientList = document.getElementById('client-list');
+const clientTierFilter = document.getElementById('client-tier-filter');
+const clientBlockedFilter = document.getElementById('client-blocked-filter');
+const refreshClientsBtn = document.getElementById('refresh-clients-btn');
 
 const $ = (v) => '$' + Math.round(Number(v)).toLocaleString();
+
+// --- Tab switching ---
+document.querySelectorAll('.tab-btn').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
+    document.querySelectorAll('.tab-content').forEach((c) => c.classList.remove('active'));
+    btn.classList.add('active');
+    document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
+
+    if (btn.dataset.tab === 'clients') loadClients();
+  });
+});
 
 // --- Auth ---
 async function checkSession() {
@@ -118,17 +134,17 @@ function renderTransactions(txns) {
     let actionsHtml = '';
     switch (t.status) {
       case 'requested':
-        actionsHtml = `<button class="btn-purchase" data-id="${t.id}" data-action="purchased">Mark Purchased</button>`;
+        actionsHtml = `<button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>`;
         break;
       case 'purchased':
         actionsHtml = `
-          <button class="btn-od-xan" data-id="${t.id}" data-action="od_xanax">Xanax OD</button>
-          <button class="btn-od-ecs" data-id="${t.id}" data-action="od_ecstasy">Ecstasy OD</button>
-          <button class="btn-close" data-id="${t.id}" data-action="closed_clean">Close Clean</button>`;
+          <button class="btn-od-xan" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_xanax">Xanax OD</button>
+          <button class="btn-od-ecs" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_ecstasy">Ecstasy OD</button>
+          <button class="btn-close" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="closed_clean">Close Clean</button>`;
         break;
       case 'od_xanax':
       case 'od_ecstasy':
-        actionsHtml = `<button class="btn-payout" data-id="${t.id}" data-action="payout_sent">Payout Sent</button>`;
+        actionsHtml = `<button class="btn-payout" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="payout_sent">Payout Sent</button>`;
         break;
     }
 
@@ -154,11 +170,11 @@ function renderTransactions(txns) {
 
   // Bind action buttons
   txnList.querySelectorAll('[data-action]').forEach((btn) => {
-    btn.addEventListener('click', () => handleAction(btn.dataset.id, btn.dataset.action, btn));
+    btn.addEventListener('click', () => handleAction(btn.dataset.id, btn.dataset.tornId, btn.dataset.action, btn));
   });
 }
 
-async function handleAction(txnId, newStatus, btn) {
+async function handleAction(txnId, tornId, newStatus, btn) {
   btn.disabled = true;
   btn.textContent = 'Updating...';
 
@@ -200,9 +216,188 @@ async function handleAction(txnId, newStatus, btn) {
     return;
   }
 
+  // Sync client stats after status change
+  if (tornId) {
+    await syncClientStats(tornId);
+  }
+
   showToast(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
   await Promise.all([loadStats(), loadTransactions()]);
 }
+
+// --- Client stat sync ---
+function computeTier(cleanCount) {
+  if (cleanCount >= 5) return 'legend';
+  if (cleanCount >= 3) return 'road';
+  if (cleanCount >= 1) return 'safe';
+  return 'new';
+}
+
+async function syncClientStats(tornId) {
+  const { data: txns, error } = await supabase
+    .from('transactions')
+    .select('status, suggested_price, payout_amount')
+    .eq('torn_id', tornId);
+
+  if (error) {
+    console.warn('Failed to sync client stats:', error.message);
+    return;
+  }
+
+  const list = txns || [];
+  const cleanCount = list.filter((t) => t.status === 'closed_clean').length;
+  const txnCount = list.length;
+  const totalSpent = list
+    .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
+    .reduce((s, t) => s + (t.suggested_price || 0), 0);
+  const totalPayouts = list
+    .filter((t) => t.status === 'payout_sent')
+    .reduce((s, t) => s + (t.payout_amount || 0), 0);
+
+  await supabase.from('clients').update({
+    clean_count: cleanCount,
+    tier: computeTier(cleanCount),
+    transaction_count: txnCount,
+    total_spent: totalSpent,
+    total_payouts: totalPayouts,
+    updated_at: new Date().toISOString(),
+  }).eq('torn_id', tornId);
+}
+
+// --- Clients tab ---
+async function loadClients() {
+  let query = supabase
+    .from('clients')
+    .select('*')
+    .order('updated_at', { ascending: false });
+
+  const tierFilter = clientTierFilter.value;
+  if (tierFilter !== 'all') {
+    query = query.eq('tier', tierFilter);
+  }
+
+  if (clientBlockedFilter.checked) {
+    query = query.eq('is_blocked', true);
+  }
+
+  const { data: clients, error } = await query;
+  if (error) {
+    showToast('Failed to load clients: ' + error.message, 'error');
+    return;
+  }
+
+  renderClients(clients || []);
+}
+
+function getTierBadgeClass(tier) {
+  const map = { new: 'new-client', safe: 'safe-driver', road: 'road-warrior', legend: 'highway-legend' };
+  return map[tier] || 'new-client';
+}
+
+function getTierName(tier) {
+  const map = { new: 'New Client', safe: 'Safe Driver', road: 'Road Warrior', legend: 'Highway Legend' };
+  return map[tier] || 'New Client';
+}
+
+function renderClients(clients) {
+  if (clients.length === 0) {
+    clientList.innerHTML = '<div style="color:#888;text-align:center;padding:2rem">No clients found.</div>';
+    return;
+  }
+
+  clientList.innerHTML = clients.map((c) => {
+    const tierClass = getTierBadgeClass(c.tier);
+    const tierName = getTierName(c.tier);
+    const faction = c.torn_faction ? ` | ${esc(c.torn_faction)}` : '';
+    const firstSeen = new Date(c.first_seen_at).toLocaleDateString();
+    const blockedClass = c.is_blocked ? 'client-blocked' : '';
+    const blockedBtnClass = c.is_blocked ? 'btn-unblock' : 'btn-block';
+    const blockedBtnText = c.is_blocked ? 'Unblock' : 'Block';
+    const notesValue = esc(c.admin_notes || '');
+
+    return `<div class="client-card ${blockedClass}" data-torn-id="${esc(c.torn_id)}">
+      <div class="client-top">
+        <div>
+          <span class="txn-player">${esc(c.torn_name)}</span>
+          <span class="txn-player-id">[${esc(c.torn_id)}]</span>
+          ${c.is_blocked ? '<span class="blocked-badge">BLOCKED</span>' : ''}
+        </div>
+        <span class="tier-badge ${tierClass}">${esc(tierName)}</span>
+      </div>
+      <div class="client-stats">
+        <span>Lvl ${c.torn_level || '?'}${faction}</span>
+        <span>Clean: ${c.clean_count}</span>
+        <span>Deals: ${c.transaction_count}</span>
+        <span>Spent: ${$(c.total_spent)}</span>
+        <span>Payouts: ${$(c.total_payouts)}</span>
+        <span>Since: ${firstSeen}</span>
+      </div>
+      <div class="client-notes-row">
+        <input type="text" class="client-notes-input" placeholder="Admin notes..."
+               value="${notesValue}" data-torn-id="${esc(c.torn_id)}" />
+        <button class="btn-save-notes" data-torn-id="${esc(c.torn_id)}">Save</button>
+        <button class="${blockedBtnClass}" data-torn-id="${esc(c.torn_id)}" data-blocked="${c.is_blocked}">${blockedBtnText}</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  // Bind save-notes buttons
+  clientList.querySelectorAll('.btn-save-notes').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const tornId = btn.dataset.tornId;
+      const input = clientList.querySelector(`.client-notes-input[data-torn-id="${tornId}"]`);
+      const notes = input.value;
+
+      btn.disabled = true;
+      btn.textContent = 'Saving...';
+
+      const { error } = await supabase
+        .from('clients')
+        .update({ admin_notes: notes, updated_at: new Date().toISOString() })
+        .eq('torn_id', tornId);
+
+      btn.disabled = false;
+      btn.textContent = 'Save';
+
+      if (error) {
+        showToast('Failed to save notes: ' + error.message, 'error');
+      } else {
+        showToast('Notes saved', 'success');
+      }
+    });
+  });
+
+  // Bind block/unblock buttons
+  clientList.querySelectorAll('.btn-block, .btn-unblock').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const tornId = btn.dataset.tornId;
+      const isCurrentlyBlocked = btn.dataset.blocked === 'true';
+      const newBlocked = !isCurrentlyBlocked;
+
+      btn.disabled = true;
+      btn.textContent = 'Updating...';
+
+      const { error } = await supabase
+        .from('clients')
+        .update({ is_blocked: newBlocked, updated_at: new Date().toISOString() })
+        .eq('torn_id', tornId);
+
+      if (error) {
+        showToast('Failed to update: ' + error.message, 'error');
+        btn.disabled = false;
+        btn.textContent = isCurrentlyBlocked ? 'Unblock' : 'Block';
+      } else {
+        showToast(newBlocked ? 'Client blocked' : 'Client unblocked', 'success');
+        await loadClients();
+      }
+    });
+  });
+}
+
+// Client filters
+clientTierFilter.addEventListener('change', loadClients);
+clientBlockedFilter.addEventListener('change', loadClients);
+refreshClientsBtn.addEventListener('click', loadClients);
 
 // --- Config ---
 async function loadConfig() {
