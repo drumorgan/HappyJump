@@ -662,6 +662,27 @@ async function handleReportOd(body: any) {
 
   if (updateErr) return json({ error: updateErr.message }, 500);
 
+  const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
+
+  // Fire email BEFORE client stats sync — the subsequent await DB operations
+  // keep the isolate alive long enough for the SMTP send to complete in background.
+  // (Awaiting the email at the end of the function caused EarlyDrop — the runtime
+  // killed the isolate before the SMTP connection could finish.)
+  sendNotificationEmail(
+    `OD Payout Request - ${identData.name} [${tornId}] - ${drugLabel}`,
+    [
+      `OD verified and payout required!`,
+      ``,
+      `Player: ${identData.name} [${tornId}]`,
+      `OD Type: ${drugLabel}`,
+      `Payout Amount: ${formatMoney(Number(payoutAmount))}`,
+      ``,
+      `Transaction ID: ${txn_id}`,
+      ``,
+      `Log in to the admin dashboard to send the payout.`,
+    ].join('\n'),
+  );
+
   // Sync client stats (clean streak recomputed from transactions)
   const { data: allTxns } = await supabase
     .from('transactions')
@@ -688,24 +709,6 @@ async function handleReportOd(body: any) {
     total_payouts: totalPayouts,
     updated_at: new Date().toISOString(),
   }, { onConflict: 'torn_id' });
-
-  const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
-
-  // Await email so it completes before the response ends the isolate
-  await sendNotificationEmail(
-    `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
-    [
-      `OD verified and payout required!`,
-      ``,
-      `Player: ${identData.name} [${tornId}]`,
-      `OD Type: ${drugLabel}`,
-      `Payout Amount: ${formatMoney(Number(payoutAmount))}`,
-      ``,
-      `Transaction ID: ${txn_id}`,
-      ``,
-      `Log in to the admin dashboard to send the payout.`,
-    ].join('\n'),
-  );
 
   return json({
     verified: true,
