@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd } from './api.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -8,12 +8,13 @@ const loadingEl = document.getElementById('loading');
 const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
+let currentApiKey = null;
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
 // --- Tier definitions (margins loaded from config) ---
 const TIERS = [
-  { key: 'new', name: 'New Client', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
+  { key: 'new', name: 'Standard', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
   { key: 'safe', name: 'Safe Driver', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'safe-driver' },
   { key: 'road', name: 'Road Warrior', min: 3, marginField: 'margin_road', margin: 0.12, css: 'road-warrior' },
   { key: 'legend', name: 'Highway Legend', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'highway-legend' },
@@ -145,6 +146,7 @@ form.addEventListener('submit', async (e) => {
     }
 
     loadingEl.classList.add('hidden');
+    currentApiKey = key;
     showPlayerView(player, config, history, key);
   } catch (err) {
     loadingEl.classList.add('hidden');
@@ -270,11 +272,21 @@ topForm.addEventListener('submit', (e) => {
 function renderActiveDeal(transactions) {
   const activeDealSection = document.getElementById('active-deal-section');
   const activeTxn = (transactions || []).find(
-    (t) => t.status === 'requested' || t.status === 'purchased'
+    (t) => t.status === 'requested' || t.status === 'purchased' || t.status === 'od_xanax' || t.status === 'od_ecstasy'
   );
   if (activeTxn) {
     activeDealSection.classList.remove('hidden');
     const body = document.getElementById('active-deal-body');
+
+    if (activeTxn.status === 'od_xanax' || activeTxn.status === 'od_ecstasy') {
+      const drugName = activeTxn.status === 'od_xanax' ? 'Xanax' : 'Ecstasy';
+      body.innerHTML = `
+        <div class="deal-status od-verified">OD on ${esc(drugName)} verified</div>
+        <div class="deal-detail">Giro has been notified and will send your payout shortly.</div>
+        <div class="deal-detail">Payout: ${$(activeTxn.payout_amount || 0)}</div>`;
+      return;
+    }
+
     const statusLabel = activeTxn.status === 'requested'
       ? 'Waiting for Giro to initiate the trade in-game'
       : 'Trade complete — insurance window active';
@@ -296,8 +308,56 @@ function renderActiveDeal(transactions) {
       } else {
         details += `<div class="deal-detail">Coverage window has ended</div>`;
       }
+      details += `
+        <div class="od-report-section">
+          <button id="report-od-btn" class="btn-report-od" data-txn-id="${activeTxn.id}">Report OD &amp; Request Payout</button>
+          <div id="od-report-status"></div>
+        </div>`;
     }
     body.innerHTML = details;
+
+    // Bind the report OD button
+    const reportBtn = document.getElementById('report-od-btn');
+    if (reportBtn) {
+      reportBtn.addEventListener('click', handleReportOd);
+    }
+  }
+}
+
+async function handleReportOd(e) {
+  const btn = e.target;
+  const txnId = btn.dataset.txnId;
+  const statusEl = document.getElementById('od-report-status');
+
+  if (!currentApiKey) {
+    statusEl.textContent = 'Session expired — please re-enter your API key.';
+    statusEl.className = 'od-report-error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  statusEl.textContent = '';
+
+  try {
+    const result = await reportOd(currentApiKey, txnId);
+    if (result.verified) {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-success';
+      // Refresh the active deal view
+      const history = await getPlayerTransactions(result.torn_id || '');
+      renderActiveDeal(history.transactions);
+    } else {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-error';
+      btn.disabled = false;
+      btn.textContent = 'Report OD & Request Payout';
+    }
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.className = 'od-report-error';
+    btn.disabled = false;
+    btn.textContent = 'Report OD & Request Payout';
   }
 }
 

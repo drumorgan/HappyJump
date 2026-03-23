@@ -112,3 +112,10 @@ export async function getAvailability() {
 export async function updateConfig(updates) {
   return gateway('update-config', updates);
 }
+
+/**
+ * Report and verify an OD — client provides their API key for verification.
+ */
+export async function reportOd(apiKey, txnId) {
+  return gateway('report-od', { api_key: apiKey, txn_id: txnId });
+}
