@@ -579,43 +579,42 @@ async function handleReportOd(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'purchased') return json({ error: 'Transaction is not in active insurance window' }, 400);
 
-  // Check the player's current status for OD (works for Xanax which hospitalizes)
-  const status = (identData.status?.description || '').toLowerCase();
-  const state = (identData.status?.state || '').toLowerCase();
+  // Strip HTML tags helper
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
 
-  const isHospitalized = state === 'hospital';
-  const odMatch = status.match(/overdos\w*\s+on\s+(\w+)/i);
-  let odDrug = odMatch ? odMatch[1].toLowerCase() : null;
+  // Verify OD via events log — works for both Xanax (hospitalizes) and Ecstasy (does NOT hospitalize).
+  // We always use the events log so we can capture the event timestamp for replay prevention.
+  const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
+  const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
+  const eventsUrl = fromTs
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+  const eventsRes = await fetch(eventsUrl);
+  const eventsData = await eventsRes.json();
 
-  // If not currently hospitalized with OD status, check events log as fallback.
-  // Ecstasy OD in Torn does NOT hospitalize the player, so we must check events.
-  if (!isHospitalized || !odDrug) {
-    const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
-    const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
-    const eventsUrl = fromTs
-      ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
-      : `${TORN_API}/user/?selections=events&key=${api_key}`;
-    const eventsRes = await fetch(eventsUrl);
-    const eventsData = await eventsRes.json();
+  let odDrug: string | null = null;
+  let odEventTimestamp: number | null = null;
 
-    if (!eventsData.error && eventsData.events) {
-      const events = Object.values(eventsData.events) as any[];
-      // Look for OD events — event text contains "overdosed" and drug name
-      for (const evt of events) {
-        const evtText = (evt.event || '').toLowerCase();
-        if (evtText.includes('overdos')) {
-          if (evtText.includes('xanax')) { odDrug = 'xanax'; break; }
-          if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; break; }
-        }
+  if (!eventsData.error && eventsData.events) {
+    const events = Object.values(eventsData.events) as any[];
+    // Sort by timestamp descending so we find the most recent OD first
+    events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+    for (const evt of events) {
+      // Strip HTML tags — Torn API event text contains <a> tags etc.
+      const evtText = stripHtml(evt.event || '').toLowerCase();
+      if (evtText.includes('overdos')) {
+        if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
+        if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
       }
     }
+  }
 
-    if (!odDrug) {
-      return json({
-        verified: false,
-        detail: `Could not verify OD. Current status: "${identData.status?.description || 'unknown'}". No recent overdose on Xanax or Ecstasy found in your event log. If you just OD'd, wait a moment and try again.`,
-      });
-    }
+  if (!odDrug) {
+    const playerStatus = identData.status?.description || 'unknown';
+    return json({
+      verified: false,
+      detail: `Could not verify OD. No overdose on Xanax or Ecstasy found in your event log since this transaction started. Current status: "${playerStatus}". If you just OD'd, wait a moment and try again.`,
+    });
   }
 
   if (odDrug !== 'xanax' && odDrug !== 'ecstasy') {
@@ -625,13 +624,34 @@ async function handleReportOd(body: any) {
     });
   }
 
+  // Prevent replay: check that no other transaction already used this same OD event
+  if (odEventTimestamp) {
+    const { data: existing } = await supabase
+      .from('transactions')
+      .select('id')
+      .eq('torn_id', tornId)
+      .eq('od_event_timestamp', odEventTimestamp)
+      .neq('id', txn_id)
+      .limit(1);
+
+    if (existing && existing.length > 0) {
+      return json({
+        verified: false,
+        detail: `This overdose event has already been used for a previous payout claim.`,
+      });
+    }
+  }
+
   // Verified — update the transaction
   const odStatus = odDrug === 'xanax' ? 'od_xanax' : 'od_ecstasy';
   const payoutAmount = odDrug === 'xanax' ? txn.xanax_payout : txn.ecstasy_payout;
 
+  const updatePayload: any = { status: odStatus, payout_amount: payoutAmount };
+  if (odEventTimestamp) updatePayload.od_event_timestamp = odEventTimestamp;
+
   const { error: updateErr } = await supabase
     .from('transactions')
-    .update({ status: odStatus, payout_amount: payoutAmount })
+    .update(updatePayload)
     .eq('id', txn_id);
 
   if (updateErr) return json({ error: updateErr.message }, 500);
