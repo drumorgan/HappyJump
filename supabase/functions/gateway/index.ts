@@ -124,7 +124,7 @@ async function autoCloseExpired(supabase: any) {
     if (cfg) {
       await supabase
         .from('config')
-        .update({ current_reserve: cfg.current_reserve + (txn.ecstasy_payout || 0) })
+        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
         .eq('id', 1);
     }
 
@@ -140,10 +140,10 @@ async function autoCloseExpired(supabase: any) {
       const txnCount = txns.length;
       const totalSpent = txns
         .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-        .reduce((s: number, t: any) => s + (t.suggested_price || 0), 0);
+        .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
       const totalPayouts = txns
         .filter((t: any) => t.status === 'payout_sent')
-        .reduce((s: number, t: any) => s + (t.payout_amount || 0), 0);
+        .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
       await supabase.from('clients').upsert({
         torn_id: txn.torn_id,
@@ -236,13 +236,19 @@ async function handleCreateTransaction(body: any) {
     return json({ error: 'You already have an active deal. Wait for it to close before purchasing again.' }, 400);
   }
 
-  // Calculate costs
-  const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-  const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
-  const ecstasyPayout = packageCost + config.rehab_bonus;
+  // Calculate costs (bigint columns come back as strings from Supabase)
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+  const reserve = Number(config.current_reserve);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const xanaxPayout = 4 * xanaxPrice + rehabBonus;
+  const ecstasyPayout = packageCost + rehabBonus;
 
   // Check availability — reserve already reflects locked liabilities for active sales
-  const available = Math.floor(config.current_reserve / ecstasyPayout);
+  const available = Math.floor(reserve / ecstasyPayout);
   if (available <= 0) {
     return json({ error: 'No packages available right now. Check back later.' }, 400);
   }
@@ -288,7 +294,7 @@ async function handleCreateTransaction(body: any) {
   // Lock worst-case liability from reserve for this new active sale
   await supabase
     .from('config')
-    .update({ current_reserve: config.current_reserve - ecstasyPayout })
+    .update({ current_reserve: reserve - ecstasyPayout })
     .eq('id', 1);
 
   // Fire-and-forget email notification for new purchase request
@@ -323,10 +329,10 @@ async function handleCreateTransaction(body: any) {
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s: number, t: any) => s + (t.suggested_price || 0), 0);
+    .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
   const totalPayouts = txns
     .filter((t: any) => t.status === 'payout_sent')
-    .reduce((s: number, t: any) => s + (t.payout_amount || 0), 0);
+    .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
   await supabase.from('clients').upsert({
     torn_id: String(torn_id),
@@ -394,11 +400,11 @@ async function handleGetAvailability() {
 
   if (configErr || !config) return json({ error: 'Failed to load config' }, 500);
 
-  const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-  const ecstasyPayout = packageCost + config.rehab_bonus;
+  const packageCost = 4 * Number(config.xanax_price) + 5 * Number(config.edvd_price) + Number(config.ecstasy_price);
+  const ecstasyPayout = packageCost + Number(config.rehab_bonus);
   // Reserve already reflects locked liabilities for active sales,
   // so available = floor(reserve / worst_case_payout) with no active subtraction
-  const available = Math.max(0, Math.floor(config.current_reserve / ecstasyPayout));
+  const available = Math.max(0, Math.floor(Number(config.current_reserve) / ecstasyPayout));
 
   let nextCloseAt: string | null = null;
   if (available <= 0) {
@@ -518,10 +524,10 @@ async function handleReportOd(body: any) {
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s: number, t: any) => s + (t.suggested_price || 0), 0);
+    .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
   const totalPayouts = txns
     .filter((t: any) => t.status === 'payout_sent')
-    .reduce((s: number, t: any) => s + (t.payout_amount || 0), 0);
+    .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
   await supabase.from('clients').upsert({
     torn_id: tornId,
