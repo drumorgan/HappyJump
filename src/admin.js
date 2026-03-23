@@ -103,8 +103,6 @@ async function loadStats() {
 
   document.getElementById('stat-active').textContent = active;
   document.getElementById('stat-clean').textContent = clean;
-  document.getElementById('stat-xan-od').textContent = xanOd;
-  document.getElementById('stat-ecs-od').textContent = ecsOd;
   document.getElementById('stat-revenue').textContent = $(revenue);
   document.getElementById('stat-paid').textContent = $(paid);
   document.getElementById('stat-net').textContent = $(net);
@@ -119,7 +117,9 @@ async function loadTransactions() {
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (filter !== 'all') {
+  if (filter === 'active') {
+    query = query.in('status', ['requested', 'purchased']);
+  } else if (filter !== 'all') {
     query = query.eq('status', filter);
   }
 
