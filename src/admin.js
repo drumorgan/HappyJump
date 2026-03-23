@@ -447,17 +447,29 @@ configForm.addEventListener('submit', async (e) => {
     current_reserve: Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, '')),
   };
 
-  const { data, error } = await supabase.functions.invoke('update-config', {
-    body: updates,
-  });
+  let data, error;
+  try {
+    const res = await supabase.functions.invoke('update-config', {
+      body: updates,
+    });
+    data = res.data;
+    error = res.error;
+    // If error has a ReadableStream body, read it for the real message
+    if (error?.context?.body instanceof ReadableStream) {
+      const text = await new Response(error.context.body).text();
+      try { const parsed = JSON.parse(text); error = { message: parsed.error || text }; }
+      catch { error = { message: text }; }
+    }
+  } catch (e) {
+    error = { message: e.message };
+  }
 
   saveBtn.disabled = false;
 
   if (error || data?.error) {
     statusEl.textContent = 'Save failed';
     statusEl.style.color = '#ff6b81';
-    const errMsg = data?.error || error?.context?.body || error?.message || 'Unknown error';
-    showToast('Config save failed: ' + errMsg, 'error');
+    showToast('Config save failed: ' + (data?.error || error?.message || 'Unknown error'), 'error');
     return;
   }
 
