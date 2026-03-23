@@ -17,6 +17,7 @@ Web application for selling insured Happy Jump drug packages in the browser RPG 
 ## Project Structure
 
 - `dist/` — Vite build output, FTP-deployed to `public_html/happyjump.girovagabondo.com/`
+- `supabase/functions/gateway/index.ts` — **single Edge Function** handling all server-side logic
 - Supabase Edge Functions deployed separately via Supabase CLI
 
 ## Business Logic
@@ -143,14 +144,35 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 - Config panel: Edit all pricing variables and current reserve
 - Auto-close: Scheduled function closes `purchased` transactions where `closes_at < now()`
 
+## Edge Function Architecture
+
+**All server-side logic goes through a single `gateway` Edge Function.** Do NOT create separate Edge Functions — add new actions to the gateway's router instead.
+
+- **Location:** `supabase/functions/gateway/index.ts`
+- **JWT verification:** OFF (disabled in Supabase dashboard). Public actions have no auth; admin actions verify auth internally.
+- **Routing:** Client sends `{ action: "action-name", ...payload }` — gateway switches on `action`.
+- **Client helper:** `src/api.js` has a `gateway()` function — all client calls go through it.
+- **Deploy:** `supabase functions deploy gateway --no-verify-jwt`
+
+### Current actions
+
+| Action                   | Auth     | Description                              |
+|--------------------------|----------|------------------------------------------|
+| `validate-player`        | None     | Verify Torn identity via API key         |
+| `torn-proxy`             | None     | Proxy arbitrary Torn API calls           |
+| `create-transaction`     | None     | Create a new purchase request            |
+| `get-player-transactions`| None     | Fetch a player's transaction history     |
+| `get-availability`       | None     | Check package availability               |
+| `update-config`          | Admin    | Update operator config (requires Supabase Auth session) |
+
 ## Torn API Integration
 
-All calls go through Supabase Edge Function proxy. Client never sees API keys.
+All calls go through the gateway Edge Function. Client never sees API keys.
 
-### Endpoints
+### Torn API Endpoints Used
 
-- `GET /user/{torn_id}` — validate player, get name/faction/level
-- `GET /market/itemmarket` — live prices for Xanax (ID 206), EDVD, Ecstasy (confirm item IDs)
+- `GET /user/?selections=basic,profile` — validate player, get name/faction/level
+- `GET /torn/?selections=items` — item market prices for Xanax (ID 206), EDVD (366), Ecstasy (197)
 - `GET /user/{torn_id}/events` — verify OD event in log
 
 Cache market prices (refresh every 15 min max). Client-submitted API key used only once for identity verification, never stored.
@@ -167,7 +189,7 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 
 - Vite builds to `dist/`
 - FTP deploys `dist/` to document root at `/home/nopape6/happyjump.girovagabondo.com/` (FTP_SERVER_DIR=/)
-- Supabase Edge Functions deployed separately via Supabase CLI
+- Supabase Edge Functions: single `gateway` function deployed via `supabase functions deploy gateway --no-verify-jwt`
 - **Hosting:** InMotion cPanel, subdomain document root is `/home/nopape6/happyjump.girovagabondo.com/` (NOT inside `public_html/`)
 
 ## Important Gotchas
@@ -177,3 +199,4 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 - **Supabase RLS:** Lock `transactions` table so clients can only insert, never read other clients' rows. Admin operations go through service role key in Edge Functions only.
 - **Price snapshots:** Always snapshot pricing at time of transaction creation — config changes mid-week must not affect open transactions.
 - **1-week timer:** Starts at `purchased_at`, not `created_at`. Auto-close must be idempotent.
+- **Single gateway pattern:** NEVER create new Edge Functions. Add new actions to `supabase/functions/gateway/index.ts` and route via the `action` field. JWT must stay OFF — admin auth is handled inside the gateway.
