@@ -216,12 +216,12 @@ async function loadConfig() {
     return;
   }
 
-  document.getElementById('cfg-xanax-price').value = data.xanax_price;
-  document.getElementById('cfg-edvd-price').value = data.edvd_price;
-  document.getElementById('cfg-ecstasy-price').value = data.ecstasy_price;
+  document.getElementById('cfg-xanax-price').value = '$' + Number(data.xanax_price).toLocaleString();
+  document.getElementById('cfg-edvd-price').value = '$' + Number(data.edvd_price).toLocaleString();
+  document.getElementById('cfg-ecstasy-price').value = '$' + Number(data.ecstasy_price).toLocaleString();
   document.getElementById('cfg-xanax-od').value = data.xanax_od_pct;
   document.getElementById('cfg-ecstasy-od').value = data.ecstasy_od_pct;
-  document.getElementById('cfg-rehab').value = data.rehab_bonus;
+  document.getElementById('cfg-rehab').value = '$' + Number(data.rehab_bonus).toLocaleString();
   document.getElementById('cfg-margin-new').value = data.margin_new;
   document.getElementById('cfg-margin-safe').value = data.margin_safe;
   document.getElementById('cfg-margin-road').value = data.margin_road;
@@ -238,12 +238,12 @@ configForm.addEventListener('submit', async (e) => {
   statusEl.style.color = '#888';
 
   const updates = {
-    xanax_price: Number(document.getElementById('cfg-xanax-price').value),
-    edvd_price: Number(document.getElementById('cfg-edvd-price').value),
-    ecstasy_price: Number(document.getElementById('cfg-ecstasy-price').value),
+    xanax_price: Number(document.getElementById('cfg-xanax-price').value.replace(/[^0-9]/g, '')),
+    edvd_price: Number(document.getElementById('cfg-edvd-price').value.replace(/[^0-9]/g, '')),
+    ecstasy_price: Number(document.getElementById('cfg-ecstasy-price').value.replace(/[^0-9]/g, '')),
     xanax_od_pct: Number(document.getElementById('cfg-xanax-od').value),
     ecstasy_od_pct: Number(document.getElementById('cfg-ecstasy-od').value),
-    rehab_bonus: Number(document.getElementById('cfg-rehab').value),
+    rehab_bonus: Number(document.getElementById('cfg-rehab').value.replace(/[^0-9]/g, '')),
     margin_new: Number(document.getElementById('cfg-margin-new').value),
     margin_safe: Number(document.getElementById('cfg-margin-safe').value),
     margin_road: Number(document.getElementById('cfg-margin-road').value),
@@ -329,9 +329,9 @@ document.getElementById('fetch-prices-btn').addEventListener('click', async () =
 
   try {
     const prices = await fetchMarketPrices(apiKey);
-    if (prices.xanax) document.getElementById('cfg-xanax-price').value = prices.xanax.market_value;
-    if (prices.edvd) document.getElementById('cfg-edvd-price').value = prices.edvd.market_value;
-    if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = prices.ecstasy.market_value;
+    if (prices.xanax) document.getElementById('cfg-xanax-price').value = '$' + Number(prices.xanax.market_value).toLocaleString();
+    if (prices.edvd) document.getElementById('cfg-edvd-price').value = '$' + Number(prices.edvd.market_value).toLocaleString();
+    if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = '$' + Number(prices.ecstasy.market_value).toLocaleString();
     showToast('Prices updated from Torn market — click Save Config to apply', 'success');
   } catch (err) {
     showToast('Failed to fetch prices: ' + err.message, 'error');
