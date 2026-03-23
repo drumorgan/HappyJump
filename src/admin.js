@@ -456,7 +456,8 @@ configForm.addEventListener('submit', async (e) => {
   if (error || data?.error) {
     statusEl.textContent = 'Save failed';
     statusEl.style.color = '#ff6b81';
-    showToast('Config save failed: ' + (data?.error || error.message), 'error');
+    const errMsg = data?.error || error?.context?.body || error?.message || 'Unknown error';
+    showToast('Config save failed: ' + errMsg, 'error');
     return;
   }
 
