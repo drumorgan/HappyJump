@@ -369,21 +369,6 @@
   color: #6bff8e;
 }
 
-/* Status badges reused from main */
-.status-pill {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.status-pill.clean { background: #1a3a1a; color: #6bff8e; }
-.status-pill.requested { background: #1a1a3a; color: #6b8eff; }
-.status-pill.purchased { background: #3a3a1a; color: #ffe66b; }
-.status-pill.od { background: #3a1a1a; color: #ff6b81; }
-.status-pill.payout { background: #2a1a3a; color: #c06bff; }
-
 /* Tab bar */
 .tab-bar {
   display: flex;

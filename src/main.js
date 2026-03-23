@@ -1,4 +1,5 @@
 import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd } from './api.js';
+import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -11,6 +12,8 @@ const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
+
+function showToast(msg, type) { _showToast(toastEl, msg, type); }
 
 // --- Tier definitions (margins loaded from config) ---
 const TIERS = [
@@ -54,7 +57,6 @@ function calcPricing(config, margin) {
   return { packageCost, xanaxPayout, ecstasyPayout, trueCost, suggestedPrice };
 }
 
-const $ = (v) => '$' + Math.round(v).toLocaleString();
 
 // --- Init: load anonymous storefront data ---
 async function initStorefront() {
@@ -387,26 +389,6 @@ function renderHistory(transactions) {
   body.innerHTML = html;
 }
 
-function getStatusPillClass(status) {
-  if (status === 'closed_clean') return 'clean';
-  if (status === 'requested') return 'requested';
-  if (status === 'purchased') return 'purchased';
-  if (status === 'od_xanax' || status === 'od_ecstasy') return 'od';
-  if (status === 'payout_sent') return 'payout';
-  return '';
-}
-
-function formatStatus(status) {
-  const map = {
-    requested: 'Requested',
-    purchased: 'In Progress',
-    closed_clean: 'Clean',
-    od_xanax: 'Xanax OD',
-    od_ecstasy: 'Ecstasy OD',
-    payout_sent: 'Paid Out',
-  };
-  return map[status] || status;
-}
 
 function renderTierLadder(cleanCount, config) {
   const ladder = document.getElementById('pv-tier-ladder');
@@ -425,15 +407,3 @@ function renderTierLadder(cleanCount, config) {
   }).join('');
 }
 
-// --- Helpers ---
-
-function showToast(msg, type = 'error') {
-  toastEl.textContent = msg;
-  toastEl.className = `toast ${type}`;
-}
-
-function esc(str) {
-  const el = document.createElement('span');
-  el.textContent = str ?? '';
-  return el.innerHTML;
-}
