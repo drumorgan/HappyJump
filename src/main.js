@@ -8,6 +8,8 @@ const loadingEl = document.getElementById('loading');
 const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
+const topForm = document.getElementById('api-form-top');
+const topInput = document.getElementById('api-key-top');
 
 // --- Tier definitions (margins loaded from config) ---
 const TIERS = [
@@ -246,6 +248,15 @@ function showPlayerView(player, config, history, apiKey) {
     toastEl.classList.add('hidden');
   };
 }
+
+// --- Top form: copy value into main form and submit ---
+topForm.addEventListener('submit', (e) => {
+  e.preventDefault();
+  const key = topInput.value.trim();
+  if (!key) return showToast('Please enter an API key.', 'error');
+  input.value = key;
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+});
 
 function renderActiveDeal(transactions) {
   const activeDealSection = document.getElementById('active-deal-section');

@@ -408,6 +408,42 @@ body {
   border-color: #e94560;
 }
 
+#api-form-top {
+  display: flex;
+  gap: 0.5rem;
+}
+
+#api-key-top {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: #111;
+  border: 1px solid #333;
+  border-radius: 6px;
+  color: #eee;
+  font-size: 1rem;
+  font-family: monospace;
+}
+
+#api-key-top:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.submit-btn-alt {
+  padding: 0.75rem 1.5rem;
+  background: #e94560;
+  color: #fff;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.submit-btn-alt:hover {
+  background: #d63851;
+}
+
 #submit-btn {
   padding: 0.75rem 1.5rem;
   background: #e94560;
