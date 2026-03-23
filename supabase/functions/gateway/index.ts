@@ -423,6 +423,105 @@ async function handleGetAvailability() {
   return json({ available, nextCloseAt });
 }
 
+async function handleAdminUpdateStatus(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { txn_id, torn_id, new_status } = body;
+  if (!txn_id || !new_status) return json({ error: 'Missing txn_id or new_status' }, 400);
+
+  const validStatuses = ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
+  if (!validStatuses.includes(new_status)) return json({ error: 'Invalid status' }, 400);
+
+  const supabase = serviceClient();
+
+  // Build update payload
+  const updates: Record<string, unknown> = { status: new_status };
+
+  if (new_status === 'purchased') {
+    const now = new Date().toISOString();
+    updates.purchased_at = now;
+    updates.closes_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  }
+
+  if (new_status === 'closed_clean' || new_status === 'payout_sent') {
+    updates.closed_at = new Date().toISOString();
+  }
+
+  // For OD statuses, calculate payout from snapshots
+  if (new_status === 'od_xanax' || new_status === 'od_ecstasy') {
+    const { data: txn } = await supabase
+      .from('transactions')
+      .select('xanax_payout, ecstasy_payout')
+      .eq('id', txn_id)
+      .single();
+
+    if (txn) {
+      updates.payout_amount = new_status === 'od_xanax'
+        ? Number(txn.xanax_payout)
+        : Number(txn.ecstasy_payout);
+    }
+  }
+
+  // Apply the status update
+  const { error: updateErr } = await supabase
+    .from('transactions')
+    .update(updates)
+    .eq('id', txn_id);
+
+  if (updateErr) return json({ error: updateErr.message }, 500);
+
+  // Reserve management: release lock on close/payout
+  if (new_status === 'closed_clean' || new_status === 'payout_sent') {
+    const { data: txn } = await supabase
+      .from('transactions')
+      .select('ecstasy_payout, payout_amount')
+      .eq('id', txn_id)
+      .single();
+
+    if (txn) {
+      const { data: cfg } = await supabase.from('config').select('current_reserve').single();
+      if (cfg) {
+        let newReserve = Number(cfg.current_reserve);
+        if (new_status === 'closed_clean') newReserve += Number(txn.ecstasy_payout || 0);
+        if (new_status === 'payout_sent') newReserve += Number(txn.ecstasy_payout || 0) - Number(txn.payout_amount || 0);
+
+        await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
+      }
+    }
+  }
+
+  // Sync client stats
+  if (torn_id) {
+    const { data: allTxns } = await supabase
+      .from('transactions')
+      .select('status, suggested_price, payout_amount, created_at')
+      .eq('torn_id', String(torn_id));
+
+    const txns = allTxns || [];
+    const cleanCount = computeCleanStreak(txns);
+    const txnCount = txns.length;
+    const totalSpent = txns
+      .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
+      .reduce((s: number, t: any) => s + Number(t.suggested_price || 0), 0);
+    const totalPayouts = txns
+      .filter((t: any) => t.status === 'payout_sent')
+      .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
+
+    await supabase.from('clients').upsert({
+      torn_id: String(torn_id),
+      clean_count: cleanCount,
+      tier: computeTier(cleanCount),
+      transaction_count: txnCount,
+      total_spent: totalSpent,
+      total_payouts: totalPayouts,
+      updated_at: new Date().toISOString(),
+    }, { onConflict: 'torn_id' });
+  }
+
+  return json({ success: true, status: new_status });
+}
+
 async function handleUpdateConfig(req: Request, body: any) {
   const user = await requireAuth(req);
   if (!user) return json({ error: 'Not authenticated' }, 401);
@@ -587,6 +686,8 @@ serve(async (req) => {
         return await handleGetPlayerTransactions(body);
       case 'get-availability':
         return await handleGetAvailability();
+      case 'admin-update-status':
+        return await handleAdminUpdateStatus(req, body);
       case 'update-config':
         return await handleUpdateConfig(req, body);
       case 'report-od':

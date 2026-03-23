@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability } from './api.js';
 
 // --- DOM refs ---
 const loginSection = document.getElementById('login-section');
@@ -67,34 +67,12 @@ async function showDashboard() {
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 }
 
-// --- Auto-close expired transactions ---
+// --- Auto-close expired transactions (triggers server-side via gateway) ---
 async function autoCloseExpired() {
-  const now = new Date().toISOString();
-  const { data: expired } = await supabase
-    .from('transactions')
-    .select('id, torn_id, ecstasy_payout')
-    .eq('status', 'purchased')
-    .lt('closes_at', now);
-
-  if (!expired || expired.length === 0) return;
-
-  for (const txn of expired) {
-    await supabase
-      .from('transactions')
-      .update({ status: 'closed_clean', closed_at: now })
-      .eq('id', txn.id);
-
-    // Release locked reserve
-    const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-    if (cfg) {
-      await supabase
-        .from('config')
-        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
-        .eq('id', 1);
-    }
-
-    // Sync client stats
-    if (txn.torn_id) await syncClientStats(txn.torn_id);
+  try {
+    await getAvailability();
+  } catch (e) {
+    // Non-critical; dashboard will still load
   }
 }
 
@@ -224,123 +202,17 @@ async function handleAction(txnId, tornId, newStatus, btn) {
   btn.disabled = true;
   btn.textContent = 'Updating...';
 
-  const updates = { status: newStatus };
-
-  if (newStatus === 'purchased') {
-    const now = new Date().toISOString();
-    const closesAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    updates.purchased_at = now;
-    updates.closes_at = closesAt;
-  }
-
-  if (newStatus === 'closed_clean' || newStatus === 'payout_sent') {
-    updates.closed_at = new Date().toISOString();
-  }
-
-  // For OD statuses, calculate payout amount from the transaction's snapshots
-  if (newStatus === 'od_xanax' || newStatus === 'od_ecstasy') {
-    const { data: txn } = await supabase
-      .from('transactions')
-      .select('xanax_payout, ecstasy_payout')
-      .eq('id', txnId)
-      .single();
-
-    if (txn) {
-      updates.payout_amount = newStatus === 'od_xanax' ? txn.xanax_payout : txn.ecstasy_payout;
-    }
-  }
-
-  const { error } = await supabase
-    .from('transactions')
-    .update(updates)
-    .eq('id', txnId);
-
-  if (error) {
-    console.log('Update failed: ' + error.message, 'error');
+  try {
+    await adminUpdateStatus(txnId, tornId, newStatus);
+  } catch (err) {
+    console.log('Update failed: ' + err.message, 'error');
     btn.disabled = false;
     btn.textContent = btn.dataset.action;
     return;
   }
 
-  // Update reserves: liability was locked at transaction creation (requested status).
-  // closed_clean: release full lock | payout_sent: release lock minus actual payout
-  if (newStatus === 'closed_clean' || newStatus === 'payout_sent') {
-    const { data: txn } = await supabase
-      .from('transactions')
-      .select('ecstasy_payout, payout_amount')
-      .eq('id', txnId)
-      .single();
-
-    if (txn) {
-      const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-      if (cfg) {
-        let newReserve = Number(cfg.current_reserve);
-        if (newStatus === 'closed_clean') newReserve += Number(txn.ecstasy_payout || 0);
-        if (newStatus === 'payout_sent') newReserve += Number(txn.ecstasy_payout || 0) - Number(txn.payout_amount || 0);
-
-        await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
-      }
-    }
-  }
-
-  // Sync client stats after status change
-  if (tornId) {
-    await syncClientStats(tornId);
-  }
-
   console.log(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
-}
-
-// --- Client stat sync ---
-function computeTier(cleanCount) {
-  if (cleanCount >= 5) return 'legend';
-  if (cleanCount >= 3) return 'road';
-  if (cleanCount >= 1) return 'safe';
-  return 'new';
-}
-
-function computeCleanStreak(txns) {
-  const completed = txns
-    .filter((t) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
-    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
-  let streak = 0;
-  for (const t of completed) {
-    if (t.status === 'closed_clean') streak++;
-    else break;
-  }
-  return streak;
-}
-
-async function syncClientStats(tornId) {
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at')
-    .eq('torn_id', tornId);
-
-  if (error) {
-    console.warn('Failed to sync client stats:', error.message);
-    return;
-  }
-
-  const list = txns || [];
-  const cleanCount = computeCleanStreak(list);
-  const txnCount = list.length;
-  const totalSpent = list
-    .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s, t) => s + Number(t.suggested_price || 0), 0);
-  const totalPayouts = list
-    .filter((t) => t.status === 'payout_sent')
-    .reduce((s, t) => s + Number(t.payout_amount || 0), 0);
-
-  await supabase.from('clients').update({
-    clean_count: cleanCount,
-    tier: computeTier(cleanCount),
-    transaction_count: txnCount,
-    total_spent: totalSpent,
-    total_payouts: totalPayouts,
-    updated_at: new Date().toISOString(),
-  }).eq('torn_id', tornId);
 }
 
 // --- Clients tab ---
