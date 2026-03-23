@@ -579,19 +579,43 @@ async function handleReportOd(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'purchased') return json({ error: 'Transaction is not in active insurance window' }, 400);
 
-  // Check the player's current status for OD
+  // Check the player's current status for OD (works for Xanax which hospitalizes)
   const status = (identData.status?.description || '').toLowerCase();
   const state = (identData.status?.state || '').toLowerCase();
 
   const isHospitalized = state === 'hospital';
   const odMatch = status.match(/overdos\w*\s+on\s+(\w+)/i);
-  const odDrug = odMatch ? odMatch[1].toLowerCase() : null;
+  let odDrug = odMatch ? odMatch[1].toLowerCase() : null;
 
+  // If not currently hospitalized with OD status, check events log as fallback.
+  // Ecstasy OD in Torn does NOT hospitalize the player, so we must check events.
   if (!isHospitalized || !odDrug) {
-    return json({
-      verified: false,
-      detail: `Could not verify OD. Current status: "${identData.status?.description || 'unknown'}". You must report while still hospitalized from the OD.`,
-    });
+    const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
+    const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
+    const eventsUrl = fromTs
+      ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+      : `${TORN_API}/user/?selections=events&key=${api_key}`;
+    const eventsRes = await fetch(eventsUrl);
+    const eventsData = await eventsRes.json();
+
+    if (!eventsData.error && eventsData.events) {
+      const events = Object.values(eventsData.events) as any[];
+      // Look for OD events — event text contains "overdosed" and drug name
+      for (const evt of events) {
+        const evtText = (evt.event || '').toLowerCase();
+        if (evtText.includes('overdos')) {
+          if (evtText.includes('xanax')) { odDrug = 'xanax'; break; }
+          if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; break; }
+        }
+      }
+    }
+
+    if (!odDrug) {
+      return json({
+        verified: false,
+        detail: `Could not verify OD. Current status: "${identData.status?.description || 'unknown'}". No recent overdose on Xanax or Ecstasy found in your event log. If you just OD'd, wait a moment and try again.`,
+      });
+    }
   }
 
   if (odDrug !== 'xanax' && odDrug !== 'ecstasy') {
