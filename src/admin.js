@@ -267,8 +267,16 @@ function computeTier(cleanCount) {
   return 'new';
 }
 
-function computeTotalClean(txns) {
-  return txns.filter((t) => t.status === 'closed_clean').length;
+function computeCleanStreak(txns) {
+  const completed = txns
+    .filter((t) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
+    .sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  let streak = 0;
+  for (const t of completed) {
+    if (t.status === 'closed_clean') streak++;
+    else break;
+  }
+  return streak;
 }
 
 async function syncClientStats(tornId) {
@@ -283,7 +291,7 @@ async function syncClientStats(tornId) {
   }
 
   const list = txns || [];
-  const cleanCount = computeTotalClean(list);
+  const cleanCount = computeCleanStreak(list);
   const txnCount = list.length;
   const totalSpent = list
     .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
