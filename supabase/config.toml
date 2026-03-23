@@ -1,0 +1,20 @@
+[project]
+id = ""
+
+[functions.create-transaction]
+verify_jwt = false
+
+[functions.get-availability]
+verify_jwt = false
+
+[functions.get-player-transactions]
+verify_jwt = false
+
+[functions.torn-proxy]
+verify_jwt = false
+
+[functions.update-config]
+verify_jwt = false
+
+[functions.validate-player]
+verify_jwt = false
