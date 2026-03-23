@@ -37,7 +37,7 @@
         <div class="card-body">
           <p class="intro-text">You've done the math. You know the risk.</p>
           <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
-          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong>$23,000,000+</strong> and two days of your life.</p>
+          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong id="anon-loss-cost">$23,000,000+</strong> and two days of your life.</p>
         </div>
       </div>
 
@@ -80,13 +80,13 @@
             <div class="coverage-scenario">
               <span class="coverage-label">If you OD on any Xanax:</span>
               <span class="coverage-detail">You receive a full <strong>4x Xanax replacement</strong> — no questions, no hassle, pick up where you left off.</span>
-              <span class="coverage-value">Payout: <strong id="anon-xan-payout">—</strong></span>
+              <span class="coverage-value">Payout: <strong>4x Xanax</strong> + <strong id="anon-xan-rehab">—</strong> rehab bonus</span>
             </div>
             <div class="coverage-divider"></div>
             <div class="coverage-scenario">
               <span class="coverage-label">If you OD on Ecstasy:</span>
               <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
-              <span class="coverage-value">Payout: <strong id="anon-ecs-payout">—</strong></span>
+              <span class="coverage-value">Payout: <strong>4x Xanax + 5x EDVD + 1x Ecstasy</strong> + <strong id="anon-ecs-rehab">—</strong> rehab bonus</span>
             </div>
           </div>
           <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
@@ -162,10 +162,10 @@
 
       <div class="section-divider"></div>
 
-      <!-- Safe Drive Discount -->
+      <!-- Safe Driver Discount -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Drive Discount</span>
+          <span>Safe Driver Discount</span>
         </div>
         <div class="card-body">
           <p class="intro-text">Every clean jump earns you a lower price on your next one.</p>
@@ -247,7 +247,7 @@
       <!-- Safe Drive progress on tier ladder -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Drive Progress</span>
+          <span>Safe Driver Progress</span>
         </div>
         <div class="card-body">
           <div class="tier-ladder" id="pv-tier-ladder"></div>

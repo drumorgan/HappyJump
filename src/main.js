@@ -58,8 +58,9 @@ async function initStorefront() {
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
     document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
-    document.getElementById('anon-xan-payout').textContent = $(pricing.xanaxPayout);
-    document.getElementById('anon-ecs-payout').textContent = $(pricing.ecstasyPayout);
+    document.getElementById('anon-loss-cost').textContent = $(pricing.packageCost) + '+';
+    document.getElementById('anon-xan-rehab').textContent = $(config.rehab_bonus);
+    document.getElementById('anon-ecs-rehab').textContent = $(config.rehab_bonus);
     document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
 
     // Render anonymous tier ladder with calculated prices
