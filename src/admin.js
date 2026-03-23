@@ -89,7 +89,7 @@ async function autoCloseExpired() {
     if (cfg) {
       await supabase
         .from('config')
-        .update({ current_reserve: cfg.current_reserve + (txn.ecstasy_payout || 0) })
+        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
         .eq('id', 1);
     }
 
@@ -123,14 +123,14 @@ async function loadStats() {
   const closedStatuses = ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
   const revenue = txns
     .filter((t) => closedStatuses.includes(t.status))
-    .reduce((sum, t) => sum + (t.suggested_price || 0), 0);
+    .reduce((sum, t) => sum + Number(t.suggested_price || 0), 0);
 
-  const paid = txns.reduce((sum, t) => sum + (t.payout_amount || 0), 0);
+  const paid = txns.reduce((sum, t) => sum + Number(t.payout_amount || 0), 0);
 
   // Net profit = insurance margin (price - drug cost) minus payouts
   const margin = txns
     .filter((t) => closedStatuses.includes(t.status))
-    .reduce((sum, t) => sum + ((t.suggested_price || 0) - (t.package_cost || 0)), 0);
+    .reduce((sum, t) => sum + (Number(t.suggested_price || 0) - Number(t.package_cost || 0)), 0);
   const net = margin - paid;
 
   document.getElementById('stat-active').textContent = active;
@@ -274,9 +274,9 @@ async function handleAction(txnId, tornId, newStatus, btn) {
     if (txn) {
       const { data: cfg } = await supabase.from('config').select('current_reserve').single();
       if (cfg) {
-        let newReserve = cfg.current_reserve;
-        if (newStatus === 'closed_clean') newReserve += (txn.ecstasy_payout || 0);
-        if (newStatus === 'payout_sent') newReserve += (txn.ecstasy_payout || 0) - (txn.payout_amount || 0);
+        let newReserve = Number(cfg.current_reserve);
+        if (newStatus === 'closed_clean') newReserve += Number(txn.ecstasy_payout || 0);
+        if (newStatus === 'payout_sent') newReserve += Number(txn.ecstasy_payout || 0) - Number(txn.payout_amount || 0);
 
         await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
       }
@@ -328,10 +328,10 @@ async function syncClientStats(tornId) {
   const txnCount = list.length;
   const totalSpent = list
     .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s, t) => s + (t.suggested_price || 0), 0);
+    .reduce((s, t) => s + Number(t.suggested_price || 0), 0);
   const totalPayouts = list
     .filter((t) => t.status === 'payout_sent')
-    .reduce((s, t) => s + (t.payout_amount || 0), 0);
+    .reduce((s, t) => s + Number(t.payout_amount || 0), 0);
 
   await supabase.from('clients').update({
     clean_count: cleanCount,

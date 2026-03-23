@@ -37,9 +37,14 @@ function getTier(cleanCount) {
 
 // --- Price calculation ---
 function calcPricing(config, margin) {
-  const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-  const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
-  const ecstasyPayout = packageCost + config.rehab_bonus;
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const xanaxPayout = 4 * xanaxPrice + rehabBonus;
+  const ecstasyPayout = packageCost + rehabBonus;
   const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
   const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
   const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
