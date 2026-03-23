@@ -704,6 +704,7 @@ async function handleReportOd(body: any) {
   return json({
     verified: true,
     od_type: odStatus,
+    torn_id: tornId,
     detail: `OD on ${drugLabel} verified. Giro has been notified and will send your payout.`,
   });
 }
