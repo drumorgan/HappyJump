@@ -51,9 +51,17 @@ function computeTier(cleanCount: number): string {
   return 'new';
 }
 
-// Count total clean closes (not streak — tiers are cumulative).
-function computeTotalClean(txns: any[]): number {
-  return txns.filter((t: any) => t.status === 'closed_clean').length;
+// Count consecutive clean closes from most recent backward (streak resets on OD).
+function computeCleanStreak(txns: any[]): number {
+  const completed = txns
+    .filter((t: any) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
+    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  let streak = 0;
+  for (const t of completed) {
+    if (t.status === 'closed_clean') streak++;
+    else break;
+  }
+  return streak;
 }
 
 // ── Email notifications ─────────────────────────────────────────────
@@ -195,7 +203,7 @@ async function handleCreateTransaction(body: any) {
     .eq('torn_id', String(torn_id))
     .in('status', ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
 
-  const cleanCount = computeTotalClean(playerHistory || []);
+  const cleanCount = computeCleanStreak(playerHistory || []);
 
   let tierMargin;
   if (cleanCount >= 5) tierMargin = Number(config.margin_legend);
@@ -254,7 +262,7 @@ async function handleCreateTransaction(body: any) {
     .eq('torn_id', String(torn_id));
 
   const txns = allTxns || [];
-  const finalCleanCount = computeTotalClean(txns);
+  const finalCleanCount = computeCleanStreak(txns);
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
@@ -301,7 +309,7 @@ async function handleGetPlayerTransactions(body: any) {
   if (txnResult.error) return json({ error: txnResult.error.message }, 500);
 
   const transactions = txnResult.data || [];
-  const cleanCount = computeTotalClean(transactions);
+  const cleanCount = computeCleanStreak(transactions);
   const hasActiveDeal = transactions.some(
     (t: any) => t.status === 'requested' || t.status === 'purchased',
   );
@@ -451,7 +459,7 @@ async function handleReportOd(body: any) {
     .eq('torn_id', tornId);
 
   const txns = allTxns || [];
-  const cleanCount = computeTotalClean(txns);
+  const cleanCount = computeCleanStreak(txns);
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
