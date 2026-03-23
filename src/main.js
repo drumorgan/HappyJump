@@ -10,6 +10,7 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;
+let selectedProduct = 'package'; // 'package' | 'insurance'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
@@ -57,11 +58,88 @@ function calcPricing(config, margin) {
   return { packageCost, xanaxPayout, ecstasyPayout, trueCost, suggestedPrice };
 }
 
+// Insurance-only: no drug cost, just expected liability + margin
+function calcInsurancePricing(config, margin) {
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const xanaxPayout = 4 * xanaxPrice + rehabBonus;
+  const ecstasyPayout = packageCost + rehabBonus;
+  const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+  const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
+  const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
+}
+
+function getPricing(config, margin, product) {
+  return product === 'insurance' ? calcInsurancePricing(config, margin) : calcPricing(config, margin);
+}
+
+
+// --- Product tab switching (storefront) ---
+let storefrontConfig = null;
+let storefrontAvail = null;
+
+function updateAnonPricing() {
+  if (!storefrontConfig) return;
+  const pricing = getPricing(storefrontConfig, TIERS[0].margin, selectedProduct);
+
+  document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
+  const priceNote = document.getElementById('anon-price-note');
+  if (selectedProduct === 'insurance') {
+    priceNote.textContent = 'Current insurance premium — new client rate';
+  } else {
+    priceNote.textContent = 'Current package price — new client rate';
+  }
+
+  // Update tier ladder prices for selected product
+  const anonLadder = document.getElementById('anon-tier-ladder');
+  if (anonLadder) {
+    anonLadder.innerHTML = TIERS.map((t) => {
+      const tierPricing = getPricing(storefrontConfig, t.margin, selectedProduct);
+      return `<div class="tier-row" data-tier="${t.key}">
+        <span class="tier-badge ${t.css}">${esc(t.name)}</span>
+        <span class="tier-detail">${t.min}+ clean jumps</span>
+        <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
+      </div>`;
+    }).join('');
+  }
+}
+
+function switchProduct(product) {
+  selectedProduct = product;
+
+  // Update tab active states in both storefront and player view
+  document.querySelectorAll('.product-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.product === product);
+  });
+
+  // Toggle product-specific sections in storefront
+  document.querySelectorAll('#storefront .product-section').forEach((el) => {
+    el.classList.toggle('hidden', el.dataset.product !== product);
+  });
+
+  updateAnonPricing();
+}
+
+// Bind product tabs (both storefront and player view tabs)
+document.querySelectorAll('.product-tabs').forEach((tabBar) => {
+  tabBar.querySelectorAll('.product-tab').forEach((tab) => {
+    tab.addEventListener('click', () => switchProduct(tab.dataset.product));
+  });
+});
 
 // --- Init: load anonymous storefront data ---
 async function initStorefront() {
   try {
     const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
+    storefrontConfig = config;
+    storefrontAvail = avail;
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
@@ -171,7 +249,6 @@ function showPlayerView(player, config, history, apiKey) {
   const cleanCount = history.clean_count || 0;
   const hasActive = history.has_active_deal;
   const tier = getTier(cleanCount);
-  const pricing = calcPricing(config, tier.margin);
   const isReturning = (history.transactions || []).length > 0;
 
   // Welcome
@@ -183,53 +260,84 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-tier-badge').innerHTML =
     `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
 
-  // Personal pricing
-  document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
-  document.getElementById('pv-price-note').textContent =
-    `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
+  // Helper to update player view pricing and buy button for selected product
+  function updatePlayerPricing() {
+    const pricing = getPricing(config, tier.margin, selectedProduct);
+    const isInsurance = selectedProduct === 'insurance';
+
+    // Price header
+    document.getElementById('pv-price-header').textContent =
+      isInsurance ? 'Your Shield Premium' : 'Your Package Price';
+
+    // Personal pricing
+    document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
+    document.getElementById('pv-price-note').textContent =
+      `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
+
+    // Buy button
+    const buyBtn = document.getElementById('buy-btn');
+    const buyStatus = document.getElementById('buy-status');
+    const buySection = document.getElementById('buy-section');
+
+    if (hasActive) {
+      buySection.classList.add('hidden');
+    } else {
+      buySection.classList.remove('hidden');
+      buyBtn.disabled = false;
+
+      if (isInsurance) {
+        buyBtn.textContent = 'Request Happy Jump Shield — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits an insurance request. Giro will collect the premium via in-game trade.';
+      } else {
+        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
+      }
+
+      // Wire up buy action (replace handler each time)
+      buyBtn.onclick = async () => {
+        buyBtn.disabled = true;
+        buyBtn.textContent = 'Processing...';
+        try {
+          const txn = await createTransaction({
+            torn_id: player.torn_id,
+            torn_name: player.torn_name,
+            torn_faction: player.torn_faction,
+            torn_level: player.torn_level,
+            product_type: selectedProduct,
+          });
+          const productLabel = selectedProduct === 'insurance' ? 'Shield' : 'package';
+          showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
+          buyBtn.textContent = 'Request In Progress';
+          buyStatus.textContent = `Your ${productLabel} request has been submitted. Giro will trade with you in-game.`;
+
+          // Refresh history to show active deal
+          const updatedHistory = await getPlayerTransactions(player.torn_id);
+          renderHistory(updatedHistory.transactions);
+          renderActiveDeal(updatedHistory.transactions);
+        } catch (err) {
+          showToast(err.message, 'error');
+          buyBtn.disabled = false;
+          updatePlayerPricing();
+        }
+      };
+    }
+
+    // Update tier ladder prices for selected product
+    renderTierLadder(cleanCount, config);
+  }
+
+  // Bind player view product tabs to update pricing
+  document.querySelectorAll('#pv-product-tabs .product-tab').forEach((tab) => {
+    tab.onclick = () => {
+      switchProduct(tab.dataset.product);
+      updatePlayerPricing();
+    };
+  });
+
+  updatePlayerPricing();
 
   // Active deal (uses shared renderer that includes Report OD button)
   renderActiveDeal(history.transactions);
-
-  // Buy button
-  const buyBtn = document.getElementById('buy-btn');
-  const buyStatus = document.getElementById('buy-status');
-
-  const buySection = document.getElementById('buy-section');
-  if (hasActive) {
-    buySection.classList.add('hidden');
-  } else {
-    buySection.classList.remove('hidden');
-    buyBtn.disabled = false;
-    buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
-    buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
-
-    // Wire up buy action (replace handler each time)
-    buyBtn.onclick = async () => {
-      buyBtn.disabled = true;
-      buyBtn.textContent = 'Processing...';
-      try {
-        const txn = await createTransaction({
-          torn_id: player.torn_id,
-          torn_name: player.torn_name,
-          torn_faction: player.torn_faction,
-          torn_level: player.torn_level,
-        });
-        showToast('Request submitted! Giro will initiate a trade with you in-game.', 'success');
-        buyBtn.textContent = 'Request In Progress';
-        buyStatus.textContent = 'Your request has been submitted. Giro will trade with you in-game to deliver the package and collect payment.';
-
-        // Refresh history to show active deal
-        const updatedHistory = await getPlayerTransactions(player.torn_id);
-        renderHistory(updatedHistory.transactions);
-        renderActiveDeal(updatedHistory.transactions);
-      } catch (err) {
-        showToast(err.message, 'error');
-        buyBtn.disabled = false;
-        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
-      }
-    };
-  }
 
   // History
   renderHistory(history.transactions);
@@ -372,14 +480,16 @@ function renderHistory(transactions) {
     });
   }
 
-  let html = '<table class="history-table"><thead><tr><th>Date</th><th>Status</th><th>Price</th></tr></thead><tbody>';
+  let html = '<table class="history-table"><thead><tr><th>Date</th><th>Type</th><th>Status</th><th>Price</th></tr></thead><tbody>';
 
   for (const txn of transactions) {
     const date = new Date(txn.created_at).toLocaleDateString();
     const pillClass = getStatusPillClass(txn.status);
     const label = formatStatus(txn.status);
+    const productLabel = txn.product_type === 'insurance' ? 'Shield' : 'Package';
     html += `<tr>
       <td>${esc(date)}</td>
+      <td>${esc(productLabel)}</td>
       <td><span class="status-pill ${pillClass}">${esc(label)}</span></td>
       <td>${$(txn.suggested_price)}</td>
     </tr>`;
@@ -397,7 +507,7 @@ function renderTierLadder(cleanCount, config) {
   ladder.innerHTML = TIERS.map((t) => {
     const isCurrent = t.key === currentTier.key;
     const isAchieved = cleanCount >= t.min;
-    const tierPricing = calcPricing(config, t.margin);
+    const tierPricing = getPricing(config, t.margin, selectedProduct);
     return `<div class="tier-row ${isCurrent ? 'current-tier' : ''}">
       <span class="tier-badge ${t.css}">${esc(t.name)}</span>
       <span class="tier-detail">${t.min}+ clean jumps</span>

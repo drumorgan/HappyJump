@@ -155,6 +155,9 @@ function renderTransactions(txns) {
     const label = formatStatus(t.status);
     const date = new Date(t.created_at).toLocaleDateString();
     const faction = t.torn_faction ? ` | ${esc(t.torn_faction)}` : '';
+    const productBadge = t.product_type === 'insurance'
+      ? '<span class="product-badge shield">Shield</span>'
+      : '<span class="product-badge package">Package</span>';
 
     let actionsHtml = '';
     switch (t.status) {
@@ -182,6 +185,7 @@ function renderTransactions(txns) {
         <div>
           <span class="txn-player">${esc(t.torn_name)}</span>
           <span class="txn-player-id">[${esc(t.torn_id)}]</span>
+          ${productBadge}
         </div>
         <span class="status-pill ${pillClass}">${esc(label)}</span>
       </div>

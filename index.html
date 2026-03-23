@@ -32,8 +32,14 @@
 
       <div class="section-divider"></div>
 
-      <!-- Hero pitch -->
-      <div class="card">
+      <!-- Product tabs -->
+      <div class="product-tabs">
+        <button class="product-tab active" data-product="package">Happy Jump Package</button>
+        <button class="product-tab" data-product="insurance">Happy Jump Shield</button>
+      </div>
+
+      <!-- Hero pitch — package -->
+      <div class="card product-section" data-product="package">
         <div class="card-body">
           <p class="intro-text">You've done the math. You know the risk.</p>
           <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
@@ -41,10 +47,18 @@
         </div>
       </div>
 
-      <div class="section-divider"></div>
+      <!-- Hero pitch — insurance -->
+      <div class="card product-section hidden" data-product="insurance">
+        <div class="card-body">
+          <p class="intro-text">Already have your drugs? Just got a payout and want to protect the new package?</p>
+          <p class="intro-text" style="margin-top:0.5rem">Happy Jump Shield gives you <strong>full OD insurance</strong> without buying the drugs. Same coverage, same payouts — just the protection.</p>
+        </div>
+      </div>
 
-      <!-- What You Get -->
-      <div class="card">
+      <div class="section-divider product-section" data-product="package"></div>
+
+      <!-- What You Get — package only -->
+      <div class="card product-section" data-product="package">
         <div class="card-header">
           <span>What You Get</span>
         </div>
@@ -68,9 +82,26 @@
         </div>
       </div>
 
+      <!-- What You Get — insurance -->
+      <div class="card product-section hidden" data-product="insurance">
+        <div class="card-header">
+          <span>What You Get</span>
+        </div>
+        <div class="card-body">
+          <p class="intro-text">Pure OD insurance for the package you already have. No drugs purchased or delivered — just the coverage.</p>
+          <div class="shield-features" style="margin-top:1rem">
+            <div class="shield-feature">Full Xanax OD coverage</div>
+            <div class="shield-feature">Full Ecstasy OD coverage</div>
+            <div class="shield-feature">Rehab bonus included</div>
+            <div class="shield-feature">7-day coverage window</div>
+          </div>
+          <p class="intro-text" style="margin-top:1rem;color:#888">Perfect for re-insuring a payout package, or if you source your own drugs and just want the safety net.</p>
+        </div>
+      </div>
+
       <div class="section-divider"></div>
 
-      <!-- Full OD Protection -->
+      <!-- Full OD Protection (shared) -->
       <div class="card">
         <div class="card-header">
           <span>Full OD Protection</span>
@@ -104,7 +135,7 @@
         </div>
         <div class="card-body">
           <div class="big-price" id="anon-price">Loading...</div>
-          <div class="price-note">Current package price — new client rate</div>
+          <div class="price-note" id="anon-price-note">Current package price — new client rate</div>
           <p class="intro-text" style="margin-top:0.75rem;font-size:0.85rem;color:#888">Price updates live with the item market. What you see is what you pay.</p>
           <div id="anon-availability" class="availability">Checking availability...</div>
         </div>
@@ -112,8 +143,8 @@
 
       <div class="section-divider"></div>
 
-      <!-- How It Works -->
-      <div class="card">
+      <!-- How It Works — package -->
+      <div class="card product-section" data-product="package">
         <div class="card-header">
           <span>How It Works</span>
         </div>
@@ -147,9 +178,44 @@
         </div>
       </div>
 
+      <!-- How It Works — insurance -->
+      <div class="card product-section hidden" data-product="insurance">
+        <div class="card-header">
+          <span>How It Works</span>
+        </div>
+        <div class="card-body">
+          <div class="steps">
+            <div class="step">
+              <span class="step-number">1</span>
+              <div class="step-text">
+                <strong>Enter your API key to get started</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">2</span>
+              <div class="step-text">
+                <strong>Request a Happy Jump Shield</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">3</span>
+              <div class="step-text">
+                <strong>Send Giro the premium via in-game trade</strong>
+              </div>
+            </div>
+            <div class="step">
+              <span class="step-number">4</span>
+              <div class="step-text">
+                <strong>Jump with your own drugs — you're covered</strong>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
       <div class="section-divider"></div>
 
-      <!-- Why Buy Insurance -->
+      <!-- Why Buy Insurance (shared) -->
       <div class="card">
         <div class="card-header">
           <span>Why Buy Insurance?</span>
@@ -207,10 +273,16 @@
         </div>
       </div>
 
+      <!-- Product selector (player view) -->
+      <div class="product-tabs" id="pv-product-tabs">
+        <button class="product-tab active" data-product="package">Happy Jump Package</button>
+        <button class="product-tab" data-product="insurance">Happy Jump Shield</button>
+      </div>
+
       <!-- Personal pricing -->
       <div class="card highlight-card" id="personal-pricing-card">
         <div class="card-header">
-          <span>Your Package Price</span>
+          <span id="pv-price-header">Your Package Price</span>
         </div>
         <div class="card-body">
           <div class="big-price" id="pv-price"></div>

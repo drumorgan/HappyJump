@@ -86,7 +86,8 @@ export async function fetchMarketPrices(apiKey) {
 }
 
 /**
- * Create a new transaction (request a Happy Jump package).
+ * Create a new transaction (request a Happy Jump package or insurance).
+ * playerData should include product_type: 'package' | 'insurance'
  */
 export async function createTransaction(playerData) {
   return gateway('create-transaction', playerData);

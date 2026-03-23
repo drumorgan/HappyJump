@@ -210,6 +210,7 @@ async function handleTornProxy(body: any) {
 
 async function handleCreateTransaction(body: any) {
   const { torn_id, torn_name, torn_faction, torn_level } = body;
+  const productType = body.product_type === 'insurance' ? 'insurance' : 'package';
   if (!torn_id || !torn_name) {
     return json({ error: 'Missing required player fields' }, 400);
   }
@@ -284,7 +285,10 @@ async function handleCreateTransaction(body: any) {
   const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
   const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
   const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
-  const trueCost = packageCost + expectedLiability;
+
+  // Insurance-only: no drug cost, just expected liability + margin
+  const trueCost = productType === 'insurance' ? expectedLiability : packageCost + expectedLiability;
+  const snapshotPackageCost = productType === 'insurance' ? 0 : packageCost;
   const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
 
   // Insert transaction
@@ -292,13 +296,14 @@ async function handleCreateTransaction(body: any) {
     .from('transactions')
     .insert({
       torn_id, torn_name, torn_faction, torn_level,
+      product_type: productType,
       status: 'requested',
-      package_cost: packageCost,
+      package_cost: snapshotPackageCost,
       suggested_price: suggestedPrice,
       xanax_payout: xanaxPayout,
       ecstasy_payout: ecstasyPayout,
     })
-    .select('id, status, suggested_price')
+    .select('id, status, suggested_price, product_type')
     .single();
 
   if (txnErr) return json({ error: txnErr.message }, 500);
@@ -311,18 +316,20 @@ async function handleCreateTransaction(body: any) {
 
   // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
+  const productLabel = productType === 'insurance' ? 'Shield (Insurance Only)' : 'Package';
   await sendNotificationEmail(
-    `🛒 New Purchase Request — ${torn_name} [${torn_id}]`,
+    `🛒 New ${productLabel} Request — ${torn_name} [${torn_id}]`,
     [
-      `New Happy Jump purchase request!`,
+      `New Happy Jump ${productLabel.toLowerCase()} request!`,
       ``,
       `Player: ${torn_name} [${torn_id}]`,
       `Faction: ${torn_faction || 'None'}`,
       `Level: ${torn_level || 'Unknown'}`,
       `Tier: ${tier} (${cleanCount} clean closes)`,
+      `Product: ${productLabel}`,
       ``,
-      `Package Price: ${formatMoney(suggestedPrice)}`,
-      `Package Cost: ${formatMoney(packageCost)}`,
+      `Price: ${formatMoney(suggestedPrice)}`,
+      ...(productType === 'package' ? [`Drug Cost: ${formatMoney(packageCost)}`] : []),
       ``,
       `Transaction ID: ${txn.id}`,
       ``,
@@ -349,7 +356,7 @@ async function handleGetPlayerTransactions(body: any) {
   const [txnResult, clientResult] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, status, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, purchased_at, closes_at, closed_at, created_at')
+      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, purchased_at, closes_at, closed_at, created_at')
       .eq('torn_id', String(torn_id))
       .order('created_at', { ascending: false }),
     supabase
