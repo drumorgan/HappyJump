@@ -80,6 +80,7 @@
             <option value="od_xanax">Xanax OD</option>
             <option value="od_ecstasy">Ecstasy OD</option>
             <option value="payout_sent">Payout Sent</option>
+            <option value="rejected">Rejected</option>
           </select>
           <button id="refresh-btn" class="refresh-btn">Refresh</button>
         </div>
@@ -100,10 +101,13 @@
             <option value="new">New Client</option>
           </select>
           <label class="blocked-filter-label">
-            <input type="checkbox" id="client-blocked-filter" />
-            Blocked only
+            <input type="checkbox" id="client-blocked-filter" checked />
+            Hide Blocked
           </label>
           <button id="refresh-clients-btn" class="refresh-btn">Refresh</button>
+        </div>
+        <div class="filter-bar" style="margin-top:0.5rem">
+          <input type="text" id="client-search" placeholder="Search name or ID..." class="client-search-input" />
         </div>
         <div id="client-list"></div>
       </div>

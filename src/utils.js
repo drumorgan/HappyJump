@@ -16,6 +16,7 @@ export function getStatusPillClass(status) {
   if (status === 'purchased') return 'purchased';
   if (status === 'od_xanax' || status === 'od_ecstasy') return 'od';
   if (status === 'payout_sent') return 'payout';
+  if (status === 'rejected') return 'rejected';
   return '';
 }
 
@@ -27,6 +28,7 @@ export function formatStatus(status) {
     od_xanax: 'Xanax OD',
     od_ecstasy: 'Ecstasy OD',
     payout_sent: 'Paid Out',
+    rejected: 'Rejected',
   };
   return map[status] || status;
 }

@@ -427,7 +427,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   const { txn_id, torn_id, new_status } = body;
   if (!txn_id || !new_status) return json({ error: 'Missing txn_id or new_status' }, 400);
 
-  const validStatuses = ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
+  const validStatuses = ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent', 'rejected'];
   if (!validStatuses.includes(new_status)) return json({ error: 'Invalid status' }, 400);
 
   const supabase = serviceClient();
@@ -441,7 +441,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     updates.closes_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
   }
 
-  if (new_status === 'closed_clean' || new_status === 'payout_sent') {
+  if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
     updates.closed_at = new Date().toISOString();
   }
 
@@ -468,8 +468,8 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
 
   if (updateErr) return json({ error: updateErr.message }, 500);
 
-  // Reserve management: release lock on close/payout
-  if (new_status === 'closed_clean' || new_status === 'payout_sent') {
+  // Reserve management: release lock on close/payout/reject
+  if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
     const { data: txn } = await supabase
       .from('transactions')
       .select('ecstasy_payout, payout_amount')
@@ -480,7 +480,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
       const { data: cfg } = await supabase.from('config').select('current_reserve').single();
       if (cfg) {
         let newReserve = Number(cfg.current_reserve);
-        if (new_status === 'closed_clean') newReserve += Number(txn.ecstasy_payout || 0);
+        if (new_status === 'closed_clean' || new_status === 'rejected') newReserve += Number(txn.ecstasy_payout || 0);
         if (new_status === 'payout_sent') newReserve += Number(txn.ecstasy_payout || 0) - Number(txn.payout_amount || 0);
 
         await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
@@ -519,6 +519,55 @@ async function handleAdminUpdateClient(req: Request, body: any) {
 
   if (error) return json({ error: error.message }, 500);
   return json({ success: true });
+}
+
+async function handleAdminRejectAndBlock(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { torn_id } = body;
+  if (!torn_id) return json({ error: 'Missing torn_id' }, 400);
+
+  const supabase = serviceClient();
+
+  // Find all pending (requested/purchased) transactions for this player
+  const { data: pending } = await supabase
+    .from('transactions')
+    .select('id, ecstasy_payout')
+    .eq('torn_id', String(torn_id))
+    .in('status', ['requested', 'purchased']);
+
+  const now = new Date().toISOString();
+  let rejectedCount = 0;
+
+  // Reject each pending transaction and release reserve
+  for (const txn of (pending || [])) {
+    await supabase
+      .from('transactions')
+      .update({ status: 'rejected', closed_at: now })
+      .eq('id', txn.id);
+
+    // Release locked reserve
+    const { data: cfg } = await supabase.from('config').select('current_reserve').single();
+    if (cfg) {
+      await supabase
+        .from('config')
+        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
+        .eq('id', 1);
+    }
+    rejectedCount++;
+  }
+
+  // Block the client
+  await supabase
+    .from('clients')
+    .update({ is_blocked: true, updated_at: now })
+    .eq('torn_id', String(torn_id));
+
+  // Sync client stats
+  await syncClientStats(supabase, String(torn_id));
+
+  return json({ success: true, rejected_count: rejectedCount });
 }
 
 async function handleUpdateConfig(req: Request, body: any) {
@@ -713,6 +762,8 @@ serve(async (req) => {
         return await handleAdminUpdateStatus(req, body);
       case 'admin-update-client':
         return await handleAdminUpdateClient(req, body);
+      case 'admin-reject-and-block':
+        return await handleAdminRejectAndBlock(req, body);
       case 'update-config':
         return await handleUpdateConfig(req, body);
       case 'report-od':
