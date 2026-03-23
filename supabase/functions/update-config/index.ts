@@ -20,7 +20,7 @@ serve(async (req) => {
     if (!authHeader) {
       return new Response(
         JSON.stringify({ error: 'Not authenticated' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
@@ -34,7 +34,7 @@ serve(async (req) => {
     if (authErr || !user) {
       return new Response(
         JSON.stringify({ error: 'Invalid session' }),
-        { status: 401, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
@@ -71,7 +71,7 @@ serve(async (req) => {
     if (error) {
       return new Response(
         JSON.stringify({ error: error.message }),
-        { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+        { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
       );
     }
 
@@ -81,7 +81,7 @@ serve(async (req) => {
   } catch (err) {
     return new Response(
       JSON.stringify({ error: err.message }),
-      { status: 500, headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
+      { headers: { ...corsHeaders, 'Content-Type': 'application/json' } },
     );
   }
 });
