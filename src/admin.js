@@ -134,7 +134,8 @@ function renderTransactions(txns) {
     let actionsHtml = '';
     switch (t.status) {
       case 'requested':
-        actionsHtml = `<button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>`;
+        actionsHtml = `<div class="collect-banner">Collect: ${$(t.suggested_price)}</div>
+          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>`;
         break;
       case 'purchased':
         actionsHtml = `
