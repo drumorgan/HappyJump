@@ -188,11 +188,11 @@ function showPlayerView(player, config, history, apiKey) {
   const buyBtn = document.getElementById('buy-btn');
   const buyStatus = document.getElementById('buy-status');
 
+  const buySection = document.getElementById('buy-section');
   if (hasActive) {
-    buyBtn.disabled = true;
-    buyBtn.textContent = 'Request In Progress';
-    buyStatus.textContent = 'You have an active deal. Wait for it to close before requesting again.';
+    buySection.classList.add('hidden');
   } else {
+    buySection.classList.remove('hidden');
     buyBtn.disabled = false;
     buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
     buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
