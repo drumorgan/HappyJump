@@ -258,10 +258,14 @@ function renderActiveDeal(transactions) {
 
     if (activeTxn.status === 'od_xanax' || activeTxn.status === 'od_ecstasy') {
       const drugName = activeTxn.status === 'od_xanax' ? 'Xanax' : 'Ecstasy';
+      const payoutDesc = activeTxn.status === 'od_xanax'
+        ? '4x Xanax + $1M rehab bonus'
+        : '4x Xanax + 5x EDVD + 1x Ecstasy + $1M rehab bonus';
       body.innerHTML = `
         <div class="deal-status od-verified">OD on ${esc(drugName)} verified</div>
         <div class="deal-detail">Giro has been notified and will send your payout shortly.</div>
-        <div class="deal-detail">Payout: ${$(activeTxn.payout_amount || 0)}</div>`;
+        <div class="deal-detail">Payout: ${payoutDesc}</div>
+        <div class="deal-detail">Current value: ${$(activeTxn.payout_amount || 0)}</div>`;
       return;
     }
 
