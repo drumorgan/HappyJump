@@ -1,5 +1,6 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients } from './api.js';
+import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
 const loginSection = document.getElementById('login-section');
@@ -15,9 +16,12 @@ const configBody = document.getElementById('config-body');
 const clientList = document.getElementById('client-list');
 const clientTierFilter = document.getElementById('client-tier-filter');
 const clientBlockedFilter = document.getElementById('client-blocked-filter');
+const clientSearch = document.getElementById('client-search');
 const refreshClientsBtn = document.getElementById('refresh-clients-btn');
+const syncAllClientsBtn = document.getElementById('sync-all-clients-btn');
+const toastEl = document.getElementById('toast');
 
-const $ = (v) => '$' + Math.round(Number(v)).toLocaleString();
+function showToast(msg, type) { _showToast(toastEl, msg, type); }
 
 // --- Tab switching ---
 document.querySelectorAll('.tab-btn').forEach((btn) => {
@@ -46,7 +50,7 @@ loginForm.addEventListener('submit', async (e) => {
 
   const { error } = await supabase.auth.signInWithPassword({ email, password });
   if (error) {
-    console.log(error.message, 'error');
+    showToast(error.message, 'error');
     return;
   }
   showDashboard();
@@ -56,14 +60,24 @@ logoutBtn.addEventListener('click', async () => {
   await supabase.auth.signOut();
   dashboard.classList.add('hidden');
   loginSection.classList.remove('hidden');
-  console.log('Logged out', 'success');
+  toastEl.classList.add('hidden');
 });
 
 // --- Dashboard ---
 async function showDashboard() {
   loginSection.classList.add('hidden');
   dashboard.classList.remove('hidden');
+  await autoCloseExpired();
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
+}
+
+// --- Auto-close expired transactions (triggers server-side via gateway) ---
+async function autoCloseExpired() {
+  try {
+    await getAvailability();
+  } catch (e) {
+    // Non-critical; dashboard will still load
+  }
 }
 
 // --- Stats ---
@@ -73,11 +87,11 @@ async function loadStats() {
     .select('status, suggested_price, package_cost, payout_amount, xanax_payout, ecstasy_payout');
 
   if (error) {
-    console.log('Failed to load stats: ' + error.message, 'error');
+    showToast('Failed to load stats: ' + error.message, 'error');
     return;
   }
 
-  const active = txns.filter((t) => t.status === 'requested' || t.status === 'purchased').length;
+  const active = txns.filter((t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status)).length;
   const clean = txns.filter((t) => t.status === 'closed_clean').length;
 
   // Count ODs including payout_sent transactions (status changed from od_* to payout_sent)
@@ -91,20 +105,18 @@ async function loadStats() {
   const closedStatuses = ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
   const revenue = txns
     .filter((t) => closedStatuses.includes(t.status))
-    .reduce((sum, t) => sum + (t.suggested_price || 0), 0);
+    .reduce((sum, t) => sum + Number(t.suggested_price || 0), 0);
 
-  const paid = txns.reduce((sum, t) => sum + (t.payout_amount || 0), 0);
+  const paid = txns.reduce((sum, t) => sum + Number(t.payout_amount || 0), 0);
 
   // Net profit = insurance margin (price - drug cost) minus payouts
   const margin = txns
     .filter((t) => closedStatuses.includes(t.status))
-    .reduce((sum, t) => sum + ((t.suggested_price || 0) - (t.package_cost || 0)), 0);
+    .reduce((sum, t) => sum + (Number(t.suggested_price || 0) - Number(t.package_cost || 0)), 0);
   const net = margin - paid;
 
   document.getElementById('stat-active').textContent = active;
   document.getElementById('stat-clean').textContent = clean;
-  document.getElementById('stat-xan-od').textContent = xanOd;
-  document.getElementById('stat-ecs-od').textContent = ecsOd;
   document.getElementById('stat-revenue').textContent = $(revenue);
   document.getElementById('stat-paid').textContent = $(paid);
   document.getElementById('stat-net').textContent = $(net);
@@ -119,17 +131,32 @@ async function loadTransactions() {
     .select('*')
     .order('created_at', { ascending: false });
 
-  if (filter !== 'all') {
+  if (filter === 'active') {
+    query = query.in('status', ['requested', 'purchased', 'od_xanax', 'od_ecstasy']);
+  } else if (filter !== 'all') {
     query = query.eq('status', filter);
   }
 
   const { data: txns, error } = await query;
   if (error) {
-    console.log('Failed to load transactions: ' + error.message, 'error');
+    showToast('Failed to load transactions: ' + error.message, 'error');
     return;
   }
 
-  renderTransactions(txns || []);
+  // Hide blocked players' transactions from active view
+  let filtered = txns || [];
+  if (filter === 'active') {
+    const { data: blockedClients } = await supabase
+      .from('clients')
+      .select('torn_id')
+      .eq('is_blocked', true);
+    const blockedIds = new Set((blockedClients || []).map((c) => c.torn_id));
+    if (blockedIds.size > 0) {
+      filtered = filtered.filter((t) => !blockedIds.has(t.torn_id));
+    }
+  }
+
+  renderTransactions(filtered);
 }
 
 function renderTransactions(txns) {
@@ -143,12 +170,19 @@ function renderTransactions(txns) {
     const label = formatStatus(t.status);
     const date = new Date(t.created_at).toLocaleDateString();
     const faction = t.torn_faction ? ` | ${esc(t.torn_faction)}` : '';
+    const productBadge = t.product_type === 'ecstasy_only'
+      ? '<span class="product-badge ecstasy-only">Ultimo Miglio</span>'
+      : t.product_type === 'insurance'
+      ? '<span class="product-badge shield">Protezione</span>'
+      : '<span class="product-badge package">Bella Vita</span>';
 
     let actionsHtml = '';
     switch (t.status) {
       case 'requested':
         actionsHtml = `<div class="collect-banner">Collect: ${$(t.suggested_price)}</div>
-          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>`;
+          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>
+          <button class="btn-reject" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="rejected">Reject</button>
+          <button class="btn-reject-block" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-reject-block="true">Reject &amp; Block</button>`;
         break;
       case 'purchased':
         actionsHtml = `
@@ -170,6 +204,7 @@ function renderTransactions(txns) {
         <div>
           <span class="txn-player">${esc(t.torn_name)}</span>
           <span class="txn-player-id">[${esc(t.torn_id)}]</span>
+          ${productBadge}
         </div>
         <span class="status-pill ${pillClass}">${esc(label)}</span>
       </div>
@@ -186,120 +221,45 @@ function renderTransactions(txns) {
   txnList.querySelectorAll('[data-action]').forEach((btn) => {
     btn.addEventListener('click', () => handleAction(btn.dataset.id, btn.dataset.tornId, btn.dataset.action, btn));
   });
+
+  // Bind reject & block buttons
+  txnList.querySelectorAll('[data-reject-block]').forEach((btn) => {
+    btn.addEventListener('click', () => handleRejectAndBlock(btn.dataset.tornId, btn));
+  });
 }
 
 async function handleAction(txnId, tornId, newStatus, btn) {
   btn.disabled = true;
   btn.textContent = 'Updating...';
 
-  const updates = { status: newStatus };
-
-  if (newStatus === 'purchased') {
-    const now = new Date().toISOString();
-    const closesAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-    updates.purchased_at = now;
-    updates.closes_at = closesAt;
-  }
-
-  if (newStatus === 'closed_clean' || newStatus === 'payout_sent') {
-    updates.closed_at = new Date().toISOString();
-  }
-
-  // For OD statuses, calculate payout amount from the transaction's snapshots
-  if (newStatus === 'od_xanax' || newStatus === 'od_ecstasy') {
-    const { data: txn } = await supabase
-      .from('transactions')
-      .select('xanax_payout, ecstasy_payout')
-      .eq('id', txnId)
-      .single();
-
-    if (txn) {
-      updates.payout_amount = newStatus === 'od_xanax' ? txn.xanax_payout : txn.ecstasy_payout;
-    }
-  }
-
-  const { error } = await supabase
-    .from('transactions')
-    .update(updates)
-    .eq('id', txnId);
-
-  if (error) {
-    console.log('Update failed: ' + error.message, 'error');
+  try {
+    await adminUpdateStatus(txnId, tornId, newStatus);
+  } catch (err) {
+    showToast('Update failed: ' + err.message, 'error');
     btn.disabled = false;
     btn.textContent = btn.dataset.action;
     return;
   }
 
-  // Update reserves: +revenue on sale, -payout on payout_sent
-  if (newStatus === 'purchased' || newStatus === 'payout_sent') {
-    const { data: txn } = await supabase
-      .from('transactions')
-      .select('suggested_price, payout_amount')
-      .eq('id', txnId)
-      .single();
-
-    if (txn) {
-      const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-      if (cfg) {
-        let newReserve = cfg.current_reserve;
-        if (newStatus === 'purchased') newReserve += (txn.suggested_price || 0);
-        if (newStatus === 'payout_sent') newReserve -= (txn.payout_amount || 0);
-
-        await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
-      }
-    }
-  }
-
-  // Sync client stats after status change
-  if (tornId) {
-    await syncClientStats(tornId);
-  }
-
-  console.log(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
-  await Promise.all([loadStats(), loadTransactions()]);
+  showToast(`Transaction updated to ${formatStatus(newStatus)}`, 'success');
+  await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 }
 
-// --- Client stat sync ---
-function computeTier(cleanCount) {
-  if (cleanCount >= 5) return 'legend';
-  if (cleanCount >= 3) return 'road';
-  if (cleanCount >= 1) return 'safe';
-  return 'new';
-}
+async function handleRejectAndBlock(tornId, btn) {
+  btn.disabled = true;
+  btn.textContent = 'Updating...';
 
-function computeTotalClean(txns) {
-  return txns.filter((t) => t.status === 'closed_clean').length;
-}
-
-async function syncClientStats(tornId) {
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at')
-    .eq('torn_id', tornId);
-
-  if (error) {
-    console.warn('Failed to sync client stats:', error.message);
+  try {
+    const result = await adminRejectAndBlock(tornId);
+    showToast(`Rejected ${result.rejected_count || 0} transaction(s) and blocked player`, 'success');
+  } catch (err) {
+    showToast('Reject & block failed: ' + err.message, 'error');
+    btn.disabled = false;
+    btn.textContent = 'Reject & Block';
     return;
   }
 
-  const list = txns || [];
-  const cleanCount = computeTotalClean(list);
-  const txnCount = list.length;
-  const totalSpent = list
-    .filter((t) => ['closed_clean', 'payout_sent'].includes(t.status))
-    .reduce((s, t) => s + (t.suggested_price || 0), 0);
-  const totalPayouts = list
-    .filter((t) => t.status === 'payout_sent')
-    .reduce((s, t) => s + (t.payout_amount || 0), 0);
-
-  await supabase.from('clients').update({
-    clean_count: cleanCount,
-    tier: computeTier(cleanCount),
-    transaction_count: txnCount,
-    total_spent: totalSpent,
-    total_payouts: totalPayouts,
-    updated_at: new Date().toISOString(),
-  }).eq('torn_id', tornId);
+  await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 }
 
 // --- Clients tab ---
@@ -315,26 +275,35 @@ async function loadClients() {
   }
 
   if (clientBlockedFilter.checked) {
-    query = query.eq('is_blocked', true);
+    query = query.or('is_blocked.is.null,is_blocked.eq.false');
   }
 
   const { data: clients, error } = await query;
   if (error) {
-    console.log('Failed to load clients: ' + error.message, 'error');
+    showToast('Failed to load clients: ' + error.message, 'error');
     return;
   }
 
-  renderClients(clients || []);
+  let filtered = clients || [];
+  const searchTerm = (clientSearch.value || '').trim().toLowerCase();
+  if (searchTerm) {
+    filtered = filtered.filter((c) =>
+      (c.torn_name || '').toLowerCase().includes(searchTerm) ||
+      String(c.torn_id).includes(searchTerm)
+    );
+  }
+
+  renderClients(filtered);
 }
 
 function getTierBadgeClass(tier) {
-  const map = { new: 'new-client', safe: 'safe-driver', road: 'road-warrior', legend: 'highway-legend' };
-  return map[tier] || 'new-client';
+  const map = { new: 'straniero', safe: 'amico', road: 'braccio-destro', legend: 'famiglia' };
+  return map[tier] || 'straniero';
 }
 
 function getTierName(tier) {
-  const map = { new: 'Standard', safe: 'Safe Driver', road: 'Road Warrior', legend: 'Highway Legend' };
-  return map[tier] || 'Standard';
+  const map = { new: 'Straniero', safe: 'Amico', road: 'Braccio Destro', legend: 'Famiglia' };
+  return map[tier] || 'Straniero';
 }
 
 function renderClients(clients) {
@@ -389,18 +358,15 @@ function renderClients(clients) {
       btn.disabled = true;
       btn.textContent = 'Saving...';
 
-      const { error } = await supabase
-        .from('clients')
-        .update({ admin_notes: notes, updated_at: new Date().toISOString() })
-        .eq('torn_id', tornId);
-
-      btn.disabled = false;
-      btn.textContent = 'Save';
-
-      if (error) {
-        console.log('Failed to save notes: ' + error.message, 'error');
-      } else {
-        console.log('Notes saved', 'success');
+      try {
+        await adminUpdateClient(tornId, { admin_notes: notes });
+        btn.disabled = false;
+        btn.textContent = 'Save';
+        showToast('Notes saved', 'success');
+      } catch (err) {
+        btn.disabled = false;
+        btn.textContent = 'Save';
+        showToast('Failed to save notes: ' + err.message, 'error');
       }
     });
   });
@@ -415,18 +381,14 @@ function renderClients(clients) {
       btn.disabled = true;
       btn.textContent = 'Updating...';
 
-      const { error } = await supabase
-        .from('clients')
-        .update({ is_blocked: newBlocked, updated_at: new Date().toISOString() })
-        .eq('torn_id', tornId);
-
-      if (error) {
-        console.log('Failed to update: ' + error.message, 'error');
+      try {
+        await adminUpdateClient(tornId, { is_blocked: newBlocked });
+        showToast(newBlocked ? 'Client blocked' : 'Client unblocked', 'success');
+        await loadClients();
+      } catch (err) {
+        showToast('Failed to update: ' + err.message, 'error');
         btn.disabled = false;
         btn.textContent = isCurrentlyBlocked ? 'Unblock' : 'Block';
-      } else {
-        console.log(newBlocked ? 'Client blocked' : 'Client unblocked', 'success');
-        await loadClients();
       }
     });
   });
@@ -435,7 +397,22 @@ function renderClients(clients) {
 // Client filters
 clientTierFilter.addEventListener('change', loadClients);
 clientBlockedFilter.addEventListener('change', loadClients);
+clientSearch.addEventListener('input', loadClients);
 refreshClientsBtn.addEventListener('click', loadClients);
+syncAllClientsBtn.addEventListener('click', async () => {
+  syncAllClientsBtn.disabled = true;
+  syncAllClientsBtn.textContent = 'Syncing...';
+  try {
+    const result = await adminSyncAllClients();
+    showToast(`Synced ${result.synced} client(s)`, 'success');
+    await loadClients();
+  } catch (e) {
+    showToast('Sync failed: ' + e.message, 'error');
+  } finally {
+    syncAllClientsBtn.disabled = false;
+    syncAllClientsBtn.textContent = 'Sync All Stats';
+  }
+});
 
 // --- Config ---
 async function loadConfig() {
@@ -445,7 +422,7 @@ async function loadConfig() {
     .single();
 
   if (error) {
-    console.log('Failed to load config: ' + error.message, 'error');
+    showToast('Failed to load config: ' + error.message, 'error');
     return;
   }
 
@@ -489,12 +466,12 @@ configForm.addEventListener('submit', async (e) => {
     saveBtn.disabled = false;
     statusEl.textContent = 'Saved';
     statusEl.style.color = '#6bff8e';
-    console.log('Config updated', 'success');
+    showToast('Config updated', 'success');
   } catch (e) {
     saveBtn.disabled = false;
     statusEl.textContent = 'Save failed';
     statusEl.style.color = '#ff6b81';
-    console.log('Config save failed: ' + e.message, 'error');
+    showToast('Config save failed: ' + e.message, 'error');
   }
 });
 
@@ -508,42 +485,16 @@ configHeader.addEventListener('click', () => {
 // Filter + refresh
 statusFilter.addEventListener('change', loadTransactions);
 refreshBtn.addEventListener('click', async () => {
+  await autoCloseExpired();
   await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
 });
 
-// --- Helpers ---
-function getStatusPillClass(status) {
-  if (status === 'closed_clean') return 'clean';
-  if (status === 'requested') return 'requested';
-  if (status === 'purchased') return 'purchased';
-  if (status === 'od_xanax' || status === 'od_ecstasy') return 'od';
-  if (status === 'payout_sent') return 'payout';
-  return '';
-}
-
-function formatStatus(status) {
-  const map = {
-    requested: 'Requested',
-    purchased: 'In Progress',
-    closed_clean: 'Clean',
-    od_xanax: 'Xanax OD',
-    od_ecstasy: 'Ecstasy OD',
-    payout_sent: 'Paid Out',
-  };
-  return map[status] || status;
-}
-
-function esc(str) {
-  const el = document.createElement('span');
-  el.textContent = str ?? '';
-  return el.innerHTML;
-}
 
 // --- Fetch Live Prices ---
 document.getElementById('fetch-prices-btn').addEventListener('click', async () => {
   const apiKey = document.getElementById('cfg-api-key').value.trim();
   if (!apiKey) {
-    console.log('Enter your Torn API key to fetch live prices', 'error');
+    showToast('Enter your Torn API key to fetch live prices', 'error');
     return;
   }
 
@@ -556,9 +507,9 @@ document.getElementById('fetch-prices-btn').addEventListener('click', async () =
     if (prices.xanax) document.getElementById('cfg-xanax-price').value = '$' + Number(prices.xanax.market_value).toLocaleString();
     if (prices.edvd) document.getElementById('cfg-edvd-price').value = '$' + Number(prices.edvd.market_value).toLocaleString();
     if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = '$' + Number(prices.ecstasy.market_value).toLocaleString();
-    console.log('Prices updated from Torn market — click Save Config to apply', 'success');
+    showToast('Prices updated from Torn market — click Save Config to apply', 'success');
   } catch (err) {
-    console.log('Failed to fetch prices: ' + err.message, 'error');
+    showToast('Failed to fetch prices: ' + err.message, 'error');
   } finally {
     btn.disabled = false;
     btn.textContent = 'Fetch Live Prices';

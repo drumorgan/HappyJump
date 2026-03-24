@@ -1,4 +1,5 @@
 import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd } from './api.js';
+import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -9,15 +10,18 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;
+let selectedProduct = 'package'; // 'package' | 'insurance' | 'ecstasy_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
+function showToast(msg, type) { _showToast(toastEl, msg, type); }
+
 // --- Tier definitions (margins loaded from config) ---
 const TIERS = [
-  { key: 'new', name: 'Standard', min: 0, marginField: 'margin_new', margin: 0.18, css: 'new-client' },
-  { key: 'safe', name: 'Safe Driver', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'safe-driver' },
-  { key: 'road', name: 'Road Warrior', min: 3, marginField: 'margin_road', margin: 0.12, css: 'road-warrior' },
-  { key: 'legend', name: 'Highway Legend', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'highway-legend' },
+  { key: 'new', name: 'Straniero', min: 0, marginField: 'margin_new', margin: 0.18, css: 'straniero' },
+  { key: 'safe', name: 'Amico', min: 1, marginField: 'margin_safe', margin: 0.15, css: 'amico' },
+  { key: 'road', name: 'Braccio Destro', min: 3, marginField: 'margin_road', margin: 0.12, css: 'braccio-destro' },
+  { key: 'legend', name: 'Famiglia', min: 5, marginField: 'margin_legend', margin: 0.10, css: 'famiglia' },
 ];
 
 function loadTierMargins(config) {
@@ -37,9 +41,14 @@ function getTier(cleanCount) {
 
 // --- Price calculation ---
 function calcPricing(config, margin) {
-  const packageCost = 4 * config.xanax_price + 5 * config.edvd_price + config.ecstasy_price;
-  const xanaxPayout = 4 * config.xanax_price + config.rehab_bonus;
-  const ecstasyPayout = packageCost + config.rehab_bonus;
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const xanaxPayout = 4 * xanaxPrice + rehabBonus;
+  const ecstasyPayout = packageCost + rehabBonus;
   const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
   const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
   const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
@@ -49,33 +58,186 @@ function calcPricing(config, margin) {
   return { packageCost, xanaxPayout, ecstasyPayout, trueCost, suggestedPrice };
 }
 
-const $ = (v) => '$' + Math.round(v).toLocaleString();
+// Insurance-only: no drug cost, just expected liability + margin
+function calcInsurancePricing(config, margin) {
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const xanaxPayout = 4 * xanaxPrice + rehabBonus;
+  const ecstasyPayout = packageCost + rehabBonus;
+  const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+  const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
+  const expectedLiability = pXanOd * xanaxPayout + pEcsOd * ecstasyPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
+}
+
+// Ecstasy-only insurance: covers only the Ecstasy step (5% OD rate, flat)
+function calcEcstasyOnlyPricing(config, margin) {
+  const xanaxPrice = Number(config.xanax_price);
+  const edvdPrice = Number(config.edvd_price);
+  const ecstasyPrice = Number(config.ecstasy_price);
+  const rehabBonus = Number(config.rehab_bonus);
+
+  const packageCost = 4 * xanaxPrice + 5 * edvdPrice + ecstasyPrice;
+  const ecstasyPayout = packageCost + rehabBonus;
+  const expectedLiability = Number(config.ecstasy_od_pct) * ecstasyPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout: 0, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
+}
+
+function getPricing(config, margin, product) {
+  if (product === 'insurance') return calcInsurancePricing(config, margin);
+  if (product === 'ecstasy_only') return calcEcstasyOnlyPricing(config, margin);
+  return calcPricing(config, margin);
+}
+
+// --- Coverage breakdown HTML builder ---
+function buildCoverageHTML(product, pricing, config) {
+  const rehabBonus = $(Number(config.rehab_bonus));
+  const xanPayout = `4x Xanax + ${rehabBonus} rehab bonus`;
+  const ecsPayout = `4x Xanax + 5x EDVD + 1x Ecstasy + ${rehabBonus} rehab bonus`;
+
+  let rows = '';
+
+  if (product === 'package') {
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Xanax (pills 1-4)</td>
+        <td class="cov-payout">${xanPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">You keep your Happy Jump profits</td>
+      </tr>`;
+  } else if (product === 'insurance') {
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Xanax (pills 1-4)</td>
+        <td class="cov-payout">${xanPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">Insurance expires after 7 days</td>
+      </tr>`;
+  } else {
+    // ecstasy_only
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Xanax</td>
+        <td class="cov-not-covered">NOT COVERED</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">Insurance expires after 7 days</td>
+      </tr>`;
+  }
+
+  let html = `<table class="coverage-table">
+    <thead><tr><th>Outcome</th><th>What You Get</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">7 days</strong> from purchase. Report any OD within that window and you're fully covered.</p>`;
+
+  return html;
+}
+
+
+// --- Product tab switching (storefront) ---
+let storefrontConfig = null;
+let storefrontAvail = null;
+
+function updateAnonPricing() {
+  if (!storefrontConfig) return;
+  const pricing = getPricing(storefrontConfig, TIERS[0].margin, selectedProduct);
+
+  document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
+
+  // Header, note, and contents per product
+  const priceHeader = document.getElementById('anon-price-header');
+  const priceNote = document.getElementById('anon-price-note');
+  const contentsEl = document.getElementById('anon-contents');
+  if (selectedProduct === 'ecstasy_only') {
+    priceHeader.textContent = 'Premium';
+    priceNote.textContent = 'Current premium — Straniero rate';
+    contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
+  } else if (selectedProduct === 'insurance') {
+    priceHeader.textContent = 'Premium';
+    priceNote.textContent = 'Current premium — Straniero rate';
+    contentsEl.textContent = 'Full OD insurance — no items included';
+  } else {
+    priceHeader.textContent = 'Package Price';
+    priceNote.textContent = 'Current package price — Straniero rate';
+    contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
+  }
+
+  // Update tier ladder prices for selected product
+  const anonLadder = document.getElementById('anon-tier-ladder');
+  if (anonLadder) {
+    anonLadder.innerHTML = TIERS.map((t) => {
+      const tierPricing = getPricing(storefrontConfig, t.margin, selectedProduct);
+      return `<div class="tier-row" data-tier="${t.key}">
+        <span class="tier-badge ${t.css}">${esc(t.name)}</span>
+        <span class="tier-detail">${t.min}+ clean jumps</span>
+        <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
+      </div>`;
+    }).join('');
+  }
+
+  // Update storefront coverage breakdown
+  const anonCoverageBody = document.getElementById('anon-coverage-body');
+  if (anonCoverageBody) {
+    anonCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, storefrontConfig);
+  }
+}
+
+function switchProduct(product) {
+  selectedProduct = product;
+
+  // Update tab active states in both storefront and player view
+  document.querySelectorAll('.product-tab').forEach((tab) => {
+    tab.classList.toggle('active', tab.dataset.product === product);
+  });
+
+  updateAnonPricing();
+}
+
+// Bind product tabs (both storefront and player view tabs)
+document.querySelectorAll('.product-tabs').forEach((tabBar) => {
+  tabBar.querySelectorAll('.product-tab').forEach((tab) => {
+    tab.addEventListener('click', () => switchProduct(tab.dataset.product));
+  });
+});
 
 // --- Init: load anonymous storefront data ---
 async function initStorefront() {
   try {
     const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
+    storefrontConfig = config;
+    storefrontAvail = avail;
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
-    document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
-    document.getElementById('anon-loss-cost').textContent = $(pricing.packageCost) + '+';
-    document.getElementById('anon-xan-rehab').textContent = $(config.rehab_bonus);
-    document.getElementById('anon-ecs-rehab').textContent = $(config.rehab_bonus);
-    document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
-
-    // Render anonymous tier ladder with calculated prices
-    const anonLadder = document.getElementById('anon-tier-ladder');
-    if (anonLadder) {
-      anonLadder.innerHTML = TIERS.map((t) => {
-        const tierPricing = calcPricing(config, t.margin);
-        return `<div class="tier-row" data-tier="${t.key}">
-          <span class="tier-badge ${t.css}">${esc(t.name)}</span>
-          <span class="tier-detail">${t.min}+ clean jumps</span>
-          <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
-        </div>`;
-      }).join('');
-    }
+    // Populate all storefront pricing/coverage/tiers via the shared updater
+    updateAnonPricing();
 
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {
@@ -164,7 +326,6 @@ function showPlayerView(player, config, history, apiKey) {
   const cleanCount = history.clean_count || 0;
   const hasActive = history.has_active_deal;
   const tier = getTier(cleanCount);
-  const pricing = calcPricing(config, tier.margin);
   const isReturning = (history.transactions || []).length > 0;
 
   // Welcome
@@ -176,53 +337,120 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-tier-badge').innerHTML =
     `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
 
-  // Personal pricing
-  document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
-  document.getElementById('pv-price-note').textContent =
-    `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
+  // When there's an active deal, set selectedProduct to match it and hide the pricing card.
+  // Keep product tabs visible so they can browse tier prices for either product.
+  const personalPricingCard = document.getElementById('personal-pricing-card');
+  const activeTxn = (history.transactions || []).find(
+    (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
+  );
+  if (hasActive && activeTxn) {
+    const activeProduct = activeTxn.product_type === 'ecstasy_only' ? 'ecstasy_only'
+      : activeTxn.product_type === 'insurance' ? 'insurance' : 'package';
+    switchProduct(activeProduct);
+    personalPricingCard.classList.add('hidden');
+  } else {
+    personalPricingCard.classList.remove('hidden');
+  }
+
+  // Helper to update player view pricing and buy button for selected product
+  function updatePlayerPricing() {
+    const pricing = getPricing(config, tier.margin, selectedProduct);
+    const isInsurance = selectedProduct === 'insurance';
+    const isEcstasyOnly = selectedProduct === 'ecstasy_only';
+
+    // Price header
+    const headers = { package: 'Your Package Price', insurance: 'Your Premium', ecstasy_only: 'Your Premium' };
+    document.getElementById('pv-price-header').textContent = headers[selectedProduct] || headers.package;
+
+    // Personal pricing
+    document.getElementById('pv-price').textContent = $(pricing.suggestedPrice);
+    document.getElementById('pv-price-note').textContent =
+      `${tier.name} rate (${Math.round(tier.margin * 100)}% margin)`;
+
+    // Package contents
+    const contentsEl = document.getElementById('pv-contents');
+    if (isEcstasyOnly) {
+      contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
+    } else if (isInsurance) {
+      contentsEl.textContent = 'Full OD insurance — no items included';
+    } else {
+      contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
+    }
+
+    // Coverage breakdown
+    const pvCoverageBody = document.getElementById('pv-coverage-body');
+    if (pvCoverageBody) {
+      pvCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, config);
+    }
+
+    // Buy button
+    const buyBtn = document.getElementById('buy-btn');
+    const buyStatus = document.getElementById('buy-status');
+    const buySection = document.getElementById('buy-section');
+
+    if (hasActive) {
+      buySection.classList.add('hidden');
+    } else {
+      buySection.classList.remove('hidden');
+      buyBtn.disabled = false;
+
+      if (isEcstasyOnly) {
+        buyBtn.textContent = "Request L'Ultimo Miglio — " + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits an insurance request for Ecstasy OD only. Giro will collect the premium via in-game trade.';
+      } else if (isInsurance) {
+        buyBtn.textContent = 'Request Protezione Totale — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits a full insurance request. Giro will collect the premium via in-game trade.';
+      } else {
+        buyBtn.textContent = 'Request La Bella Vita — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
+      }
+
+      // Wire up buy action (replace handler each time)
+      buyBtn.onclick = async () => {
+        buyBtn.disabled = true;
+        buyBtn.textContent = 'Processing...';
+        try {
+          const txn = await createTransaction({
+            torn_id: player.torn_id,
+            torn_name: player.torn_name,
+            torn_faction: player.torn_faction,
+            torn_level: player.torn_level,
+            product_type: selectedProduct,
+          });
+          const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio" };
+          const productLabel = productLabels[selectedProduct] || 'package';
+          showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
+          buyBtn.textContent = 'Request In Progress';
+          buyStatus.textContent = `Your ${productLabel} request has been submitted. Giro will trade with you in-game.`;
+
+          // Refresh history to show active deal
+          const updatedHistory = await getPlayerTransactions(player.torn_id);
+          renderHistory(updatedHistory.transactions);
+          renderActiveDeal(updatedHistory.transactions);
+        } catch (err) {
+          showToast(err.message, 'error');
+          buyBtn.disabled = false;
+          updatePlayerPricing();
+        }
+      };
+    }
+
+    // Update tier ladder prices for selected product
+    renderTierLadder(cleanCount, config);
+  }
+
+  // Bind player view product tabs to update pricing
+  document.querySelectorAll('#pv-product-tabs .product-tab').forEach((tab) => {
+    tab.onclick = () => {
+      switchProduct(tab.dataset.product);
+      updatePlayerPricing();
+    };
+  });
+
+  updatePlayerPricing();
 
   // Active deal (uses shared renderer that includes Report OD button)
   renderActiveDeal(history.transactions);
-
-  // Buy button
-  const buyBtn = document.getElementById('buy-btn');
-  const buyStatus = document.getElementById('buy-status');
-
-  const buySection = document.getElementById('buy-section');
-  if (hasActive) {
-    buySection.classList.add('hidden');
-  } else {
-    buySection.classList.remove('hidden');
-    buyBtn.disabled = false;
-    buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
-    buyStatus.textContent = 'This submits a request. Giro will trade with you in-game to deliver the items.';
-
-    // Wire up buy action (replace handler each time)
-    buyBtn.onclick = async () => {
-      buyBtn.disabled = true;
-      buyBtn.textContent = 'Processing...';
-      try {
-        const txn = await createTransaction({
-          torn_id: player.torn_id,
-          torn_name: player.torn_name,
-          torn_faction: player.torn_faction,
-          torn_level: player.torn_level,
-        });
-        showToast('Request submitted! Giro will initiate a trade with you in-game.', 'success');
-        buyBtn.textContent = 'Request In Progress';
-        buyStatus.textContent = 'Your request has been submitted. Giro will trade with you in-game to deliver the package and collect payment.';
-
-        // Refresh history to show active deal
-        const updatedHistory = await getPlayerTransactions(player.torn_id);
-        renderHistory(updatedHistory.transactions);
-        renderActiveDeal(updatedHistory.transactions);
-      } catch (err) {
-        showToast(err.message, 'error');
-        buyBtn.disabled = false;
-        buyBtn.textContent = 'Request Happy Jump — ' + $(pricing.suggestedPrice);
-      }
-    };
-  }
 
   // History
   renderHistory(history.transactions);
@@ -258,10 +486,14 @@ function renderActiveDeal(transactions) {
 
     if (activeTxn.status === 'od_xanax' || activeTxn.status === 'od_ecstasy') {
       const drugName = activeTxn.status === 'od_xanax' ? 'Xanax' : 'Ecstasy';
+      const payoutDesc = activeTxn.status === 'od_xanax'
+        ? '4x Xanax + $1M rehab bonus'
+        : '4x Xanax + 5x EDVD + 1x Ecstasy + $1M rehab bonus';
       body.innerHTML = `
         <div class="deal-status od-verified">OD on ${esc(drugName)} verified</div>
         <div class="deal-detail">Giro has been notified and will send your payout shortly.</div>
-        <div class="deal-detail">Payout: ${$(activeTxn.payout_amount || 0)}</div>`;
+        <div class="deal-detail">Payout: ${payoutDesc}</div>
+        <div class="deal-detail">Current value: ${$(activeTxn.payout_amount || 0)}</div>`;
       return;
     }
 
@@ -361,14 +593,17 @@ function renderHistory(transactions) {
     });
   }
 
-  let html = '<table class="history-table"><thead><tr><th>Date</th><th>Status</th><th>Price</th></tr></thead><tbody>';
+  let html = '<table class="history-table"><thead><tr><th>Date</th><th>Type</th><th>Status</th><th>Price</th></tr></thead><tbody>';
 
   for (const txn of transactions) {
     const date = new Date(txn.created_at).toLocaleDateString();
     const pillClass = getStatusPillClass(txn.status);
     const label = formatStatus(txn.status);
+    const productLabels = { package: 'Bella Vita', insurance: 'Protezione', ecstasy_only: 'Ultimo Miglio' };
+    const productLabel = productLabels[txn.product_type] || 'Package';
     html += `<tr>
       <td>${esc(date)}</td>
+      <td>${esc(productLabel)}</td>
       <td><span class="status-pill ${pillClass}">${esc(label)}</span></td>
       <td>${$(txn.suggested_price)}</td>
     </tr>`;
@@ -378,26 +613,6 @@ function renderHistory(transactions) {
   body.innerHTML = html;
 }
 
-function getStatusPillClass(status) {
-  if (status === 'closed_clean') return 'clean';
-  if (status === 'requested') return 'requested';
-  if (status === 'purchased') return 'purchased';
-  if (status === 'od_xanax' || status === 'od_ecstasy') return 'od';
-  if (status === 'payout_sent') return 'payout';
-  return '';
-}
-
-function formatStatus(status) {
-  const map = {
-    requested: 'Requested',
-    purchased: 'In Progress',
-    closed_clean: 'Clean',
-    od_xanax: 'Xanax OD',
-    od_ecstasy: 'Ecstasy OD',
-    payout_sent: 'Paid Out',
-  };
-  return map[status] || status;
-}
 
 function renderTierLadder(cleanCount, config) {
   const ladder = document.getElementById('pv-tier-ladder');
@@ -406,7 +621,7 @@ function renderTierLadder(cleanCount, config) {
   ladder.innerHTML = TIERS.map((t) => {
     const isCurrent = t.key === currentTier.key;
     const isAchieved = cleanCount >= t.min;
-    const tierPricing = calcPricing(config, t.margin);
+    const tierPricing = getPricing(config, t.margin, selectedProduct);
     return `<div class="tier-row ${isCurrent ? 'current-tier' : ''}">
       <span class="tier-badge ${t.css}">${esc(t.name)}</span>
       <span class="tier-detail">${t.min}+ clean jumps</span>
@@ -416,15 +631,3 @@ function renderTierLadder(cleanCount, config) {
   }).join('');
 }
 
-// --- Helpers ---
-
-function showToast(msg, type = 'error') {
-  toastEl.textContent = msg;
-  toastEl.className = `toast ${type}`;
-}
-
-function esc(str) {
-  const el = document.createElement('span');
-  el.textContent = str ?? '';
-  return el.innerHTML;
-}

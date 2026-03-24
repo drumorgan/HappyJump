@@ -124,6 +124,12 @@ body {
   font-size: 0.9rem;
 }
 
+.package-contents {
+  color: #aab;
+  font-size: 0.85rem;
+  margin-top: 0.5rem;
+}
+
 .availability {
   margin-top: 0.75rem;
   color: #6bff8e;
@@ -303,6 +309,60 @@ body {
   font-style: italic;
 }
 
+/* Coverage table */
+.coverage-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 0.5rem;
+}
+
+.coverage-table th,
+.coverage-table td {
+  text-align: left;
+  padding: 0.6rem 0.5rem;
+  font-size: 0.9rem;
+  vertical-align: top;
+}
+
+.coverage-table th {
+  color: #888;
+  font-weight: 500;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 1px solid #2a2a3e;
+}
+
+.coverage-table tr + tr td {
+  border-top: 1px solid #2a2a3e;
+}
+
+.coverage-table .cov-condition {
+  color: #e94560;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.coverage-table .cov-payout {
+  color: #6bff8e;
+}
+
+.coverage-table .cov-not-covered {
+  color: #e94560;
+  font-style: italic;
+}
+
+.coverage-table .cov-clean {
+  color: #888;
+}
+
+.coverage-note {
+  margin-top: 0.75rem;
+  color: #888;
+  font-size: 0.85rem;
+  line-height: 1.5;
+}
+
 /* Tier ladder */
 .tier-intro {
   color: #aaa;
@@ -340,22 +400,22 @@ body {
   white-space: nowrap;
 }
 
-.tier-badge.new-client {
+.tier-badge.straniero {
   background: #3a3a1a;
   color: #ffe66b;
 }
 
-.tier-badge.safe-driver {
+.tier-badge.amico {
   background: #1a3a1a;
   color: #6bff8e;
 }
 
-.tier-badge.road-warrior {
+.tier-badge.braccio-destro {
   background: #1a1a3a;
   color: #6b8eff;
 }
 
-.tier-badge.highway-legend {
+.tier-badge.famiglia {
   background: #2a1a3a;
   color: #c06bff;
 }
@@ -467,6 +527,11 @@ body {
 .key-note {
   color: #666;
   font-size: 0.75rem;
+}
+
+.key-note a,
+.key-note a:visited {
+  color: #e94560;
 }
 
 /* Player welcome */
@@ -638,4 +703,93 @@ body {
 .od-verified {
   color: #ff9800;
   font-weight: 600;
+}
+
+/* Product tabs */
+.product-tabs {
+  display: flex;
+  gap: 0;
+  margin-bottom: 1rem;
+  border-radius: 8px;
+  overflow: hidden;
+  border: 1px solid #2a2a3e;
+}
+
+.product-tab {
+  flex: 1;
+  padding: 0.75rem 1rem;
+  background: #1a1a2e;
+  color: #888;
+  border: none;
+  font-size: 0.95rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 0.15s, color 0.15s;
+}
+
+.product-tab:not(:last-child) {
+  border-right: 1px solid #2a2a3e;
+}
+
+.three-tabs .product-tab {
+  font-size: 0.85rem;
+  padding: 0.75rem 0.5rem;
+}
+
+.product-tab.active {
+  background: #16213e;
+  color: #e94560;
+}
+
+.product-tab:hover:not(.active) {
+  background: #1e1e36;
+  color: #ccc;
+}
+
+/* Shield feature list */
+.shield-features {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.shield-feature {
+  padding: 0.5rem 0.75rem;
+  background: #16213e;
+  border: 1px solid #2a2a3e;
+  border-left: 3px solid #6bff8e;
+  border-radius: 4px;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+/* Product type badges (admin) */
+.product-badge {
+  display: inline-block;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+
+.product-badge.package {
+  background: #1a2a3a;
+  color: #6b8eff;
+}
+
+.product-badge.shield {
+  background: #1a3a2a;
+  color: #6bff8e;
+}
+
+.product-badge.ecstasy-only {
+  background: #3a2a1a;
+  color: #ffb86b;
+}
+
+/* Ecstasy-only shield feature accent */
+.shield-feature.eco-feature {
+  border-left-color: #ffb86b;
 }

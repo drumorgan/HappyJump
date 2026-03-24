@@ -24,158 +24,53 @@
         <div class="card-body">
           <p class="form-intro">Returning? Enter your API key to jump straight in.</p>
           <form id="api-form-top">
-            <input type="text" id="api-key-top" placeholder="Your Limited Access API key" autocomplete="off" />
+            <input type="text" id="api-key-top" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" class="submit-btn-alt">Look Up</button>
           </form>
+          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create one</a> — it only shares your name, level, faction, event log, and item market prices. Nothing else.</p>
         </div>
       </div>
 
-      <div class="section-divider"></div>
-
-      <!-- Hero pitch -->
-      <div class="card">
-        <div class="card-body">
-          <p class="intro-text">You've done the math. You know the risk.</p>
-          <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
-          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong id="anon-loss-cost">$23,000,000+</strong> and two days of your life.</p>
-        </div>
+      <!-- Product tabs -->
+      <div class="product-tabs three-tabs">
+        <button class="product-tab active" data-product="package">La Bella Vita</button>
+        <button class="product-tab" data-product="insurance">Protezione Totale</button>
+        <button class="product-tab" data-product="ecstasy_only">L'Ultimo Miglio</button>
       </div>
 
-      <div class="section-divider"></div>
-
-      <!-- What You Get -->
-      <div class="card">
-        <div class="card-header">
-          <span>What You Get</span>
-        </div>
-        <div class="card-body">
-          <p class="intro-text">For one flat price, I source your entire jump package and guarantee your investment.</p>
-          <div class="package-contents" style="margin-top:1rem">
-            <div class="package-item">
-              <span class="item-qty">4x</span>
-              <span class="item-name">Xanax</span>
-            </div>
-            <div class="package-item">
-              <span class="item-qty">5x</span>
-              <span class="item-name">Erotic DVD</span>
-            </div>
-            <div class="package-item">
-              <span class="item-qty">1x</span>
-              <span class="item-name">Ecstasy</span>
-            </div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem;color:#888">Delivered ready to jump. No market hunting. No timing stress. No spreadsheets.</p>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-
-      <!-- Full OD Protection -->
-      <div class="card">
-        <div class="card-header">
-          <span>Full OD Protection</span>
-        </div>
-        <div class="card-body">
-          <div class="coverage-block">
-            <div class="coverage-scenario">
-              <span class="coverage-label">If you OD on any Xanax:</span>
-              <span class="coverage-detail">You receive a full <strong>4x Xanax replacement</strong> — no questions, no hassle, pick up where you left off.</span>
-              <span class="coverage-value">Payout: <strong>4x Xanax</strong> + <strong id="anon-xan-rehab">—</strong> rehab bonus</span>
-            </div>
-            <div class="coverage-divider"></div>
-            <div class="coverage-scenario">
-              <span class="coverage-label">If you OD on Ecstasy:</span>
-              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
-              <span class="coverage-value">Payout: <strong>4x Xanax + 5x EDVD + 1x Ecstasy</strong> + <strong id="anon-ecs-rehab">—</strong> rehab bonus</span>
-            </div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services replace your drugs.<br>We replace your drugs <em>and</em> cover your rehab.</p>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-
-      <!-- Transparent Pricing -->
+      <!-- Pricing + product summary (single card, updated by JS) -->
       <div class="card highlight-card">
         <div class="card-header">
-          <span>Transparent Pricing</span>
+          <span id="anon-price-header">Package Price</span>
         </div>
         <div class="card-body">
           <div class="big-price" id="anon-price">Loading...</div>
-          <div class="price-note">Current package price — new client rate</div>
-          <p class="intro-text" style="margin-top:0.75rem;font-size:0.85rem;color:#888">Price updates live with the item market. What you see is what you pay.</p>
+          <div class="price-note" id="anon-price-note">Current package price — Straniero rate</div>
+          <div id="anon-contents" class="package-contents" style="margin-top:0.75rem">4x Xanax + 5x Erotic DVD + 1x Ecstasy</div>
           <div id="anon-availability" class="availability">Checking availability...</div>
         </div>
       </div>
 
-      <div class="section-divider"></div>
-
-      <!-- How It Works -->
-      <div class="card">
+      <!-- Coverage Breakdown (all products) -->
+      <div class="card" id="anon-coverage-card">
         <div class="card-header">
-          <span>How It Works</span>
+          <span id="anon-coverage-header">What's Covered</span>
         </div>
-        <div class="card-body">
-          <div class="steps">
-            <div class="step">
-              <span class="step-number">1</span>
-              <div class="step-text">
-                <strong>Enter your API key to get started</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">2</span>
-              <div class="step-text">
-                <strong>Request a package</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">3</span>
-              <div class="step-text">
-                <strong>Look for an in-game trade from Giro</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">4</span>
-              <div class="step-text">
-                <strong>Check back here any time to see your status</strong>
-              </div>
-            </div>
-          </div>
+        <div class="card-body" id="anon-coverage-body">
+          <!-- Populated by JS -->
         </div>
       </div>
 
-      <div class="section-divider"></div>
-
-      <!-- Why Buy Insurance -->
+      <!-- La Famiglia Loyalty -->
       <div class="card">
         <div class="card-header">
-          <span>Why Buy Insurance?</span>
+          <span>La Famiglia</span>
         </div>
         <div class="card-body">
-          <p class="intro-text">Because 4.43% sounds small until it happens on a $23M stack.</p>
-          <p class="intro-text" style="margin-top:0.75rem">Over 25 jumps you should expect at least one Ecstasy OD. That's one moment where your month's trading profits evaporate. Insurance converts that unpredictable disaster into a flat, predictable cost.</p>
-          <p class="intro-text" style="margin-top:0.75rem"><strong>One premium. Complete protection. Jump with confidence.</strong></p>
+          <p class="intro-text" style="color:#888">Every clean jump earns a better rate. Five clean jumps and you're <strong style="color:#ccc">Famiglia</strong>.</p>
+          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:0.75rem"></div>
         </div>
       </div>
-
-      <div class="section-divider"></div>
-
-      <!-- Safe Driver Discount -->
-      <div class="card">
-        <div class="card-header">
-          <span>Safe Driver Discount</span>
-        </div>
-        <div class="card-body">
-          <p class="intro-text">Every clean jump earns you a lower price on your next one.</p>
-          <p class="intro-text" style="margin-top:0.75rem">New clients start at our standard rate. Five clean jumps in a row and you're paying our loyalty rate — permanently, until an OD resets your count.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Because reliable jumpers deserve reliable pricing.</p>
-          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:1rem"></div>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
 
       <!-- API key form -->
       <div class="card">
@@ -183,12 +78,12 @@
           <span>Get Started</span>
         </div>
         <div class="card-body">
-          <p class="form-intro">Enter a <strong>Limited Access</strong> Torn API key to verify your identity and see your personal rate.</p>
+          <p class="form-intro">Enter a Torn API key to verify your identity and see your personal rate.</p>
           <form id="api-form">
-            <input type="text" id="api-key" placeholder="Your Limited Access API key" autocomplete="off" />
+            <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is used once to verify your identity and is never stored. A Limited Access key is all that's needed — go to Settings > API Key in Torn to create one.</p>
+          <p class="key-note">Your key is used once to verify your identity and is never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a custom key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
         </div>
       </div>
     </section>
@@ -206,14 +101,32 @@
         </div>
       </div>
 
+      <!-- Product selector (player view) -->
+      <div class="product-tabs three-tabs" id="pv-product-tabs">
+        <button class="product-tab active" data-product="package">La Bella Vita</button>
+        <button class="product-tab" data-product="insurance">Protezione Totale</button>
+        <button class="product-tab" data-product="ecstasy_only">L'Ultimo Miglio</button>
+      </div>
+
       <!-- Personal pricing -->
       <div class="card highlight-card" id="personal-pricing-card">
         <div class="card-header">
-          <span>Your Package Price</span>
+          <span id="pv-price-header">Your Package Price</span>
         </div>
         <div class="card-body">
           <div class="big-price" id="pv-price"></div>
           <div class="price-note" id="pv-price-note"></div>
+          <div class="package-contents" id="pv-contents"></div>
+        </div>
+      </div>
+
+      <!-- Coverage breakdown (player view) -->
+      <div class="card" id="pv-coverage-card">
+        <div class="card-header">
+          <span id="pv-coverage-header">What's Covered</span>
+        </div>
+        <div class="card-body" id="pv-coverage-body">
+          <!-- Populated by JS -->
         </div>
       </div>
 
@@ -244,10 +157,10 @@
         </div>
       </div>
 
-      <!-- Safe Drive progress on tier ladder -->
+      <!-- La Famiglia progress on tier ladder -->
       <div class="card">
         <div class="card-header">
-          <span>Safe Driver Progress</span>
+          <span>La Famiglia Progress</span>
         </div>
         <div class="card-body">
           <div class="tier-ladder" id="pv-tier-ladder"></div>

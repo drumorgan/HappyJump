@@ -74,7 +74,7 @@
 
 @media (min-width: 600px) {
   .stats-bar {
-    grid-template-columns: repeat(6, 1fr);
+    grid-template-columns: repeat(5, 1fr);
   }
 }
 
@@ -249,6 +249,44 @@
   background: #2a3a2a;
 }
 
+.btn-reject {
+  background: #2a1a1a;
+  color: #ff8866;
+}
+
+.btn-reject:hover {
+  background: #3a2a2a;
+}
+
+.btn-reject-block {
+  background: #3a0a0a;
+  color: #ff4444;
+}
+
+.btn-reject-block:hover {
+  background: #4a1a1a;
+}
+
+.status-pill.rejected {
+  background: #3a1a0a;
+  color: #ff8866;
+}
+
+.client-search-input {
+  background: #1a1a2e;
+  border: 1px solid #333;
+  color: #eee;
+  padding: 0.4rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  width: 100%;
+  max-width: 300px;
+}
+
+.client-search-input::placeholder {
+  color: #666;
+}
+
 /* Config panel */
 .config-section-label {
   color: #e94560;
@@ -368,21 +406,6 @@
   font-size: 0.85rem;
   color: #6bff8e;
 }
-
-/* Status badges reused from main */
-.status-pill {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 3px;
-  font-size: 0.75rem;
-  font-weight: 600;
-}
-
-.status-pill.clean { background: #1a3a1a; color: #6bff8e; }
-.status-pill.requested { background: #1a1a3a; color: #6b8eff; }
-.status-pill.purchased { background: #3a3a1a; color: #ffe66b; }
-.status-pill.od { background: #3a1a1a; color: #ff6b81; }
-.status-pill.payout { background: #2a1a3a; color: #c06bff; }
 
 /* Tab bar */
 .tab-bar {
@@ -569,7 +592,7 @@
   font-weight: 600;
 }
 
-.tier-badge.new-client { background: #1a1a3a; color: #6b8eff; }
-.tier-badge.safe-driver { background: #1a3a1a; color: #6bff8e; }
-.tier-badge.road-warrior { background: #3a3a1a; color: #ffe66b; }
-.tier-badge.highway-legend { background: #3a1a3a; color: #c06bff; }
+.tier-badge.straniero { background: #3a3a1a; color: #ffe66b; }
+.tier-badge.amico { background: #1a3a1a; color: #6bff8e; }
+.tier-badge.braccio-destro { background: #1a1a3a; color: #6b8eff; }
+.tier-badge.famiglia { background: #3a1a3a; color: #c06bff; }

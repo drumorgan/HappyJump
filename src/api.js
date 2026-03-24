@@ -9,7 +9,7 @@ import { supabase } from './supabaseClient.js';
  */
 async function gateway(action, payload = {}) {
   const { data, error } = await supabase.functions.invoke('gateway', {
-    body: { action, ...payload },
+    body: { ...payload, action },
   });
 
   if (error) {
@@ -86,7 +86,8 @@ export async function fetchMarketPrices(apiKey) {
 }
 
 /**
- * Create a new transaction (request a Happy Jump package).
+ * Create a new transaction (request a Happy Jump package or insurance).
+ * playerData should include product_type: 'package' | 'insurance'
  */
 export async function createTransaction(playerData) {
   return gateway('create-transaction', playerData);
@@ -114,8 +115,36 @@ export async function updateConfig(updates) {
 }
 
 /**
+ * Admin: update transaction status (handles reserve + client sync server-side).
+ */
+export async function adminUpdateStatus(txnId, tornId, newStatus) {
+  return gateway('admin-update-status', { txn_id: txnId, torn_id: tornId, new_status: newStatus });
+}
+
+/**
+ * Admin: update client record (notes, blocked status).
+ */
+export async function adminUpdateClient(tornId, updates) {
+  return gateway('admin-update-client', { torn_id: tornId, ...updates });
+}
+
+/**
+ * Admin: reject all pending transactions for a player and block them.
+ */
+export async function adminRejectAndBlock(tornId) {
+  return gateway('admin-reject-and-block', { torn_id: tornId });
+}
+
+/**
  * Report and verify an OD — client provides their API key for verification.
  */
 export async function reportOd(apiKey, txnId) {
   return gateway('report-od', { api_key: apiKey, txn_id: txnId });
+}
+
+/**
+ * Admin: resync all client stats from transactions (fixes stale data).
+ */
+export async function adminSyncAllClients() {
+  return gateway('admin-sync-all-clients');
 }
