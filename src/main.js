@@ -97,6 +97,69 @@ function getPricing(config, margin, product) {
   return calcPricing(config, margin);
 }
 
+// --- Coverage breakdown HTML builder ---
+function buildCoverageHTML(product, pricing, config) {
+  const rehabBonus = $(Number(config.rehab_bonus));
+  const xanPayout = `4x Xanax + ${rehabBonus} rehab bonus`;
+  const ecsPayout = `4x Xanax + 5x EDVD + 1x Ecstasy + ${rehabBonus} rehab bonus`;
+
+  let rows = '';
+
+  if (product === 'package') {
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Xanax (pills 1-4)</td>
+        <td class="cov-payout">${xanPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">You keep your Happy Jump profits</td>
+      </tr>`;
+  } else if (product === 'insurance') {
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Xanax (pills 1-4)</td>
+        <td class="cov-payout">${xanPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">Insurance expires after 7 days</td>
+      </tr>`;
+  } else {
+    // ecstasy_only
+    rows = `
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-payout">${ecsPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Xanax</td>
+        <td class="cov-not-covered">NOT COVERED</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">No OD (clean jump)</td>
+        <td class="cov-clean">Insurance expires after 7 days</td>
+      </tr>`;
+  }
+
+  let html = `<table class="coverage-table">
+    <thead><tr><th>Outcome</th><th>What You Get</th></tr></thead>
+    <tbody>${rows}</tbody>
+  </table>`;
+
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">7 days</strong> from purchase. Report any OD within that window and you're fully covered.</p>`;
+
+  return html;
+}
+
 
 // --- Product tab switching (storefront) ---
 let storefrontConfig = null;
@@ -127,6 +190,12 @@ function updateAnonPricing() {
         <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
       </div>`;
     }).join('');
+  }
+
+  // Update storefront coverage breakdown
+  const anonCoverageBody = document.getElementById('anon-coverage-body');
+  if (anonCoverageBody) {
+    anonCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, storefrontConfig);
   }
 }
 
@@ -165,9 +234,12 @@ async function initStorefront() {
 
     document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
     document.getElementById('anon-loss-cost').textContent = $(pricing.packageCost) + '+';
-    document.getElementById('anon-xan-rehab').textContent = $(config.rehab_bonus);
-    document.getElementById('anon-ecs-rehab').textContent = $(config.rehab_bonus);
-    document.getElementById('anon-rehab').textContent = $(config.rehab_bonus);
+
+    // Initial coverage breakdown
+    const anonCoverageBody = document.getElementById('anon-coverage-body');
+    if (anonCoverageBody) {
+      anonCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, config);
+    }
 
     // Render anonymous tier ladder with calculated prices
     const anonLadder = document.getElementById('anon-tier-ladder');
@@ -318,6 +390,12 @@ function showPlayerView(player, config, history, apiKey) {
       contentsEl.textContent = 'Full OD insurance — no items included';
     } else {
       contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
+    }
+
+    // Coverage breakdown
+    const pvCoverageBody = document.getElementById('pv-coverage-body');
+    if (pvCoverageBody) {
+      pvCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, config);
     }
 
     // Buy button

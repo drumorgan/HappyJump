@@ -130,47 +130,13 @@
 
       <div class="section-divider"></div>
 
-      <!-- Full OD Protection (package + insurance) -->
-      <div class="card product-section" data-products="package insurance">
+      <!-- Coverage Breakdown (all products) -->
+      <div class="card" id="anon-coverage-card">
         <div class="card-header">
-          <span>Full OD Protection</span>
+          <span id="anon-coverage-header">What's Covered</span>
         </div>
-        <div class="card-body">
-          <div class="coverage-block">
-            <div class="coverage-scenario">
-              <span class="coverage-label">If you OD on any Xanax:</span>
-              <span class="coverage-detail">You receive a full <strong>4x Xanax replacement</strong> — no questions, no hassle, pick up where you left off.</span>
-              <span class="coverage-value">Payout: <strong>4x Xanax</strong> + <strong id="anon-xan-rehab">—</strong> rehab bonus</span>
-            </div>
-            <div class="coverage-divider"></div>
-            <div class="coverage-scenario">
-              <span class="coverage-label">If you OD on Ecstasy:</span>
-              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
-              <span class="coverage-value">Payout: <strong>4x Xanax + 5x EDVD + 1x Ecstasy</strong> + <strong id="anon-ecs-rehab">—</strong> rehab bonus</span>
-            </div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem"><strong>Either way, you also receive a <span id="anon-rehab">—</span> Rehab Bonus</strong> to cover your Switzerland trip and get your stats back on track immediately.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Coverage is valid for <strong style="color:#c8aa6e">7 days from purchase</strong>. Report any OD within that window and you're fully covered.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services replace your drugs.<br>We replace your drugs <em>and</em> cover your rehab.</p>
-        </div>
-      </div>
-
-      <!-- Ecstasy OD Protection (ecstasy_only) -->
-      <div class="card product-section hidden" data-product="ecstasy_only">
-        <div class="card-header">
-          <span>Ecstasy OD Protection</span>
-        </div>
-        <div class="card-body">
-          <div class="coverage-block">
-            <div class="coverage-scenario">
-              <span class="coverage-label">If you OD on Ecstasy:</span>
-              <span class="coverage-detail">You receive a <strong>complete replacement package</strong> — all 10 items, ready for your next jump.</span>
-              <span class="coverage-value">Payout: <strong>4x Xanax + 5x EDVD + 1x Ecstasy</strong> + rehab bonus</span>
-            </div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem;color:#e94560"><strong>Xanax ODs are not covered</strong> under this policy.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Coverage is valid for <strong style="color:#c8aa6e">7 days from purchase</strong>. Report any Ecstasy OD within that window and you're covered.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Other services give you a partial 4/3/1 refund.<br>We replace the <em>entire</em> package <em>and</em> cover your rehab.</p>
+        <div class="card-body" id="anon-coverage-body">
+          <!-- Populated by JS -->
         </div>
       </div>
 
@@ -372,6 +338,16 @@
           <div class="big-price" id="pv-price"></div>
           <div class="price-note" id="pv-price-note"></div>
           <div class="package-contents" id="pv-contents"></div>
+        </div>
+      </div>
+
+      <!-- Coverage breakdown (player view) -->
+      <div class="card" id="pv-coverage-card">
+        <div class="card-header">
+          <span id="pv-coverage-header">What's Covered</span>
+        </div>
+        <div class="card-body" id="pv-coverage-body">
+          <!-- Populated by JS -->
         </div>
       </div>
 
