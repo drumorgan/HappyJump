@@ -475,6 +475,11 @@ body {
   font-size: 0.75rem;
 }
 
+.key-note a,
+.key-note a:visited {
+  color: #e94560;
+}
+
 /* Player welcome */
 .player-welcome {
   padding: 0.5rem 0;
