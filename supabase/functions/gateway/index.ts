@@ -773,42 +773,6 @@ async function handleReportOd(body: any) {
   });
 }
 
-async function handleAdminSyncAllClients(req: Request) {
-  const user = await requireAuth(req);
-  if (!user) return json({ error: 'Not authenticated' }, 401);
-
-  const supabase = serviceClient();
-
-  // Get all distinct torn_ids from transactions
-  const { data: txns, error } = await supabase
-    .from('transactions')
-    .select('torn_id, torn_name, torn_faction, torn_level');
-
-  if (error) return json({ error: error.message }, 500);
-
-  // Dedupe by torn_id, keeping latest info
-  const clientMap = new Map<string, any>();
-  for (const t of (txns || [])) {
-    if (!t.torn_id) continue;
-    if (!clientMap.has(t.torn_id) || (t.torn_name && t.torn_name !== 'null')) {
-      clientMap.set(t.torn_id, t);
-    }
-  }
-
-  let synced = 0;
-  for (const [tornId, info] of clientMap) {
-    await syncClientStats(supabase, tornId, {
-      torn_name: info.torn_name || undefined,
-      torn_faction: info.torn_faction || undefined,
-      torn_level: info.torn_level || undefined,
-    });
-    synced++;
-  }
-
-  console.log(`[admin-sync-all-clients] Synced ${synced} clients`);
-  return json({ success: true, synced });
-}
-
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -841,8 +805,6 @@ serve(async (req) => {
         return await handleUpdateConfig(req, body);
       case 'report-od':
         return await handleReportOd(body);
-      case 'admin-sync-all-clients':
-        return await handleAdminSyncAllClients(req);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
