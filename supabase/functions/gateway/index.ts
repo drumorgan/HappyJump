@@ -750,12 +750,10 @@ async function handleReportOd(body: any) {
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
 
-  // Fire email BEFORE client stats sync — the subsequent await DB operations
-  // keep the isolate alive long enough for the SMTP send to complete in background.
-  // (Awaiting the email at the end of the function caused EarlyDrop — the runtime
-  // killed the isolate before the SMTP connection could finish.)
-  sendNotificationEmail(
-    `OD Payout Request - ${identData.name} [${tornId}] - ${drugLabel}`,
+  // Must await — Edge Functions terminate the isolate after response is sent,
+  // so un-awaited promises get killed before the SMTP send completes.
+  await sendNotificationEmail(
+    `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
     [
       `OD verified and payout required!`,
       ``,
