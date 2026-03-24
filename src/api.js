@@ -141,3 +141,17 @@ export async function adminRejectAndBlock(tornId) {
 export async function reportOd(apiKey, txnId) {
   return gateway('report-od', { api_key: apiKey, txn_id: txnId });
 }
+
+/**
+ * Admin: resync all client stats from transactions (fixes stale data).
+ */
+export async function adminSyncAllClients() {
+  return gateway('admin-sync-all-clients');
+}
+
+/**
+ * Admin: test email notification setup (diagnostic).
+ */
+export async function testEmail() {
+  return gateway('test-email');
+}
