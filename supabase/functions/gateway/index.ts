@@ -69,7 +69,7 @@ function computeCleanStreak(txns: any[]): number {
 async function syncClientStats(supabase: any, tornId: string, extraFields?: Record<string, unknown>) {
   const { data: allTxns } = await supabase
     .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at')
+    .select('status, suggested_price, payout_amount, created_at, torn_name')
     .eq('torn_id', tornId);
 
   const txns = allTxns || [];
@@ -82,7 +82,8 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
     .filter((t: any) => t.status === 'payout_sent')
     .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
-  const { error } = await supabase.from('clients').upsert({
+  // If torn_name not provided in extraFields, pull from most recent transaction
+  const upsertFields: Record<string, unknown> = {
     torn_id: tornId,
     clean_count: cleanCount,
     tier: computeTier(cleanCount),
@@ -91,7 +92,13 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
     total_payouts: totalPayouts,
     updated_at: new Date().toISOString(),
     ...extraFields,
-  }, { onConflict: 'torn_id' });
+  };
+  if (!upsertFields.torn_name && txns.length > 0) {
+    const name = txns[txns.length - 1]?.torn_name;
+    if (name) upsertFields.torn_name = name;
+  }
+
+  const { error } = await supabase.from('clients').upsert(upsertFields, { onConflict: 'torn_id' });
 
   if (error) console.error(`[syncClientStats] Failed for ${tornId}:`, error.message);
 }
