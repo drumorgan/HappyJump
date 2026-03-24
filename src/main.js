@@ -170,13 +170,23 @@ function updateAnonPricing() {
   const pricing = getPricing(storefrontConfig, TIERS[0].margin, selectedProduct);
 
   document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
+
+  // Header, note, and contents per product
+  const priceHeader = document.getElementById('anon-price-header');
   const priceNote = document.getElementById('anon-price-note');
+  const contentsEl = document.getElementById('anon-contents');
   if (selectedProduct === 'ecstasy_only') {
+    priceHeader.textContent = 'Premium';
     priceNote.textContent = 'Current premium — Straniero rate';
+    contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
   } else if (selectedProduct === 'insurance') {
+    priceHeader.textContent = 'Premium';
     priceNote.textContent = 'Current premium — Straniero rate';
+    contentsEl.textContent = 'Full OD insurance — no items included';
   } else {
+    priceHeader.textContent = 'Package Price';
     priceNote.textContent = 'Current package price — Straniero rate';
+    contentsEl.textContent = '4x Xanax + 5x Erotic DVD + 1x Ecstasy';
   }
 
   // Update tier ladder prices for selected product
@@ -207,12 +217,6 @@ function switchProduct(product) {
     tab.classList.toggle('active', tab.dataset.product === product);
   });
 
-  // Toggle product-specific sections in storefront
-  document.querySelectorAll('#storefront .product-section').forEach((el) => {
-    const products = (el.dataset.products || el.dataset.product || '').split(' ');
-    el.classList.toggle('hidden', !products.includes(product));
-  });
-
   updateAnonPricing();
 }
 
@@ -232,27 +236,8 @@ async function initStorefront() {
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
-    document.getElementById('anon-price').textContent = $(pricing.suggestedPrice);
-    document.getElementById('anon-loss-cost').textContent = $(pricing.packageCost) + '+';
-
-    // Initial coverage breakdown
-    const anonCoverageBody = document.getElementById('anon-coverage-body');
-    if (anonCoverageBody) {
-      anonCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, config);
-    }
-
-    // Render anonymous tier ladder with calculated prices
-    const anonLadder = document.getElementById('anon-tier-ladder');
-    if (anonLadder) {
-      anonLadder.innerHTML = TIERS.map((t) => {
-        const tierPricing = calcPricing(config, t.margin);
-        return `<div class="tier-row" data-tier="${t.key}">
-          <span class="tier-badge ${t.css}">${esc(t.name)}</span>
-          <span class="tier-detail">${t.min}+ clean jumps</span>
-          <span class="tier-price">${$(tierPricing.suggestedPrice)}</span>
-        </div>`;
-      }).join('');
-    }
+    // Populate all storefront pricing/coverage/tiers via the shared updater
+    updateAnonPricing();
 
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {

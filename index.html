@@ -31,8 +31,6 @@
         </div>
       </div>
 
-      <div class="section-divider"></div>
-
       <!-- Product tabs -->
       <div class="product-tabs three-tabs">
         <button class="product-tab active" data-product="package">La Bella Vita</button>
@@ -40,95 +38,18 @@
         <button class="product-tab" data-product="ecstasy_only">L'Ultimo Miglio</button>
       </div>
 
-      <!-- Hero pitch — package -->
-      <div class="card product-section" data-product="package">
-        <div class="card-body">
-          <p class="intro-text">You've done the math. You know the risk.</p>
-          <p class="intro-text">Every Happy Jump you run, there's a 1-in-20 chance Ecstasy takes everything. Drugs gone. Energy at zero. 48 hours on the bench. Then a trip to Switzerland on top of it.</p>
-          <p class="intro-text" style="margin-top:0.5rem">One bad roll costs you <strong id="anon-loss-cost">$23,000,000+</strong> and two days of your life.</p>
-        </div>
-      </div>
-
-      <!-- Hero pitch — insurance -->
-      <div class="card product-section hidden" data-product="insurance">
-        <div class="card-body">
-          <p class="intro-text">Already have your drugs? Just got a payout and want to protect the new package?</p>
-          <p class="intro-text" style="margin-top:0.5rem"><strong>Protezione Totale</strong> gives you <strong>full OD insurance</strong> without buying the drugs. Same coverage, same payouts — just the protection.</p>
-        </div>
-      </div>
-
-      <!-- Hero pitch — ecstasy only -->
-      <div class="card product-section hidden" data-product="ecstasy_only">
-        <div class="card-body">
-          <p class="intro-text">Already popped your Xanax? Survived the hard part?</p>
-          <p class="intro-text" style="margin-top:0.5rem"><strong>L'Ultimo Miglio</strong> — the last mile. Insure just the Ecstasy step before you take it. If you OD, we replace the <strong>full package</strong> plus a rehab bonus.</p>
-          <p class="intro-text" style="margin-top:0.5rem;color:#888">The cheapest insurance in the game. Because you've already beaten the worst odds.</p>
-        </div>
-      </div>
-
-      <div class="section-divider product-section" data-product="package"></div>
-
-      <!-- What You Get — package only -->
-      <div class="card product-section" data-product="package">
+      <!-- Pricing + product summary (single card, updated by JS) -->
+      <div class="card highlight-card">
         <div class="card-header">
-          <span>What You Get</span>
+          <span id="anon-price-header">Package Price</span>
         </div>
         <div class="card-body">
-          <p class="intro-text">For one flat price, I source your entire jump package and guarantee your investment.</p>
-          <div class="package-contents" style="margin-top:1rem">
-            <div class="package-item">
-              <span class="item-qty">4x</span>
-              <span class="item-name">Xanax</span>
-            </div>
-            <div class="package-item">
-              <span class="item-qty">5x</span>
-              <span class="item-name">Erotic DVD</span>
-            </div>
-            <div class="package-item">
-              <span class="item-qty">1x</span>
-              <span class="item-name">Ecstasy</span>
-            </div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem;color:#888">Delivered ready to jump. No market hunting. No timing stress. No spreadsheets.</p>
+          <div class="big-price" id="anon-price">Loading...</div>
+          <div class="price-note" id="anon-price-note">Current package price — Straniero rate</div>
+          <div id="anon-contents" class="package-contents" style="margin-top:0.75rem">4x Xanax + 5x Erotic DVD + 1x Ecstasy</div>
+          <div id="anon-availability" class="availability">Checking availability...</div>
         </div>
       </div>
-
-      <!-- What You Get — insurance -->
-      <div class="card product-section hidden" data-product="insurance">
-        <div class="card-header">
-          <span>What You Get</span>
-        </div>
-        <div class="card-body">
-          <p class="intro-text">Pure OD insurance for the package you already have. No drugs purchased or delivered — just the coverage.</p>
-          <div class="shield-features" style="margin-top:1rem">
-            <div class="shield-feature">Full Xanax OD coverage</div>
-            <div class="shield-feature">Full Ecstasy OD coverage</div>
-            <div class="shield-feature">Rehab bonus included</div>
-            <div class="shield-feature">7-day coverage window</div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem;color:#888">Perfect for re-insuring a payout package, or if you source your own drugs and just want the safety net.</p>
-        </div>
-      </div>
-
-      <!-- What You Get — ecstasy only -->
-      <div class="card product-section hidden" data-product="ecstasy_only">
-        <div class="card-header">
-          <span>What You Get</span>
-        </div>
-        <div class="card-body">
-          <p class="intro-text">You've taken your Xanax. You survived. Now insure the final step — the Ecstasy — before you pop it.</p>
-          <div class="shield-features" style="margin-top:1rem">
-            <div class="shield-feature eco-feature">Ecstasy OD coverage (5% risk)</div>
-            <div class="shield-feature eco-feature">Full package replacement on OD</div>
-            <div class="shield-feature eco-feature">Rehab bonus included</div>
-            <div class="shield-feature eco-feature">7-day coverage window</div>
-          </div>
-          <p class="intro-text" style="margin-top:1rem;color:#e94560"><strong>Xanax ODs are NOT covered</strong> — this policy assumes you've already taken and survived your Xanax.</p>
-          <p class="intro-text" style="margin-top:0.5rem;color:#888">The lowest premium available. Perfect for gamblers who like to take the Xanax risk themselves.</p>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
 
       <!-- Coverage Breakdown (all products) -->
       <div class="card" id="anon-coverage-card">
@@ -140,158 +61,16 @@
         </div>
       </div>
 
-      <div class="section-divider"></div>
-
-      <!-- Transparent Pricing -->
-      <div class="card highlight-card">
-        <div class="card-header">
-          <span>Transparent Pricing</span>
-        </div>
-        <div class="card-body">
-          <div class="big-price" id="anon-price">Loading...</div>
-          <div class="price-note" id="anon-price-note">Current package price — new client rate</div>
-          <p class="intro-text" style="margin-top:0.75rem;font-size:0.85rem;color:#888">Price updates live with the item market. What you see is what you pay.</p>
-          <div id="anon-availability" class="availability">Checking availability...</div>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-
-      <!-- How It Works — package -->
-      <div class="card product-section" data-product="package">
-        <div class="card-header">
-          <span>How It Works</span>
-        </div>
-        <div class="card-body">
-          <div class="steps">
-            <div class="step">
-              <span class="step-number">1</span>
-              <div class="step-text">
-                <strong>Enter your API key to get started</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">2</span>
-              <div class="step-text">
-                <strong>Request a package</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">3</span>
-              <div class="step-text">
-                <strong>Look for an in-game trade from Giro</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">4</span>
-              <div class="step-text">
-                <strong>Check back here any time to see your status</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- How It Works — insurance -->
-      <div class="card product-section hidden" data-product="insurance">
-        <div class="card-header">
-          <span>How It Works</span>
-        </div>
-        <div class="card-body">
-          <div class="steps">
-            <div class="step">
-              <span class="step-number">1</span>
-              <div class="step-text">
-                <strong>Enter your API key to get started</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">2</span>
-              <div class="step-text">
-                <strong>Request Protezione Totale</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">3</span>
-              <div class="step-text">
-                <strong>Send Giro the premium via in-game trade</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">4</span>
-              <div class="step-text">
-                <strong>Jump with your own drugs — you're fully covered</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <!-- How It Works — ecstasy only -->
-      <div class="card product-section hidden" data-product="ecstasy_only">
-        <div class="card-header">
-          <span>How It Works</span>
-        </div>
-        <div class="card-body">
-          <div class="steps">
-            <div class="step">
-              <span class="step-number">1</span>
-              <div class="step-text">
-                <strong>Take your 4x Xanax at your own risk</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">2</span>
-              <div class="step-text">
-                <strong>Survived? Enter your API key and request L'Ultimo Miglio</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">3</span>
-              <div class="step-text">
-                <strong>Send Giro the premium via in-game trade</strong>
-              </div>
-            </div>
-            <div class="step">
-              <span class="step-number">4</span>
-              <div class="step-text">
-                <strong>Take your Ecstasy — if you OD, you get the full package back</strong>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-
-      <!-- Why Buy Insurance (shared) -->
-      <div class="card">
-        <div class="card-header">
-          <span>Why Buy Insurance?</span>
-        </div>
-        <div class="card-body">
-          <p class="intro-text">Because 4.43% sounds small until it happens on a $23M stack.</p>
-          <p class="intro-text" style="margin-top:0.75rem">Over 25 jumps you should expect at least one Ecstasy OD. That's one moment where your month's trading profits evaporate. Insurance converts that unpredictable disaster into a flat, predictable cost.</p>
-          <p class="intro-text" style="margin-top:0.75rem"><strong>One premium. Complete protection. Jump with confidence.</strong></p>
-        </div>
-      </div>
-
-      <div class="section-divider"></div>
-
       <!-- La Famiglia Loyalty -->
       <div class="card">
         <div class="card-header">
           <span>La Famiglia</span>
         </div>
         <div class="card-body">
-          <p class="intro-text">Every clean jump brings you closer to the inner circle.</p>
-          <p class="intro-text" style="margin-top:0.75rem">New clients start as a <strong>Straniero</strong> — a stranger. Prove yourself, and you rise through the ranks. Five clean jumps and you're <strong>Famiglia</strong> — family — with the best rate in the house.</p>
-          <p class="intro-text" style="margin-top:0.75rem;color:#888">Loyalty is rewarded. An OD resets your rank.</p>
-          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:1rem"></div>
+          <p class="intro-text" style="color:#888">Every clean jump earns a better rate. Five clean jumps and you're <strong style="color:#ccc">Famiglia</strong>.</p>
+          <div class="tier-ladder" id="anon-tier-ladder" style="margin-top:0.75rem"></div>
         </div>
       </div>
-
-      <div class="section-divider"></div>
 
       <!-- API key form -->
       <div class="card">
