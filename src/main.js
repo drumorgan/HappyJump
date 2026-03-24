@@ -359,7 +359,7 @@ function showPlayerView(player, config, history, apiKey) {
     const isEcstasyOnly = selectedProduct === 'ecstasy_only';
 
     // Price header
-    const headers = { package: 'Your Package Price', insurance: 'Your Shield Premium', ecstasy_only: 'Your Ultimo Miglio Premium' };
+    const headers = { package: 'Your Package Price', insurance: 'Your Premium', ecstasy_only: 'Your Premium' };
     document.getElementById('pv-price-header').textContent = headers[selectedProduct] || headers.package;
 
     // Personal pricing
