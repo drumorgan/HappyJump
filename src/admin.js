@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testEmail } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -413,6 +413,31 @@ syncAllClientsBtn.addEventListener('click', async () => {
     syncAllClientsBtn.textContent = 'Sync All Stats';
   }
 });
+
+// --- Test Email ---
+const testEmailBtn = document.getElementById('test-email-btn');
+if (testEmailBtn) {
+  testEmailBtn.addEventListener('click', async () => {
+    testEmailBtn.disabled = true;
+    testEmailBtn.textContent = 'Sending...';
+    try {
+      const result = await testEmail();
+      if (result.success) {
+        showToast('Test email sent! Check your inbox.', 'success');
+      } else {
+        showToast('Email failed: ' + (result.error || 'Unknown error'), 'error');
+      }
+      if (result.envStatus) {
+        console.log('[TEST-EMAIL] Env status:', result.envStatus);
+      }
+    } catch (e) {
+      showToast('Test email failed: ' + e.message, 'error');
+    } finally {
+      testEmailBtn.disabled = false;
+      testEmailBtn.textContent = 'Test Email';
+    }
+  });
+}
 
 // --- Config ---
 async function loadConfig() {
