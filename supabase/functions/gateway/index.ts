@@ -226,9 +226,10 @@ async function handleCreateTransaction(body: any) {
 
   if (txnErr) return json({ error: txnErr.message }, 500);
 
-  // Fire-and-forget email notification for new purchase request
+  // Email notification for new purchase request (must await — Edge Functions
+  // terminate after response, so un-awaited promises get killed)
   const tier = computeTier(cleanCount);
-  sendNotificationEmail(
+  await sendNotificationEmail(
     `🛒 New Purchase Request — ${torn_name} [${torn_id}]`,
     [
       `New Happy Jump purchase request!`,
@@ -473,8 +474,8 @@ async function handleReportOd(body: any) {
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
 
-  // Fire-and-forget email notification for OD payout request
-  sendNotificationEmail(
+  // Email notification for OD payout request (must await — see above)
+  await sendNotificationEmail(
     `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
     [
       `OD verified and payout required!`,
