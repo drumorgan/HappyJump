@@ -18,7 +18,6 @@ const clientTierFilter = document.getElementById('client-tier-filter');
 const clientBlockedFilter = document.getElementById('client-blocked-filter');
 const clientSearch = document.getElementById('client-search');
 const refreshClientsBtn = document.getElementById('refresh-clients-btn');
-const syncAllClientsBtn = document.getElementById('sync-all-clients-btn');
 const toastEl = document.getElementById('toast');
 
 function showToast(msg, type) { _showToast(toastEl, msg, type); }
@@ -399,20 +398,6 @@ clientTierFilter.addEventListener('change', loadClients);
 clientBlockedFilter.addEventListener('change', loadClients);
 clientSearch.addEventListener('input', loadClients);
 refreshClientsBtn.addEventListener('click', loadClients);
-syncAllClientsBtn.addEventListener('click', async () => {
-  syncAllClientsBtn.disabled = true;
-  syncAllClientsBtn.textContent = 'Syncing...';
-  try {
-    const result = await adminSyncAllClients();
-    showToast(`Synced ${result.synced} client(s)`, 'success');
-    await loadClients();
-  } catch (e) {
-    showToast('Sync failed: ' + e.message, 'error');
-  } finally {
-    syncAllClientsBtn.disabled = false;
-    syncAllClientsBtn.textContent = 'Sync All Stats';
-  }
-});
 
 // --- Test Email ---
 const testEmailBtn = document.getElementById('test-email-btn');
