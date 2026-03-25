@@ -529,16 +529,16 @@ function renderActiveDeal(transactions) {
         // Underpaid — show balance due with updated button
         details += `
           <div class="payment-verify-section">
-            <p class="deal-detail" style="color:#e8a735">Balance due <strong>${$(balanceDue)}</strong> — please pay in-game to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
-            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid balance of ${$(balanceDue)}</button>
+            <p class="deal-detail" style="color:#e8a735">Balance due — please send <strong>${$(balanceDue)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
             <div id="payment-verify-status"></div>
           </div>`;
       } else {
         // Insurance/ecstasy_only: client sends money, then verifies
         details += `
           <div class="payment-verify-section">
-            <p class="deal-detail">Send <strong>${$(owed)}</strong> to <strong>GiroVagabondo [3667375]</strong> in-game, then click below to verify.</p>
-            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid exactly ${$(owed)}</button>
+            <p class="deal-detail">Please send <strong>${$(owed)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
             <div id="payment-verify-status"></div>
           </div>`;
       }
