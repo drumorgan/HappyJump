@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, getPublicStats } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, verifyPayment, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -505,10 +505,21 @@ function renderActiveDeal(transactions) {
     }
 
     const statusLabel = activeTxn.status === 'requested'
-      ? 'Waiting for Giro to initiate the trade in-game'
+      ? 'Waiting for payment'
       : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+
+    // "I Paid" button for requested transactions
+    if (activeTxn.status === 'requested') {
+      details += `
+        <div class="payment-verify-section">
+          <p class="deal-detail">Send <strong>${$(activeTxn.suggested_price)}</strong> to Giro in-game, then click below to verify.</p>
+          <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid — Verify Payment</button>
+          <div id="payment-verify-status"></div>
+        </div>`;
+    }
+
     if (activeTxn.status === 'purchased' && activeTxn.closes_at) {
       const closesAt = new Date(activeTxn.closes_at);
       const now = new Date();
@@ -537,6 +548,12 @@ function renderActiveDeal(transactions) {
     const reportBtn = document.getElementById('report-od-btn');
     if (reportBtn) {
       reportBtn.addEventListener('click', handleReportOd);
+    }
+
+    // Bind the verify payment button
+    const verifyBtn = document.getElementById('verify-payment-btn');
+    if (verifyBtn) {
+      verifyBtn.addEventListener('click', handleVerifyPayment);
     }
   }
 }
@@ -575,6 +592,45 @@ async function handleReportOd(e) {
     statusEl.className = 'od-report-error';
     btn.disabled = false;
     btn.textContent = 'Report OD & Request Payout';
+  }
+}
+
+async function handleVerifyPayment(e) {
+  const btn = e.target;
+  const txnId = btn.dataset.txnId;
+  const statusEl = document.getElementById('payment-verify-status');
+
+  if (!currentApiKey) {
+    statusEl.textContent = 'Session expired — please re-enter your API key.';
+    statusEl.className = 'od-report-error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  statusEl.textContent = '';
+
+  try {
+    const result = await verifyPayment(currentApiKey, txnId);
+    if (result.verified) {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-success';
+      showToast(result.detail, 'success');
+      // Refresh the active deal view to show purchased state
+      const history = await getPlayerTransactions(result.torn_id || '');
+      renderActiveDeal(history.transactions);
+      renderHistory(history.transactions);
+    } else {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-error';
+      btn.disabled = false;
+      btn.textContent = 'I Paid — Verify Payment';
+    }
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.className = 'od-report-error';
+    btn.disabled = false;
+    btn.textContent = 'I Paid — Verify Payment';
   }
 }
 

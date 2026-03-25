@@ -150,6 +150,13 @@ export async function reportOd(apiKey, txnId) {
 }
 
 /**
+ * Verify payment — client provides their API key so gateway can check events for money sent to operator.
+ */
+export async function verifyPayment(apiKey, txnId) {
+  return gateway('verify-payment', { api_key: apiKey, txn_id: txnId });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {

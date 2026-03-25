@@ -691,6 +691,33 @@ body {
 }
 
 /* OD Report */
+.payment-verify-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
+
+.btn-verify-payment {
+  background: #1b5e20;
+  color: #fff;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-verify-payment:hover {
+  background: #2e7d32;
+}
+
+.btn-verify-payment:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .od-report-section {
   margin-top: 1rem;
   padding-top: 1rem;
