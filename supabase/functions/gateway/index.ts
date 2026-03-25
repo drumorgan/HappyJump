@@ -381,7 +381,7 @@ async function handleGetPlayerTransactions(body: any) {
   const [txnResult, clientResult] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, purchased_at, closes_at, closed_at, created_at')
+      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, amount_paid, purchased_at, closes_at, closed_at, created_at')
       .eq('torn_id', String(torn_id))
       .order('created_at', { ascending: false }),
     supabase
@@ -797,7 +797,7 @@ async function handleVerifyPayment(body: any) {
   // Get the transaction and verify ownership
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, status, suggested_price, created_at, ecstasy_payout')
+    .select('id, torn_id, status, suggested_price, amount_paid, created_at, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -834,13 +834,12 @@ async function handleVerifyPayment(body: any) {
 
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
   const expectedAmount = Number(txn.suggested_price);
-  let paymentVerified = false;
-  let matchedEvent: string | null = null;
+  const previouslyPaid = Number(txn.amount_paid || 0);
+  let totalPaid = 0;
+  const matchedEvents: string[] = [];
 
   if (!eventsData.error && eventsData.events) {
     const events = Object.values(eventsData.events) as any[];
-    // Sort by timestamp descending (most recent first)
-    events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
 
     for (const evt of events) {
       const evtText = stripHtml(evt.event || '');
@@ -863,24 +862,41 @@ async function handleVerifyPayment(body: any) {
       if (!amountMatch) continue;
 
       const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
-
-      // Verify the amount matches the transaction price (exact match)
-      if (eventAmount === expectedAmount) {
-        paymentVerified = true;
-        matchedEvent = evtText;
-        break;
-      }
+      totalPaid += eventAmount;
+      matchedEvents.push(evtText);
     }
   }
 
-  if (!paymentVerified) {
+  // No payments found at all
+  if (totalPaid === 0) {
     return json({
       verified: false,
-      detail: `Could not verify payment of ${formatMoney(expectedAmount)} to Giro. If you just sent the money, wait a moment and try again. Make sure the amount is exact.`,
+      detail: `Could not find any payment to Giro. If you just sent the money, wait a moment and try again.`,
     });
   }
 
-  // Payment verified — advance to "purchased"
+  // Underpaid — store cumulative amount, return balance due
+  if (totalPaid < expectedAmount) {
+    const balanceDue = expectedAmount - totalPaid;
+
+    // Update amount_paid on the transaction
+    await supabase
+      .from('transactions')
+      .update({ amount_paid: totalPaid })
+      .eq('id', txn_id);
+
+    return json({
+      verified: false,
+      underpaid: true,
+      torn_id: tornId,
+      amount_paid: totalPaid,
+      balance_due: balanceDue,
+      suggested_price: expectedAmount,
+      detail: `You've paid ${formatMoney(totalPaid)} of ${formatMoney(expectedAmount)}. Balance due: ${formatMoney(balanceDue)}.`,
+    });
+  }
+
+  // Paid in full (exact or overpaid) — advance to "purchased"
   const now = new Date().toISOString();
   const closesAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
 
@@ -890,20 +906,24 @@ async function handleVerifyPayment(body: any) {
       status: 'purchased',
       purchased_at: now,
       closes_at: closesAt,
+      amount_paid: totalPaid,
     })
     .eq('id', txn_id);
 
   if (updateErr) return json({ error: updateErr.message }, 500);
 
   // Notify operator
+  const overpaidNote = totalPaid > expectedAmount
+    ? `\nNote: Client overpaid by ${formatMoney(totalPaid - expectedAmount)}.`
+    : '';
   await sendNotificationEmail(
     `💰 Payment Verified — ${identData.name} [${tornId}]`,
     [
       `Payment auto-verified via Torn API events!`,
       ``,
       `Player: ${identData.name} [${tornId}]`,
-      `Amount: ${formatMoney(expectedAmount)}`,
-      `Event: ${matchedEvent}`,
+      `Amount paid: ${formatMoney(totalPaid)} (owed: ${formatMoney(expectedAmount)})${overpaidNote}`,
+      `Events: ${matchedEvents.join(' | ')}`,
       ``,
       `Transaction ID: ${txn_id}`,
       `Status has been auto-advanced to "purchased" — 7-day insurance window is now active.`,
@@ -916,7 +936,7 @@ async function handleVerifyPayment(body: any) {
   return json({
     verified: true,
     torn_id: tornId,
-    detail: `Payment of ${formatMoney(expectedAmount)} verified! Your 7-day insurance window is now active.`,
+    detail: `Payment of ${formatMoney(totalPaid)} verified! Your 7-day insurance window is now active.`,
   });
 }
 
