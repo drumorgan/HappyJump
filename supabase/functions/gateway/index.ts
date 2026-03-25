@@ -863,6 +863,52 @@ async function handleTestEmail(req: Request) {
 }
 
 
+// ── Public stats ─────────────────────────────────────────────────────
+
+async function handleGetPublicStats() {
+  const sb = serviceClient();
+
+  // Count unique customers (distinct torn_id) with at least one completed transaction
+  const { data: customers, error: custErr } = await sb
+    .from('transactions')
+    .select('torn_id', { count: 'exact', head: true })
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  // Count total insured jumps (all non-rejected transactions that made it past requested)
+  const { count: totalJumps, error: jumpErr } = await sb
+    .from('transactions')
+    .select('*', { count: 'exact', head: true })
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  // Sum total paid out
+  const { data: payoutRows, error: payErr } = await sb
+    .from('transactions')
+    .select('payout_amount')
+    .eq('status', 'payout_sent');
+
+  if (custErr || jumpErr || payErr) {
+    return json({ error: 'Failed to fetch stats' }, 500);
+  }
+
+  // Count distinct torn_ids for unique customers
+  const { data: distinctCustomers, error: distErr } = await sb
+    .from('transactions')
+    .select('torn_id')
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  const uniqueIds = new Set((distinctCustomers || []).map((r: any) => r.torn_id));
+
+  const totalPaidOut = (payoutRows || []).reduce(
+    (sum: number, r: any) => sum + Number(r.payout_amount || 0), 0
+  );
+
+  return json({
+    happy_customers: uniqueIds.size,
+    total_jumps: totalJumps || 0,
+    total_paid_out: totalPaidOut,
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -885,6 +931,8 @@ serve(async (req) => {
         return await handleGetPlayerTransactions(body);
       case 'get-availability':
         return await handleGetAvailability();
+      case 'get-public-stats':
+        return await handleGetPublicStats();
       case 'admin-update-status':
         return await handleAdminUpdateStatus(req, body);
       case 'admin-update-client':
