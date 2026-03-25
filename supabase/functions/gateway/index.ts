@@ -1051,6 +1051,69 @@ async function handleGetPublicStats() {
   });
 }
 
+// ── Diagnostic: test payment event scanning ─────────────────────────
+
+async function handleTestPaymentEvents(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  // Validate key and get identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  // Fetch recent events
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+
+  if (eventsData.error || !eventsData.events) {
+    return json({
+      player: identData.name,
+      player_id: identData.player_id,
+      error: 'Could not fetch events',
+      raw_error: eventsData.error,
+    });
+  }
+
+  const events = Object.values(eventsData.events) as any[];
+  events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+
+  // Collect ALL money-related events (sent, received, etc.)
+  const moneyEvents = [];
+  for (const evt of events) {
+    const raw = evt.event || '';
+    const clean = stripHtml(raw);
+    const lower = clean.toLowerCase();
+
+    // Grab anything with a dollar sign — sent, received, trades, etc.
+    if (lower.includes('$') && (lower.includes('sent') || lower.includes('were sent') || lower.includes('trade') || lower.includes('money'))) {
+      const amountMatch = clean.match(/\$([0-9,]+)/);
+      moneyEvents.push({
+        timestamp: evt.timestamp,
+        date: new Date((evt.timestamp || 0) * 1000).toISOString(),
+        text: clean,
+        amount: amountMatch ? amountMatch[1] : null,
+      });
+    }
+  }
+
+  return json({
+    player: identData.name,
+    player_id: identData.player_id,
+    total_events: events.length,
+    money_events_found: moneyEvents.length,
+    money_events: moneyEvents,
+    sample_events: events.slice(0, 10).map((e: any) => ({
+      timestamp: e.timestamp,
+      text: stripHtml(e.event || ''),
+    })),
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -1091,6 +1154,8 @@ serve(async (req) => {
         return await handleAdminSyncAllClients(req);
       case 'test-email':
         return await handleTestEmail(req);
+      case 'test-payment-events':
+        return await handleTestPaymentEvents(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
