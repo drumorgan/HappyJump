@@ -108,6 +108,13 @@ export async function getAvailability() {
 }
 
 /**
+ * Get public stats: happy customers, total jumps insured, total paid out.
+ */
+export async function getPublicStats() {
+  return gateway('get-public-stats');
+}
+
+/**
  * Update operator config (admin only). Passes auth header automatically.
  */
 export async function updateConfig(updates) {

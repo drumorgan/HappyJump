@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -235,6 +235,13 @@ async function initStorefront() {
     storefrontAvail = avail;
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
+
+    // Load public stats (non-blocking)
+    getPublicStats().then((stats) => {
+      document.getElementById('stat-customers').textContent = stats.happy_customers;
+      document.getElementById('stat-jumps').textContent = stats.total_jumps;
+      document.getElementById('stat-paid').textContent = $(stats.total_paid_out);
+    }).catch(() => {});
 
     // Populate all storefront pricing/coverage/tiers via the shared updater
     updateAnonPricing();
