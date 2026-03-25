@@ -424,43 +424,6 @@ if (testEmailBtn) {
   });
 }
 
-// --- Test Payment Events ---
-const testPaymentBtn = document.getElementById('test-payment-btn');
-if (testPaymentBtn) {
-  testPaymentBtn.addEventListener('click', async () => {
-    const keyInput = document.getElementById('test-payment-key');
-    const resultEl = document.getElementById('test-payment-result');
-    const apiKey = keyInput.value.trim();
-
-    if (!apiKey) {
-      showToast('Enter an API key first.', 'error');
-      return;
-    }
-
-    testPaymentBtn.disabled = true;
-    testPaymentBtn.textContent = 'Scanning...';
-    resultEl.style.display = 'block';
-    resultEl.textContent = 'Fetching events...';
-
-    try {
-      const { data, error } = await supabase.functions.invoke('gateway', {
-        body: { action: 'test-payment-events', api_key: apiKey },
-      });
-
-      if (error) {
-        resultEl.textContent = 'Error: ' + error.message;
-      } else {
-        resultEl.textContent = JSON.stringify(data, null, 2);
-      }
-    } catch (e) {
-      resultEl.textContent = 'Error: ' + e.message;
-    } finally {
-      testPaymentBtn.disabled = false;
-      testPaymentBtn.textContent = 'Scan Events';
-    }
-  });
-}
-
 // --- Config ---
 async function loadConfig() {
   const { data, error } = await supabase
