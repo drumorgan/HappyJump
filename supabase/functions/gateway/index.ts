@@ -381,7 +381,7 @@ async function handleGetPlayerTransactions(body: any) {
   const [txnResult, clientResult] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, purchased_at, closes_at, closed_at, created_at')
+      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, amount_paid, purchased_at, closes_at, closed_at, created_at')
       .eq('torn_id', String(torn_id))
       .order('created_at', { ascending: false }),
     supabase
@@ -614,7 +614,7 @@ async function handleUpdateConfig(req: Request, body: any) {
     'xanax_price', 'edvd_price', 'ecstasy_price',
     'xanax_od_pct', 'ecstasy_od_pct', 'rehab_bonus',
     'margin_new', 'margin_safe', 'margin_road', 'margin_legend',
-    'current_reserve',
+    'current_reserve', 'operator_torn_id',
   ];
 
   const sanitized: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -778,6 +778,168 @@ async function handleReportOd(body: any) {
   });
 }
 
+async function handleVerifyPayment(body: any) {
+  const { api_key, txn_id } = body;
+  if (!api_key || !txn_id) {
+    return json({ error: 'Missing api_key or txn_id' }, 400);
+  }
+
+  // Validate the API key and get player identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  const tornId = String(identData.player_id);
+  const supabase = serviceClient();
+
+  // Get the transaction and verify ownership
+  const { data: txn, error: txnErr } = await supabase
+    .from('transactions')
+    .select('id, torn_id, status, suggested_price, amount_paid, created_at, ecstasy_payout')
+    .eq('id', txn_id)
+    .single();
+
+  if (txnErr || !txn) return json({ error: 'Transaction not found' }, 404);
+  if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
+  if (txn.status !== 'requested') return json({ error: 'Transaction is not awaiting payment' }, 400);
+
+  // Get operator Torn ID from config
+  const { data: config } = await supabase.from('config').select('operator_torn_id').single();
+  const operatorTornId = config?.operator_torn_id;
+  if (!operatorTornId) {
+    return json({ error: 'Operator Torn ID not configured. Contact Giro.' }, 500);
+  }
+
+  // Fetch operator profile to get their name for event matching
+  const operatorKey = Deno.env.get('TORN_API_KEY');
+  let operatorName: string | null = null;
+  if (operatorKey) {
+    const opRes = await fetch(`${TORN_API}/user/${operatorTornId}?selections=basic&key=${operatorKey}`);
+    const opData = await opRes.json();
+    if (!opData.error && opData.name) {
+      operatorName = opData.name;
+    }
+  }
+
+  // Fetch client's events since transaction creation
+  const createdAt = txn.created_at ? new Date(txn.created_at) : null;
+  const fromTs = createdAt ? Math.floor(createdAt.getTime() / 1000) : undefined;
+  const eventsUrl = fromTs
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+  const eventsRes = await fetch(eventsUrl);
+  const eventsData = await eventsRes.json();
+
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const expectedAmount = Number(txn.suggested_price);
+  const previouslyPaid = Number(txn.amount_paid || 0);
+  let totalPaid = 0;
+  const matchedEvents: string[] = [];
+
+  if (!eventsData.error && eventsData.events) {
+    const events = Object.values(eventsData.events) as any[];
+
+    for (const evt of events) {
+      const evtText = stripHtml(evt.event || '');
+      const evtLower = evtText.toLowerCase();
+
+      // Match money-send events: look for "sent" + operator name or operator ID
+      // Torn event format (sender side): "You sent $X to [PlayerName]"
+      const isSendEvent = evtLower.includes('sent') && evtLower.includes('$');
+      if (!isSendEvent) continue;
+
+      // Check if the event mentions the operator (by name or ID)
+      const mentionsOperator =
+        (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
+        evtText.includes(String(operatorTornId));
+
+      if (!mentionsOperator) continue;
+
+      // Extract dollar amount from event text — format: "$1,234,567" or "$1234567"
+      const amountMatch = evtText.match(/\$([0-9,]+)/);
+      if (!amountMatch) continue;
+
+      const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
+      totalPaid += eventAmount;
+      matchedEvents.push(evtText);
+    }
+  }
+
+  // No payments found at all
+  if (totalPaid === 0) {
+    return json({
+      verified: false,
+      detail: `Could not find any payment to Giro. If you just sent the money, wait a moment and try again.`,
+    });
+  }
+
+  // Underpaid — store cumulative amount, return balance due
+  if (totalPaid < expectedAmount) {
+    const balanceDue = expectedAmount - totalPaid;
+
+    // Update amount_paid on the transaction
+    await supabase
+      .from('transactions')
+      .update({ amount_paid: totalPaid })
+      .eq('id', txn_id);
+
+    return json({
+      verified: false,
+      underpaid: true,
+      torn_id: tornId,
+      amount_paid: totalPaid,
+      balance_due: balanceDue,
+      suggested_price: expectedAmount,
+      detail: `You've paid ${formatMoney(totalPaid)} of ${formatMoney(expectedAmount)}. Balance due: ${formatMoney(balanceDue)}.`,
+    });
+  }
+
+  // Paid in full (exact or overpaid) — advance to "purchased"
+  const now = new Date().toISOString();
+  const closesAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+
+  const { error: updateErr } = await supabase
+    .from('transactions')
+    .update({
+      status: 'purchased',
+      purchased_at: now,
+      closes_at: closesAt,
+      amount_paid: totalPaid,
+    })
+    .eq('id', txn_id);
+
+  if (updateErr) return json({ error: updateErr.message }, 500);
+
+  // Notify operator
+  const overpaidNote = totalPaid > expectedAmount
+    ? `\nNote: Client overpaid by ${formatMoney(totalPaid - expectedAmount)}.`
+    : '';
+  await sendNotificationEmail(
+    `💰 Payment Verified — ${identData.name} [${tornId}]`,
+    [
+      `Payment auto-verified via Torn API events!`,
+      ``,
+      `Player: ${identData.name} [${tornId}]`,
+      `Amount paid: ${formatMoney(totalPaid)} (owed: ${formatMoney(expectedAmount)})${overpaidNote}`,
+      `Events: ${matchedEvents.join(' | ')}`,
+      ``,
+      `Transaction ID: ${txn_id}`,
+      `Status has been auto-advanced to "purchased" — 7-day insurance window is now active.`,
+    ].join('\n'),
+  );
+
+  // Sync client stats
+  await syncClientStats(supabase, tornId, { torn_name: identData.name });
+
+  return json({
+    verified: true,
+    torn_id: tornId,
+    detail: `Payment of ${formatMoney(totalPaid)} verified! Your 7-day insurance window is now active.`,
+  });
+}
+
 async function handleAdminSyncAllClients(req: Request) {
   const user = await requireAuth(req);
   if (!user) return json({ error: 'Not authenticated' }, 401);
@@ -814,8 +976,72 @@ async function handleAdminSyncAllClients(req: Request) {
   return json({ success: true, synced });
 }
 
-// ── Test email (admin-only diagnostic) ───────────────────────────────
+// ── Public stats ─────────────────────────────────────────────────────
 
+async function handleGetPublicStats() {
+  const sb = serviceClient();
+
+  // Count unique customers (distinct torn_id) with at least one completed transaction
+  const { data: customers, error: custErr } = await sb
+    .from('transactions')
+    .select('torn_id', { count: 'exact', head: true })
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  // Count total insured jumps (all non-rejected transactions that made it past requested)
+  const { count: totalJumps, error: jumpErr } = await sb
+    .from('transactions')
+    .select('*', { count: 'exact', head: true })
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  // Sum total paid out
+  const { data: payoutRows, error: payErr } = await sb
+    .from('transactions')
+    .select('payout_amount')
+    .eq('status', 'payout_sent');
+
+  if (custErr || jumpErr || payErr) {
+    return json({ error: 'Failed to fetch stats' }, 500);
+  }
+
+  // Count distinct torn_ids for unique customers
+  const { data: distinctCustomers, error: distErr } = await sb
+    .from('transactions')
+    .select('torn_id')
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  const uniqueIds = new Set((distinctCustomers || []).map((r: any) => r.torn_id));
+
+  const totalPaidOut = (payoutRows || []).reduce(
+    (sum: number, r: any) => sum + Number(r.payout_amount || 0), 0
+  );
+
+  // Determine best seller by product_type count
+  const { data: productRows } = await sb
+    .from('transactions')
+    .select('product_type')
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  const productCounts: Record<string, number> = {};
+  for (const r of (productRows || [])) {
+    const pt = r.product_type || 'package';
+    productCounts[pt] = (productCounts[pt] || 0) + 1;
+  }
+  let bestSeller = null;
+  let bestCount = 0;
+  for (const [pt, count] of Object.entries(productCounts)) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestSeller = pt;
+    }
+  }
+
+  return json({
+    happy_customers: uniqueIds.size,
+    total_jumps: totalJumps || 0,
+    total_paid_out: totalPaidOut,
+    best_seller: bestSeller,
+  });
+}
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -838,6 +1064,8 @@ serve(async (req) => {
         return await handleGetPlayerTransactions(body);
       case 'get-availability':
         return await handleGetAvailability();
+      case 'get-public-stats':
+        return await handleGetPublicStats();
       case 'admin-update-status':
         return await handleAdminUpdateStatus(req, body);
       case 'admin-update-client':
@@ -848,6 +1076,8 @@ serve(async (req) => {
         return await handleUpdateConfig(req, body);
       case 'report-od':
         return await handleReportOd(body);
+      case 'verify-payment':
+        return await handleVerifyPayment(body);
       case 'admin-sync-all-clients':
         return await handleAdminSyncAllClients(req);
       default:

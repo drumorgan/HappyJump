@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, verifyPayment, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -236,12 +236,35 @@ async function initStorefront() {
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
+    // Load public stats (non-blocking)
+    getPublicStats().then((stats) => {
+      document.getElementById('stat-customers').textContent = stats.happy_customers;
+      document.getElementById('stat-jumps').textContent = stats.total_jumps;
+      document.getElementById('stat-paid').textContent = $(stats.total_paid_out);
+
+      // Dynamically apply best-seller badge
+      if (stats.best_seller) {
+        document.querySelectorAll('.product-tab').forEach(tab => {
+          tab.classList.remove('best-seller');
+          const existingTag = tab.querySelector('.best-seller-tag');
+          if (existingTag) existingTag.remove();
+        });
+        document.querySelectorAll(`.product-tab[data-product="${stats.best_seller}"]`).forEach(tab => {
+          tab.classList.add('best-seller');
+          const tag = document.createElement('span');
+          tag.className = 'best-seller-tag';
+          tag.textContent = 'Best Seller';
+          tab.prepend(tag);
+        });
+      }
+    }).catch(() => {});
+
     // Populate all storefront pricing/coverage/tiers via the shared updater
     updateAnonPricing();
 
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {
-      availEl.textContent = `${avail.available} package${avail.available !== 1 ? 's' : ''} available`;
+      availEl.textContent = `Current Reserves: ${avail.available}`;
     } else {
       let soldOutMsg = 'Sold out';
       if (avail.nextCloseAt) {
@@ -498,10 +521,45 @@ function renderActiveDeal(transactions) {
     }
 
     const statusLabel = activeTxn.status === 'requested'
-      ? 'Waiting for Giro to initiate the trade in-game'
+      ? 'Waiting for payment'
       : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+
+    // Payment section for requested transactions
+    if (activeTxn.status === 'requested') {
+      const isPackage = activeTxn.product_type === 'package';
+      const amountPaid = Number(activeTxn.amount_paid || 0);
+      const owed = Number(activeTxn.suggested_price);
+      const balanceDue = owed - amountPaid;
+
+      if (isPackage) {
+        // Package: client must initiate an in-game trade (operator delivers items)
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail">Initiate a Trade with <strong>GiroVagabondo [3667375]</strong> for <strong>${$(owed)}</strong></p>
+            <p class="deal-detail" style="opacity:0.7">Giro will accept the trade and deliver your items in-game.</p>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      } else if (amountPaid > 0 && balanceDue > 0) {
+        // Underpaid — show balance due with updated button
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail" style="color:#e8a735">Balance due — please send <strong>${$(balanceDue)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      } else {
+        // Insurance/ecstasy_only: client sends money, then verifies
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail">Please send <strong>${$(owed)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      }
+    }
+
     if (activeTxn.status === 'purchased' && activeTxn.closes_at) {
       const closesAt = new Date(activeTxn.closes_at);
       const now = new Date();
@@ -530,6 +588,12 @@ function renderActiveDeal(transactions) {
     const reportBtn = document.getElementById('report-od-btn');
     if (reportBtn) {
       reportBtn.addEventListener('click', handleReportOd);
+    }
+
+    // Bind the verify payment button
+    const verifyBtn = document.getElementById('verify-payment-btn');
+    if (verifyBtn) {
+      verifyBtn.addEventListener('click', handleVerifyPayment);
     }
   }
 }
@@ -568,6 +632,53 @@ async function handleReportOd(e) {
     statusEl.className = 'od-report-error';
     btn.disabled = false;
     btn.textContent = 'Report OD & Request Payout';
+  }
+}
+
+async function handleVerifyPayment(e) {
+  const btn = e.target;
+  const txnId = btn.dataset.txnId;
+  const statusEl = document.getElementById('payment-verify-status');
+
+  if (!currentApiKey) {
+    statusEl.textContent = 'Session expired — please re-enter your API key.';
+    statusEl.className = 'od-report-error';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  statusEl.textContent = '';
+
+  try {
+    const result = await verifyPayment(currentApiKey, txnId);
+    if (result.verified) {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-success';
+      showToast(result.detail, 'success');
+      // Refresh the active deal view to show purchased state
+      const history = await getPlayerTransactions(result.torn_id || '');
+      renderActiveDeal(history.transactions);
+      renderHistory(history.transactions);
+    } else if (result.underpaid) {
+      // Underpaid — refresh deal view to show balance due UI
+      statusEl.textContent = '';
+      const history = await getPlayerTransactions(result.torn_id || btn.dataset.tornId || '');
+      // Update the transaction's amount_paid in local data so renderActiveDeal shows balance
+      const txn = (history.transactions || []).find(t => t.id === txnId);
+      if (txn) txn.amount_paid = result.amount_paid;
+      renderActiveDeal(history.transactions);
+      showToast(result.detail, 'error');
+    } else {
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-error';
+      btn.disabled = false;
+      btn.textContent = btn.textContent; // preserve current label
+    }
+  } catch (err) {
+    statusEl.textContent = err.message;
+    statusEl.className = 'od-report-error';
+    btn.disabled = false;
   }
 }
 

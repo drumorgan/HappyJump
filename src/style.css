@@ -35,6 +35,36 @@ body {
   font-size: 1rem;
 }
 
+/* Stats bar */
+.stats-bar {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0.75rem;
+  margin-bottom: 1.5rem;
+}
+
+.stat-box {
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+  padding: 1rem 0.5rem;
+  text-align: center;
+}
+
+.stat-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #fff;
+  margin-bottom: 0.25rem;
+}
+
+.stat-label {
+  color: #888;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Toast */
 .toast {
   padding: 0.75rem 1rem;
@@ -661,6 +691,33 @@ body {
 }
 
 /* OD Report */
+.payment-verify-section {
+  margin-top: 1rem;
+  padding-top: 1rem;
+  border-top: 1px solid #333;
+}
+
+.btn-verify-payment {
+  background: #1b5e20;
+  color: #fff;
+  border: none;
+  padding: 0.75rem 1.5rem;
+  border-radius: 8px;
+  font-size: 1rem;
+  font-weight: 600;
+  cursor: pointer;
+  width: 100%;
+}
+
+.btn-verify-payment:hover {
+  background: #2e7d32;
+}
+
+.btn-verify-payment:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
 .od-report-section {
   margin-top: 1rem;
   padding-top: 1rem;
@@ -744,6 +801,26 @@ body {
 .product-tab:hover:not(.active) {
   background: #1e1e36;
   color: #ccc;
+}
+
+.product-tab.best-seller {
+  position: relative;
+}
+
+.best-seller-tag {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #e94560;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0 0 4px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
 }
 
 /* Shield feature list */

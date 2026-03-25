@@ -108,6 +108,13 @@ export async function getAvailability() {
 }
 
 /**
+ * Get public stats: happy customers, total jumps insured, total paid out.
+ */
+export async function getPublicStats() {
+  return gateway('get-public-stats');
+}
+
+/**
  * Update operator config (admin only). Passes auth header automatically.
  */
 export async function updateConfig(updates) {
@@ -140,6 +147,13 @@ export async function adminRejectAndBlock(tornId) {
  */
 export async function reportOd(apiKey, txnId) {
   return gateway('report-od', { api_key: apiKey, txn_id: txnId });
+}
+
+/**
+ * Verify payment — client provides their API key so gateway can check events for money sent to operator.
+ */
+export async function verifyPayment(apiKey, txnId) {
+  return gateway('verify-payment', { api_key: apiKey, txn_id: txnId });
 }
 
 /**
