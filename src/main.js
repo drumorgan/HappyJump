@@ -248,7 +248,7 @@ async function initStorefront() {
 
     const availEl = document.getElementById('anon-availability');
     if (avail.available > 0) {
-      availEl.textContent = `${avail.available} package${avail.available !== 1 ? 's' : ''} available`;
+      availEl.textContent = `Current Reserves: ${avail.available}`;
     } else {
       let soldOutMsg = 'Sold out';
       if (avail.nextCloseAt) {

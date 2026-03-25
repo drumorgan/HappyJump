@@ -803,6 +803,26 @@ body {
   color: #ccc;
 }
 
+.product-tab.best-seller {
+  position: relative;
+}
+
+.best-seller-tag {
+  position: absolute;
+  top: -1px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: #e94560;
+  color: #fff;
+  font-size: 0.55rem;
+  font-weight: 700;
+  padding: 0.1rem 0.4rem;
+  border-radius: 0 0 4px 4px;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  line-height: 1.2;
+}
+
 /* Shield feature list */
 .shield-features {
   display: flex;
