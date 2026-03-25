@@ -1064,10 +1064,31 @@ async function handleGetPublicStats() {
     (sum: number, r: any) => sum + Number(r.payout_amount || 0), 0
   );
 
+  // Determine best seller by product_type count
+  const { data: productRows } = await sb
+    .from('transactions')
+    .select('product_type')
+    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  const productCounts: Record<string, number> = {};
+  for (const r of (productRows || [])) {
+    const pt = r.product_type || 'package';
+    productCounts[pt] = (productCounts[pt] || 0) + 1;
+  }
+  let bestSeller = null;
+  let bestCount = 0;
+  for (const [pt, count] of Object.entries(productCounts)) {
+    if (count > bestCount) {
+      bestCount = count;
+      bestSeller = pt;
+    }
+  }
+
   return json({
     happy_customers: uniqueIds.size,
     total_jumps: totalJumps || 0,
     total_paid_out: totalPaidOut,
+    best_seller: bestSeller,
   });
 }
 

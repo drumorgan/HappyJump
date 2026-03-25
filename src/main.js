@@ -241,6 +241,22 @@ async function initStorefront() {
       document.getElementById('stat-customers').textContent = stats.happy_customers;
       document.getElementById('stat-jumps').textContent = stats.total_jumps;
       document.getElementById('stat-paid').textContent = $(stats.total_paid_out);
+
+      // Dynamically apply best-seller badge
+      if (stats.best_seller) {
+        document.querySelectorAll('.product-tab').forEach(tab => {
+          tab.classList.remove('best-seller');
+          const existingTag = tab.querySelector('.best-seller-tag');
+          if (existingTag) existingTag.remove();
+        });
+        document.querySelectorAll(`.product-tab[data-product="${stats.best_seller}"]`).forEach(tab => {
+          tab.classList.add('best-seller');
+          const tag = document.createElement('span');
+          tag.className = 'best-seller-tag';
+          tag.textContent = 'Best Seller';
+          tab.prepend(tag);
+        });
+      }
     }).catch(() => {});
 
     // Populate all storefront pricing/coverage/tiers via the shared updater
