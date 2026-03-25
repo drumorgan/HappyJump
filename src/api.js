@@ -149,9 +149,3 @@ export async function adminSyncAllClients() {
   return gateway('admin-sync-all-clients');
 }
 
-/**
- * Admin: test email notification setup (diagnostic).
- */
-export async function testEmail() {
-  return gateway('test-email');
-}
