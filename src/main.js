@@ -510,14 +510,38 @@ function renderActiveDeal(transactions) {
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
 
-    // "I Paid" button for requested transactions
+    // Payment section for requested transactions
     if (activeTxn.status === 'requested') {
-      details += `
-        <div class="payment-verify-section">
-          <p class="deal-detail">Send <strong>${$(activeTxn.suggested_price)}</strong> to Giro in-game, then click below to verify.</p>
-          <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid — Verify Payment</button>
-          <div id="payment-verify-status"></div>
-        </div>`;
+      const isPackage = activeTxn.product_type === 'package';
+      const amountPaid = Number(activeTxn.amount_paid || 0);
+      const owed = Number(activeTxn.suggested_price);
+      const balanceDue = owed - amountPaid;
+
+      if (isPackage) {
+        // Package: client must initiate an in-game trade (operator delivers items)
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail">Initiate a Trade with <strong>GiroVagabondo [3667375]</strong> for <strong>${$(owed)}</strong></p>
+            <p class="deal-detail" style="opacity:0.7">Giro will accept the trade and deliver your items in-game.</p>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      } else if (amountPaid > 0 && balanceDue > 0) {
+        // Underpaid — show balance due with updated button
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail" style="color:#e8a735">Balance due — please send <strong>${$(balanceDue)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      } else {
+        // Insurance/ecstasy_only: client sends money, then verifies
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail">Please send <strong>${$(owed)}</strong> to <strong>GiroVagabondo [3667375]</strong> and then click here →</p>
+            <button id="verify-payment-btn" class="btn-verify-payment" data-txn-id="${activeTxn.id}">I Paid</button>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      }
     }
 
     if (activeTxn.status === 'purchased' && activeTxn.closes_at) {
@@ -620,17 +644,25 @@ async function handleVerifyPayment(e) {
       const history = await getPlayerTransactions(result.torn_id || '');
       renderActiveDeal(history.transactions);
       renderHistory(history.transactions);
+    } else if (result.underpaid) {
+      // Underpaid — refresh deal view to show balance due UI
+      statusEl.textContent = '';
+      const history = await getPlayerTransactions(result.torn_id || btn.dataset.tornId || '');
+      // Update the transaction's amount_paid in local data so renderActiveDeal shows balance
+      const txn = (history.transactions || []).find(t => t.id === txnId);
+      if (txn) txn.amount_paid = result.amount_paid;
+      renderActiveDeal(history.transactions);
+      showToast(result.detail, 'error');
     } else {
       statusEl.textContent = result.detail;
       statusEl.className = 'od-report-error';
       btn.disabled = false;
-      btn.textContent = 'I Paid — Verify Payment';
+      btn.textContent = btn.textContent; // preserve current label
     }
   } catch (err) {
     statusEl.textContent = err.message;
     statusEl.className = 'od-report-error';
     btn.disabled = false;
-    btn.textContent = 'I Paid — Verify Payment';
   }
 }
 
