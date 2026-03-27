@@ -962,6 +962,54 @@ async function handleAdminSyncAllClients(req: Request) {
   return json({ success: true, synced });
 }
 
+// ── Test email (admin-only diagnostic) ───────────────────────────────
+
+async function handleTestEmail(req: Request) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const host = Deno.env.get('SMTP_HOST');
+  const smtpUser = Deno.env.get('SMTP_USER');
+  const pass = Deno.env.get('SMTP_PASS');
+  const port = Deno.env.get('SMTP_PORT') || '465';
+  const notify = Deno.env.get('NOTIFY_EMAIL');
+
+  const envStatus = {
+    SMTP_HOST: host ? `set (${host})` : 'MISSING',
+    SMTP_USER: smtpUser ? `set (${smtpUser})` : 'MISSING',
+    SMTP_PASS: pass ? 'set (hidden)' : 'MISSING',
+    SMTP_PORT: port,
+    NOTIFY_EMAIL: notify ? `set (${notify})` : 'MISSING',
+  };
+
+  if (!host || !smtpUser || !pass || !notify) {
+    return json({ error: 'Missing SMTP env vars', envStatus }, 400);
+  }
+
+  try {
+    const client = new SMTPClient({
+      connection: {
+        hostname: host,
+        port: Number(port),
+        tls: true,
+        auth: { username: smtpUser, password: pass },
+      },
+    });
+
+    await client.send({
+      from: smtpUser,
+      to: notify,
+      subject: 'Happy Jump — Test Email',
+      content: 'This is a test email from the Happy Jump gateway. If you see this, email notifications are working!',
+    });
+
+    await client.close();
+    return json({ success: true, message: 'Test email sent', envStatus });
+  } catch (e) {
+    return json({ error: `SMTP send failed: ${e?.message || e}`, envStatus }, 500);
+  }
+}
+
 // ── Public stats ─────────────────────────────────────────────────────
 
 async function handleGetPublicStats() {
@@ -1066,6 +1114,8 @@ serve(async (req) => {
         return await handleVerifyPayment(body);
       case 'admin-sync-all-clients':
         return await handleAdminSyncAllClients(req);
+      case 'test-email':
+        return await handleTestEmail(req);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

@@ -460,6 +460,52 @@ configForm.addEventListener('submit', async (e) => {
   }
 });
 
+// Test Email button
+document.getElementById('test-email-btn')?.addEventListener('click', async () => {
+  const btn = document.getElementById('test-email-btn');
+  const statusEl = document.getElementById('config-status');
+  btn.disabled = true;
+  btn.textContent = 'Sending...';
+  statusEl.textContent = '';
+
+  try {
+    const { data, error } = await supabase.functions.invoke('gateway', {
+      body: { action: 'test-email' },
+    });
+    if (error) {
+      const text = error.context?.body instanceof ReadableStream
+        ? await new Response(error.context.body).text()
+        : error.message;
+      let parsed;
+      try { parsed = JSON.parse(text); } catch { parsed = { error: text }; }
+      const envInfo = parsed.envStatus
+        ? '\n\nEnv status:\n' + Object.entries(parsed.envStatus).map(([k,v]) => `  ${k}: ${v}`).join('\n')
+        : '';
+      statusEl.textContent = (parsed.error || 'Failed') + envInfo;
+      statusEl.style.color = '#ff6b81';
+      showToast('Test email failed: ' + (parsed.error || text), 'error');
+    } else if (data?.error) {
+      const envInfo = data.envStatus
+        ? '\n\nEnv status:\n' + Object.entries(data.envStatus).map(([k,v]) => `  ${k}: ${v}`).join('\n')
+        : '';
+      statusEl.textContent = data.error + envInfo;
+      statusEl.style.color = '#ff6b81';
+      showToast('Test email failed: ' + data.error, 'error');
+    } else {
+      statusEl.textContent = 'Test email sent!';
+      statusEl.style.color = '#6bff8e';
+      showToast('Test email sent successfully', 'success');
+    }
+  } catch (e) {
+    statusEl.textContent = 'Test email failed: ' + e.message;
+    statusEl.style.color = '#ff6b81';
+    showToast('Test email failed: ' + e.message, 'error');
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Test Email';
+});
+
 // Config panel toggle
 configHeader.addEventListener('click', () => {
   configBody.classList.toggle('collapsed');
