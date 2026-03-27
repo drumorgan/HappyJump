@@ -40,6 +40,13 @@ A Happy Jump consumes: 4x Xanax, 5x Erotic DVDs, 1x Ecstasy. Any OD at any step 
 | Any Xanax (1-4) | 4x Xanax + $1M rehab bonus                                      |
 | Ecstasy         | Full new package (4 Xan + 5 EDVD + 1 Ecstasy) + $1M rehab bonus |
 
+### Payout Trade Subject Lines
+
+Use these exact subject lines when sending payouts in-game so trade logs are searchable:
+
+- **Xanax OD:** `HappyJump Payout - Xanax OD`
+- **Ecstasy OD:** `HappyJump Payout - Ecstasy OD`
+
 ### Pricing Formulas
 
 All prices are variables pulled live from Torn API item market.
