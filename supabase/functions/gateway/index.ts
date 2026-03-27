@@ -614,7 +614,7 @@ async function handleUpdateConfig(req: Request, body: any) {
     'xanax_price', 'edvd_price', 'ecstasy_price',
     'xanax_od_pct', 'ecstasy_od_pct', 'rehab_bonus',
     'margin_new', 'margin_safe', 'margin_road', 'margin_legend',
-    'current_reserve', 'operator_torn_id',
+    'current_reserve',
   ];
 
   const sanitized: Record<string, unknown> = { updated_at: new Date().toISOString() };
@@ -805,23 +805,9 @@ async function handleVerifyPayment(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'requested') return json({ error: 'Transaction is not awaiting payment' }, 400);
 
-  // Get operator Torn ID from config
-  const { data: config } = await supabase.from('config').select('operator_torn_id').single();
-  const operatorTornId = config?.operator_torn_id;
-  if (!operatorTornId) {
-    return json({ error: 'Operator Torn ID not configured. Contact Giro.' }, 500);
-  }
-
-  // Fetch operator profile to get their name for event matching
-  const operatorKey = Deno.env.get('TORN_API_KEY');
-  let operatorName: string | null = null;
-  if (operatorKey) {
-    const opRes = await fetch(`${TORN_API}/user/${operatorTornId}?selections=basic&key=${operatorKey}`);
-    const opData = await opRes.json();
-    if (!opData.error && opData.name) {
-      operatorName = opData.name;
-    }
-  }
+  // Operator identity — used to match client's "You sent $X to GiroVagabondo" events
+  const operatorName = 'GiroVagabondo';
+  const operatorTornId = '3667375';
 
   // Fetch client's events since transaction creation
   const createdAt = txn.created_at ? new Date(txn.created_at) : null;
