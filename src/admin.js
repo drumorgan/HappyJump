@@ -471,8 +471,10 @@ document.getElementById('test-email-btn')?.addEventListener('click', async () =>
   statusEl.textContent = '';
 
   try {
+    const { data: { session } } = await supabase.auth.getSession();
     const { data, error } = await supabase.functions.invoke('gateway', {
       body: { action: 'test-email' },
+      headers: session?.access_token ? { Authorization: `Bearer ${session.access_token}` } : {},
     });
     if (error) {
       const text = error.context?.body instanceof ReadableStream
