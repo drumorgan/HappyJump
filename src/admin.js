@@ -422,7 +422,6 @@ async function loadConfig() {
   document.getElementById('cfg-margin-road').value = data.margin_road;
   document.getElementById('cfg-margin-legend').value = data.margin_legend;
   document.getElementById('cfg-reserve').value = '$' + Number(data.current_reserve).toLocaleString();
-  document.getElementById('cfg-operator-torn-id').value = data.operator_torn_id || '';
 }
 
 configForm.addEventListener('submit', async (e) => {
@@ -445,7 +444,6 @@ configForm.addEventListener('submit', async (e) => {
     margin_road: Number(document.getElementById('cfg-margin-road').value),
     margin_legend: Number(document.getElementById('cfg-margin-legend').value),
     current_reserve: Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, '')),
-    operator_torn_id: document.getElementById('cfg-operator-torn-id').value.trim(),
   };
 
   try {
