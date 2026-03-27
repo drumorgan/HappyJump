@@ -118,6 +118,21 @@ async function sendNotificationEmail(subject: string, body: string) {
     return;
   }
 
+  // Convert newline-separated body to HTML paragraphs
+  const htmlBody = body
+    .split('\n')
+    .map(line => line.trim() === '' ? '<br>' : `<p style="margin:0 0 4px 0;">${line}</p>`)
+    .join('\n');
+
+  const html = `
+<div style="font-family: -apple-system, sans-serif; font-size: 14px; color: #222; max-width: 500px;">
+  <h2 style="margin:0 0 12px 0; font-size: 18px; color: #333;">${subject}</h2>
+  <hr style="border:none; border-top:1px solid #ddd; margin:12px 0;">
+  ${htmlBody}
+  <hr style="border:none; border-top:1px solid #ddd; margin:16px 0 8px;">
+  <p style="margin:0; font-size:12px; color:#999;">Happy Jump Insurance — Giro Vagabondo</p>
+</div>`.trim();
+
   try {
     const client = new SMTPClient({
       connection: {
@@ -132,7 +147,7 @@ async function sendNotificationEmail(subject: string, body: string) {
       from: user,
       to: notify,
       subject,
-      content: body,
+      html,
     });
 
     await client.close();
