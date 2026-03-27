@@ -126,8 +126,6 @@ async function sendNotificationEmail(subject: string, body: string) {
 
   const html = `
 <div style="font-family: -apple-system, sans-serif; font-size: 14px; color: #222; max-width: 500px;">
-  <h2 style="margin:0 0 12px 0; font-size: 18px; color: #333;">${subject}</h2>
-  <hr style="border:none; border-top:1px solid #ddd; margin:12px 0;">
   ${htmlBody}
   <hr style="border:none; border-top:1px solid #ddd; margin:16px 0 8px;">
   <p style="margin:0; font-size:12px; color:#999;">Happy Jump Insurance — Giro Vagabondo</p>
@@ -180,7 +178,7 @@ async function autoCloseExpired(supabase: any) {
   const now = new Date().toISOString();
   const { data: expired } = await supabase
     .from('transactions')
-    .select('id, torn_id, ecstasy_payout')
+    .select('id, torn_id, torn_name, ecstasy_payout')
     .eq('status', 'purchased')
     .lt('closes_at', now);
 
@@ -205,12 +203,13 @@ async function autoCloseExpired(supabase: any) {
       await syncClientStats(supabase, txn.torn_id);
     }
 
+    const expiredLabel = txn.torn_name ? `${txn.torn_name} [${txn.torn_id}]` : txn.torn_id;
     await sendNotificationEmail(
-      `Happy Jump — Timer Expired — Clean Close [${txn.torn_id}]`,
+      `Happy Jump — Clean Close — ${expiredLabel}`,
       [
         `A 7-day insurance window has expired with no OD claim.`,
         ``,
-        `Player: ${txn.torn_id}`,
+        `Player: ${expiredLabel}`,
         `Transaction ID: ${txn.id}`,
         `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
       ].join('\n'),
@@ -502,7 +501,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Always fetch torn_id from the transaction itself (don't rely on request body)
   const { data: txnRecord, error: fetchErr } = await supabase
     .from('transactions')
-    .select('torn_id, xanax_payout, ecstasy_payout, payout_amount')
+    .select('torn_id, torn_name, xanax_payout, ecstasy_payout, payout_amount')
     .eq('id', txn_id)
     .single();
 
@@ -581,12 +580,13 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     const payoutInfo = new_status === 'payout_sent'
       ? `\nPayout Amount: ${formatMoney(Number(updates.payout_amount || txnRecord.payout_amount || 0))}`
       : '';
+    const playerLabel = txnRecord.torn_name ? `${txnRecord.torn_name} [${tornId}]` : tornId;
     await sendNotificationEmail(
-      `Happy Jump — Status ${formatStatus(new_status)} — Player ${tornId}`,
+      `Happy Jump — ${formatStatus(new_status)} — ${playerLabel}`,
       [
         `Transaction status updated by admin.`,
         ``,
-        `Player: ${tornId}`,
+        `Player: ${playerLabel}`,
         `New Status: ${formatStatus(new_status)}`,
         `Transaction ID: ${txn_id}`,
         payoutInfo,
