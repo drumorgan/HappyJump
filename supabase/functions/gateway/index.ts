@@ -133,7 +133,6 @@ async function sendNotificationEmail(subject: string, body: string) {
       to: notify,
       subject,
       content: body,
-      html: `<pre style="font-family:sans-serif;white-space:pre-wrap;">${body}</pre>`,
     });
 
     await client.close();
@@ -1029,42 +1028,19 @@ async function handleTestEmail(req: Request) {
   const user = await requireAuth(req);
   if (!user) return json({ error: 'Not authenticated' }, 401);
 
-  const host = Deno.env.get('SMTP_HOST');
-  const smtpUser = Deno.env.get('SMTP_USER');
-  const pass = Deno.env.get('SMTP_PASS');
-  const port = Deno.env.get('SMTP_PORT') || '465';
-  const notify = Deno.env.get('NOTIFY_EMAIL');
-
   const envStatus = {
-    SMTP_HOST: host ? `set (${host})` : 'MISSING',
-    SMTP_USER: smtpUser ? `set (${smtpUser})` : 'MISSING',
-    SMTP_PASS: pass ? 'set (hidden)' : 'MISSING',
-    SMTP_PORT: port,
-    NOTIFY_EMAIL: notify ? `set (${notify})` : 'MISSING',
+    SMTP_HOST: Deno.env.get('SMTP_HOST') ? `set (${Deno.env.get('SMTP_HOST')})` : 'MISSING',
+    SMTP_USER: Deno.env.get('SMTP_USER') ? `set (${Deno.env.get('SMTP_USER')})` : 'MISSING',
+    SMTP_PASS: Deno.env.get('SMTP_PASS') ? 'set (hidden)' : 'MISSING',
+    SMTP_PORT: Deno.env.get('SMTP_PORT') || '465',
+    NOTIFY_EMAIL: Deno.env.get('NOTIFY_EMAIL') ? `set (${Deno.env.get('NOTIFY_EMAIL')})` : 'MISSING',
   };
 
-  if (!host || !smtpUser || !pass || !notify) {
-    return json({ error: 'Missing SMTP env vars', envStatus }, 400);
-  }
-
   try {
-    const client = new SMTPClient({
-      connection: {
-        hostname: host,
-        port: Number(port),
-        tls: true,
-        auth: { username: smtpUser, password: pass },
-      },
-    });
-
-    await client.send({
-      from: smtpUser,
-      to: notify,
-      subject: 'Happy Jump — Test Email',
-      content: 'This is a test email from the Happy Jump gateway. If you see this, email notifications are working!',
-    });
-
-    await client.close();
+    await sendNotificationEmail(
+      'Happy Jump — Test Email',
+      'This is a test email from the Happy Jump gateway.\n\nIf you see this, email notifications are working!\n\nThis uses the same sendNotificationEmail() function as all other notifications.',
+    );
     return json({ success: true, message: 'Test email sent', envStatus });
   } catch (e) {
     return json({ error: `SMTP send failed: ${e?.message || e}`, envStatus }, 500);
