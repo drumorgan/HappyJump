@@ -101,7 +101,7 @@ async function loadStats() {
     else if (t.payout_amount === t.ecstasy_payout) ecsOd++;
   });
 
-  const closedStatuses = ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'];
+  const closedStatuses = ['closed_clean', 'payout_sent'];
   const revenue = txns
     .filter((t) => closedStatuses.includes(t.status))
     .reduce((sum, t) => sum + Number(t.suggested_price || 0), 0);
