@@ -106,7 +106,9 @@ async function loadStats() {
     .filter((t) => closedStatuses.includes(t.status))
     .reduce((sum, t) => sum + Number(t.suggested_price || 0), 0);
 
-  const paid = txns.reduce((sum, t) => sum + Number(t.payout_amount || 0), 0);
+  const paid = txns
+    .filter((t) => t.status === 'payout_sent')
+    .reduce((sum, t) => sum + Number(t.payout_amount || 0), 0);
 
   // Net profit = insurance margin (price - drug cost) minus payouts
   const margin = txns
