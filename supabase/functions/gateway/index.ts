@@ -242,6 +242,7 @@ async function handleTornProxy(body: any) {
 }
 
 async function handleCreateTransaction(body: any) {
+  console.log('[create-transaction] Handler called for', body.torn_name, body.torn_id);
   const { torn_id, torn_name, torn_faction, torn_level } = body;
   const validProducts = ['package', 'insurance', 'ecstasy_only'];
   const productType = validProducts.includes(body.product_type) ? body.product_type : 'package';
@@ -366,6 +367,7 @@ async function handleCreateTransaction(body: any) {
     ecstasy_only: "L'Ultimo Miglio (Ecstasy Only)",
   };
   const productLabel = productLabels[productType] || 'Package';
+  console.log('[create-transaction] About to send notification email...');
   await sendNotificationEmail(
     `🛒 New ${productLabel} Request — ${torn_name} [${torn_id}]`,
     [
@@ -385,6 +387,7 @@ async function handleCreateTransaction(body: any) {
       `Log in to the admin dashboard to mark as purchased.`,
     ].join('\n'),
   );
+  console.log('[create-transaction] Email send completed');
 
   // Upsert client record
   await syncClientStats(supabase, String(torn_id), {
