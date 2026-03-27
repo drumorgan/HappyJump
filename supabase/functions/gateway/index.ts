@@ -146,6 +146,19 @@ function formatMoney(amount: number): string {
   return '$' + amount.toLocaleString('en-US');
 }
 
+function formatStatus(status: string): string {
+  const labels: Record<string, string> = {
+    requested: 'Requested',
+    purchased: 'Purchased',
+    closed_clean: 'Clean Close',
+    od_xanax: 'OD — Xanax',
+    od_ecstasy: 'OD — Ecstasy',
+    payout_sent: 'Payout Sent',
+    rejected: 'Rejected',
+  };
+  return labels[status] || status;
+}
+
 // ── Auto-close expired transactions ──────────────────────────────────
 
 async function autoCloseExpired(supabase: any) {
@@ -176,6 +189,17 @@ async function autoCloseExpired(supabase: any) {
     if (txn.torn_id) {
       await syncClientStats(supabase, txn.torn_id);
     }
+
+    await sendNotificationEmail(
+      `✅ Timer Expired — Clean Close [${txn.torn_id}]`,
+      [
+        `A 7-day insurance window has expired with no OD claim.`,
+        ``,
+        `Player: ${txn.torn_id}`,
+        `Transaction ID: ${txn.id}`,
+        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+      ].join('\n'),
+    );
   }
 }
 
@@ -531,6 +555,29 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     console.log(`[admin-update-status] Client stats synced for ${tornId}`);
   } catch (e) {
     console.error(`[admin-update-status] syncClientStats failed for ${tornId}:`, e?.message || e);
+  }
+
+  // Email notification for key status changes
+  const statusEmoji: Record<string, string> = {
+    purchased: '📦',
+    payout_sent: '💸',
+    rejected: '🚫',
+  };
+  if (statusEmoji[new_status]) {
+    const payoutInfo = new_status === 'payout_sent'
+      ? `\nPayout Amount: ${formatMoney(Number(updates.payout_amount || txnRecord.payout_amount || 0))}`
+      : '';
+    await sendNotificationEmail(
+      `${statusEmoji[new_status]} Status → ${formatStatus(new_status)} — Player ${tornId}`,
+      [
+        `Transaction status updated by admin.`,
+        ``,
+        `Player: ${tornId}`,
+        `New Status: ${formatStatus(new_status)}`,
+        `Transaction ID: ${txn_id}`,
+        payoutInfo,
+      ].filter(Boolean).join('\n'),
+    );
   }
 
   return json({ success: true, status: new_status });
