@@ -805,18 +805,9 @@ async function handleVerifyPayment(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'requested') return json({ error: 'Transaction is not awaiting payment' }, 400);
 
-  // Fetch operator profile using operator's own API key
-  const operatorKey = Deno.env.get('TORN_API_KEY');
-  if (!operatorKey) {
-    return json({ error: 'Operator API key not configured. Contact Giro.' }, 500);
-  }
-  const opRes = await fetch(`${TORN_API}/user/?selections=basic&key=${operatorKey}`);
-  const opData = await opRes.json();
-  if (opData.error || !opData.name) {
-    return json({ error: 'Could not fetch operator profile. Contact Giro.' }, 500);
-  }
-  const operatorName: string = opData.name;
-  const operatorTornId: string = String(opData.player_id);
+  // Operator identity — used to match client's "You sent $X to GiroVagabondo" events
+  const operatorName = 'GiroVagabondo';
+  const operatorTornId = '3667375';
 
   // Fetch client's events since transaction creation
   const createdAt = txn.created_at ? new Date(txn.created_at) : null;
