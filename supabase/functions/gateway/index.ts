@@ -133,6 +133,7 @@ async function sendNotificationEmail(subject: string, body: string) {
       to: notify,
       subject,
       content: body,
+      html: `<pre style="font-family:sans-serif;white-space:pre-wrap;">${body}</pre>`,
     });
 
     await client.close();
@@ -191,7 +192,7 @@ async function autoCloseExpired(supabase: any) {
     }
 
     await sendNotificationEmail(
-      `✅ Timer Expired — Clean Close [${txn.torn_id}]`,
+      `Happy Jump — Timer Expired — Clean Close [${txn.torn_id}]`,
       [
         `A 7-day insurance window has expired with no OD claim.`,
         ``,
@@ -369,7 +370,7 @@ async function handleCreateTransaction(body: any) {
   const productLabel = productLabels[productType] || 'Package';
   console.log('[create-transaction] About to send notification email...');
   await sendNotificationEmail(
-    `🛒 New ${productLabel} Request — ${torn_name} [${torn_id}]`,
+    `Happy Jump — New ${productLabel} Request — ${torn_name} [${torn_id}]`,
     [
       `New Happy Jump ${productLabel.toLowerCase()} request!`,
       ``,
@@ -561,17 +562,13 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   }
 
   // Email notification for key status changes
-  const statusEmoji: Record<string, string> = {
-    purchased: '📦',
-    payout_sent: '💸',
-    rejected: '🚫',
-  };
-  if (statusEmoji[new_status]) {
+  const emailStatuses = ['purchased', 'payout_sent', 'rejected'];
+  if (emailStatuses.includes(new_status)) {
     const payoutInfo = new_status === 'payout_sent'
       ? `\nPayout Amount: ${formatMoney(Number(updates.payout_amount || txnRecord.payout_amount || 0))}`
       : '';
     await sendNotificationEmail(
-      `${statusEmoji[new_status]} Status → ${formatStatus(new_status)} — Player ${tornId}`,
+      `Happy Jump — Status ${formatStatus(new_status)} — Player ${tornId}`,
       [
         `Transaction status updated by admin.`,
         ``,
@@ -803,7 +800,7 @@ async function handleReportOd(body: any) {
   // Must await — Edge Functions terminate the isolate after response is sent,
   // so un-awaited promises get killed before the SMTP send completes.
   await sendNotificationEmail(
-    `⚠️ OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
+    `Happy Jump — OD Payout Request — ${identData.name} [${tornId}] — ${drugLabel}`,
     [
       `OD verified and payout required!`,
       ``,
@@ -967,7 +964,7 @@ async function handleVerifyPayment(body: any) {
     ? `\nNote: Client overpaid by ${formatMoney(totalPaid - expectedAmount)}.`
     : '';
   await sendNotificationEmail(
-    `💰 Payment Verified — ${identData.name} [${tornId}]`,
+    `Happy Jump — Payment Verified — ${identData.name} [${tornId}]`,
     [
       `Payment auto-verified via Torn API events!`,
       ``,
