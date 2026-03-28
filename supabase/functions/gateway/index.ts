@@ -870,14 +870,17 @@ async function handleVerifyPayment(body: any) {
   const operatorName = 'GiroVagabondo';
   const operatorTornId = '3667375';
 
-  // Fetch client's events since transaction creation
+  // Fetch client's events AND log since transaction creation.
+  // Money-send records appear in the user's LOG (actions they took),
+  // not EVENTS (things that happened to them).
   const createdAt = txn.created_at ? new Date(txn.created_at) : null;
   const fromTs = createdAt ? Math.floor(createdAt.getTime() / 1000) : undefined;
-  const eventsUrl = fromTs
-    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=events&key=${api_key}`;
-  const eventsRes = await fetch(eventsUrl);
-  const eventsData = await eventsRes.json();
+  const selectionsParam = 'events,log';
+  const apiUrl = fromTs
+    ? `${TORN_API}/user/?selections=${selectionsParam}&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=${selectionsParam}&key=${api_key}`;
+  const apiRes = await fetch(apiUrl);
+  const apiData = await apiRes.json();
 
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
   const expectedAmount = Number(txn.suggested_price);
@@ -885,40 +888,61 @@ async function handleVerifyPayment(body: any) {
   let totalPaid = 0;
   const matchedEvents: string[] = [];
 
-  if (!eventsData.error && eventsData.events) {
-    const events = Object.values(eventsData.events) as any[];
+  // Surface Torn API errors instead of silently returning "no payment found"
+  if (apiData.error) {
+    return json({
+      verified: false,
+      detail: `Torn API error: ${apiData.error.error || JSON.stringify(apiData.error)}. Your API key may need "Events" and "Log" permissions enabled.`,
+    });
+  }
 
-    for (const evt of events) {
-      const evtText = stripHtml(evt.event || '');
-      const evtLower = evtText.toLowerCase();
-
-      // Match money-send events: look for "sent" + operator name or operator ID
-      // Torn event format (sender side): "You sent $X to [PlayerName]"
-      const isSendEvent = evtLower.includes('sent') && evtLower.includes('$');
-      if (!isSendEvent) continue;
-
-      // Check if the event mentions the operator (by name or ID)
-      const mentionsOperator =
-        (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
-        evtText.includes(String(operatorTornId));
-
-      if (!mentionsOperator) continue;
-
-      // Extract dollar amount from event text — format: "$1,234,567" or "$1234567"
-      const amountMatch = evtText.match(/\$([0-9,]+)/);
-      if (!amountMatch) continue;
-
-      const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
-      totalPaid += eventAmount;
-      matchedEvents.push(evtText);
+  // Collect entries from both events and log into a single list.
+  // Events have .event field, log entries have .log field for the text.
+  const allEntries: { text: string }[] = [];
+  if (apiData.events) {
+    for (const evt of Object.values(apiData.events) as any[]) {
+      allEntries.push({ text: evt.event || '' });
     }
+  }
+  if (apiData.log) {
+    for (const entry of Object.values(apiData.log) as any[]) {
+      allEntries.push({ text: entry.log || entry.title || '' });
+    }
+  }
+
+  for (const entry of allEntries) {
+    const rawHtml = entry.text;
+    const evtText = stripHtml(rawHtml);
+    const evtLower = evtText.toLowerCase();
+
+    // Match money-send events: look for send-like verbs + "$"
+    // Torn log format (sender side): "You sent $X to [PlayerName]"
+    const hasMoney = evtLower.includes('$');
+    const hasSendVerb = evtLower.includes('sent') || evtLower.includes('send')
+      || evtLower.includes('transfer') || evtLower.includes('paid');
+    if (!hasMoney || !hasSendVerb) continue;
+
+    // Check if the entry mentions the operator (by name in stripped text, or by ID in raw HTML)
+    const mentionsOperator =
+      (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
+      rawHtml.includes(String(operatorTornId));
+
+    if (!mentionsOperator) continue;
+
+    // Extract dollar amount from text — format: "$1,234,567" or "$1234567"
+    const amountMatch = evtText.match(/\$([0-9,]+)/);
+    if (!amountMatch) continue;
+
+    const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
+    totalPaid += eventAmount;
+    matchedEvents.push(evtText);
   }
 
   // No payments found at all
   if (totalPaid === 0) {
     return json({
       verified: false,
-      detail: `Could not find any payment to Giro. If you just sent the money, wait a moment and try again.`,
+      detail: `Could not find any payment to Giro in ${allEntries.length} recent events/log entries. If you just sent the money, wait a moment and try again.`,
     });
   }
 
