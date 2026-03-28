@@ -870,3 +870,89 @@ body {
 .shield-feature.eco-feature {
   border-left-color: #ffb86b;
 }
+
+/* API Terms of Service table */
+.tos-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.8rem;
+  line-height: 1.4;
+}
+
+.tos-table th,
+.tos-table td {
+  border: 1px solid #2a2a3e;
+  padding: 0.5rem 0.6rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tos-table th {
+  background: #1a1a2e;
+  color: #e94560;
+  font-weight: 600;
+  font-size: 0.75rem;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
+
+.tos-table .tos-subheader td {
+  background: #151525;
+  color: #888;
+  font-size: 0.7rem;
+  font-style: italic;
+}
+
+.tos-table tbody td {
+  background: #111;
+  color: #ccc;
+}
+
+.tos-table code {
+  background: #1a1a2e;
+  padding: 0.1em 0.3em;
+  border-radius: 3px;
+  font-size: 0.75rem;
+  color: #e94560;
+}
+
+/* Responsive: stack ToS table on narrow screens */
+@media (max-width: 600px) {
+  .tos-table,
+  .tos-table thead,
+  .tos-table tbody,
+  .tos-table tr,
+  .tos-table th,
+  .tos-table td {
+    display: block;
+    width: 100%;
+  }
+
+  .tos-table .tos-subheader {
+    display: none;
+  }
+
+  .tos-table th {
+    border-bottom: none;
+  }
+
+  .tos-table tbody td {
+    border-top: none;
+    padding-left: 0.6rem;
+    margin-bottom: 0.75rem;
+  }
+
+  .tos-table tbody td::before {
+    content: attr(data-label);
+    display: block;
+    font-weight: 600;
+    color: #e94560;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    margin-bottom: 0.25rem;
+  }
+
+  .tos-table thead tr:first-child {
+    display: none;
+  }
+}
