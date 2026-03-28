@@ -38,12 +38,12 @@
       <!-- Quick login for return visitors -->
       <div class="card">
         <div class="card-body">
-          <p class="form-intro">Returning? Enter your API key to jump straight in.</p>
+          <p class="form-intro">Returning? Enter your Custom API key to jump straight in.</p>
           <form id="api-form-top">
             <input type="text" id="api-key-top" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" class="submit-btn-alt">Look Up</button>
           </form>
-          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create one</a> — it only shares your name, level, faction, event log, and item market prices. Nothing else.</p>
+          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only shares your name, level, faction, and event log. Your key is sent to our server once to verify your identity, then immediately discarded — never stored. See our <a href="#api-tos">API Terms of Service</a> below.</p>
         </div>
       </div>
 
@@ -99,7 +99,38 @@
             <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is used once to verify your identity and is never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a custom key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
+          <p class="key-note">Your key is sent to our server once to verify your identity, then immediately discarded — never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a Custom Key</a> that only shares your name, level, faction, and event log — nothing else.</p>
+        </div>
+      </div>
+
+      <!-- API Terms of Service (required by Torn API guidelines) -->
+      <div class="card" id="api-tos">
+        <div class="card-header">
+          <span>API Terms of Service</span>
+        </div>
+        <div class="card-body">
+          <div style="overflow-x:auto">
+            <table style="width:100%;border-collapse:collapse;font-size:0.75rem;line-height:1.4;color:#ccc">
+              <thead>
+                <tr>
+                  <th style="border:1px solid #2a2a3e;padding:0.5rem;background:#1a1a2e;color:#e94560;font-size:0.7rem;text-transform:uppercase;text-align:left">Data Storage</th>
+                  <th style="border:1px solid #2a2a3e;padding:0.5rem;background:#1a1a2e;color:#e94560;font-size:0.7rem;text-transform:uppercase;text-align:left">Data Sharing</th>
+                  <th style="border:1px solid #2a2a3e;padding:0.5rem;background:#1a1a2e;color:#e94560;font-size:0.7rem;text-transform:uppercase;text-align:left">Purpose of Use</th>
+                  <th style="border:1px solid #2a2a3e;padding:0.5rem;background:#1a1a2e;color:#e94560;font-size:0.7rem;text-transform:uppercase;text-align:left">Key Storage &amp; Sharing</th>
+                  <th style="border:1px solid #2a2a3e;padding:0.5rem;background:#1a1a2e;color:#e94560;font-size:0.7rem;text-transform:uppercase;text-align:left">Key Access Level</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td style="border:1px solid #2a2a3e;padding:0.5rem;vertical-align:top">Persistent — transaction history (player name, ID, faction, level) stored until account deletion</td>
+                  <td style="border:1px solid #2a2a3e;padding:0.5rem;vertical-align:top">Service owners (admin dashboard only)</td>
+                  <td style="border:1px solid #2a2a3e;padding:0.5rem;vertical-align:top">Public community tools (OD insurance tracking and payout verification)</td>
+                  <td style="border:1px solid #2a2a3e;padding:0.5rem;vertical-align:top">Not stored / Not shared — used once server-side for identity verification, then immediately discarded</td>
+                  <td style="border:1px solid #2a2a3e;padding:0.5rem;vertical-align:top">Custom: user → basic, profile, events, log; torn → items</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
         </div>
       </div>
     </section>
