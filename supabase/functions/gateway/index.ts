@@ -172,32 +172,46 @@ function formatStatus(status: string): string {
   return labels[status] || status;
 }
 
+// ── Atomic reserve adjustment ───────────────────────────────────────
+// Avoids read-then-write race conditions by using a Postgres function
+// that does: UPDATE config SET current_reserve = current_reserve + amount WHERE id = 1
+
+async function adjustReserve(supabase: any, amount: number) {
+  const { data, error } = await supabase.rpc('adjust_reserve', { amount });
+  if (error) {
+    console.error('[adjustReserve] RPC failed:', error.message);
+    throw error;
+  }
+  return data; // returns new current_reserve
+}
+
 // ── Auto-close expired transactions ──────────────────────────────────
 
+let lastAutoCloseRun = 0;
+const AUTO_CLOSE_INTERVAL_MS = 60_000; // run at most once per minute
+
 async function autoCloseExpired(supabase: any) {
-  const now = new Date().toISOString();
+  const now = Date.now();
+  if (now - lastAutoCloseRun < AUTO_CLOSE_INTERVAL_MS) return;
+  lastAutoCloseRun = now;
+
+  const nowIso = new Date().toISOString();
   const { data: expired } = await supabase
     .from('transactions')
     .select('id, torn_id, torn_name, ecstasy_payout')
     .eq('status', 'purchased')
-    .lt('closes_at', now);
+    .lt('closes_at', nowIso);
 
   if (!expired || expired.length === 0) return;
 
   for (const txn of expired) {
     await supabase
       .from('transactions')
-      .update({ status: 'closed_clean', closed_at: now })
+      .update({ status: 'closed_clean', closed_at: nowIso })
       .eq('id', txn.id);
 
-    // Release locked reserve
-    const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-    if (cfg) {
-      await supabase
-        .from('config')
-        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
-        .eq('id', 1);
-    }
+    // Release locked reserve (atomic)
+    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
 
     if (txn.torn_id) {
       await syncClientStats(supabase, txn.torn_id);
@@ -367,11 +381,8 @@ async function handleCreateTransaction(body: any) {
 
   if (txnErr) return json({ error: txnErr.message }, 500);
 
-  // Lock worst-case liability from reserve for this new active sale
-  await supabase
-    .from('config')
-    .update({ current_reserve: reserve - ecstasyPayout })
-    .eq('id', 1);
+  // Lock worst-case liability from reserve for this new active sale (atomic)
+  await adjustReserve(supabase, -ecstasyPayout);
 
   // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
@@ -540,27 +551,19 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
 
   if (updateErr) return json({ error: updateErr.message }, 500);
 
-  // Reserve management: release lock on close/payout/reject
-  // Wrapped in try/catch so a failure here doesn't prevent client stats sync
+  // Reserve management: release lock on close/payout/reject (atomic)
   if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
     try {
-      const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-      if (cfg) {
-        let newReserve = Number(cfg.current_reserve);
-        const ecsP = Number(txnRecord.ecstasy_payout || 0);
-        if (new_status === 'closed_clean' || new_status === 'rejected') {
-          newReserve += ecsP;
-        }
-        if (new_status === 'payout_sent') {
-          // Re-read payout_amount from the just-updated transaction
-          const payAmt = new_status === 'payout_sent'
-            ? Number(updates.payout_amount || txnRecord.payout_amount || 0)
-            : 0;
-          newReserve += ecsP - payAmt;
-        }
-        await supabase.from('config').update({ current_reserve: newReserve }).eq('id', 1);
-        console.log(`[admin-update-status] Reserve updated: +${new_status === 'payout_sent' ? ecsP - Number(updates.payout_amount || txnRecord.payout_amount || 0) : ecsP} for txn ${txn_id}`);
+      const ecsP = Number(txnRecord.ecstasy_payout || 0);
+      let releaseAmount: number;
+      if (new_status === 'payout_sent') {
+        const payAmt = Number(updates.payout_amount || txnRecord.payout_amount || 0);
+        releaseAmount = ecsP - payAmt;
+      } else {
+        releaseAmount = ecsP;
       }
+      await adjustReserve(supabase, releaseAmount);
+      console.log(`[admin-update-status] Reserve adjusted: +${releaseAmount} for txn ${txn_id}`);
     } catch (e) {
       console.error(`[admin-update-status] Reserve release failed for txn ${txn_id}:`, e?.message || e);
     }
@@ -637,21 +640,14 @@ async function handleAdminRejectAndBlock(req: Request, body: any) {
   const now = new Date().toISOString();
   let rejectedCount = 0;
 
-  // Reject each pending transaction and release reserve
+  // Reject each pending transaction and release reserve (atomic)
   for (const txn of (pending || [])) {
     await supabase
       .from('transactions')
       .update({ status: 'rejected', closed_at: now })
       .eq('id', txn.id);
 
-    // Release locked reserve
-    const { data: cfg } = await supabase.from('config').select('current_reserve').single();
-    if (cfg) {
-      await supabase
-        .from('config')
-        .update({ current_reserve: Number(cfg.current_reserve) + Number(txn.ecstasy_payout || 0) })
-        .eq('id', 1);
-    }
+    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
     rejectedCount++;
   }
 
@@ -1077,12 +1073,6 @@ async function handleTestEmail(req: Request) {
 async function handleGetPublicStats() {
   const sb = serviceClient();
 
-  // Count unique customers (distinct torn_id) with at least one completed transaction
-  const { data: customers, error: custErr } = await sb
-    .from('transactions')
-    .select('torn_id', { count: 'exact', head: true })
-    .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
-
   // Count total insured jumps (all non-rejected transactions that made it past requested)
   const { count: totalJumps, error: jumpErr } = await sb
     .from('transactions')
@@ -1095,15 +1085,15 @@ async function handleGetPublicStats() {
     .select('payout_amount')
     .eq('status', 'payout_sent');
 
-  if (custErr || jumpErr || payErr) {
-    return json({ error: 'Failed to fetch stats' }, 500);
-  }
-
   // Count distinct torn_ids for unique customers
   const { data: distinctCustomers, error: distErr } = await sb
     .from('transactions')
     .select('torn_id')
     .in('status', ['purchased', 'closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+
+  if (jumpErr || payErr || distErr) {
+    return json({ error: 'Failed to fetch stats' }, 500);
+  }
 
   const uniqueIds = new Set((distinctCustomers || []).map((r: any) => r.torn_id));
 
