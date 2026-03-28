@@ -190,7 +190,11 @@ Cache market prices (refresh every 15 min max). Client-submitted API key used on
 
 ## Git Workflow
 
-**Branch → PR → User merges.** Never push directly to `main`. Always:
+Two workflows depending on the file:
+
+### Frontend files (JS, HTML, CSS, config, etc.) — Branch → PR → User merges
+
+These files deploy to InMotion via FTP when merged to `main`, so the user must review before they go live.
 
 1. Create or use a Claude feature branch (e.g. `claude/fix-something-XYZ`)
 2. Commit and push changes to the feature branch
@@ -198,7 +202,17 @@ Cache market prices (refresh every 15 min max). Client-submitted API key used on
 4. User reviews the diff on GitHub Compare, checks for conflicts, and merges via Pull Request
 5. Merge to `main` triggers GitHub Actions → Vite build → FTP deploy
 
-**Never push to `main` directly or merge behind the scenes.** The user must see every change before it goes live. The live URL is the ONLY place the user tests — there is no local dev server, no staging, no preview. NEVER ask "are you testing locally?" — the answer is always no.
+**Never push frontend files to `main` directly or merge behind the scenes.** The user must see every change before it goes live.
+
+### Gateway Edge Function (`supabase/functions/gateway/index.ts`) — Push directly to `main`
+
+The gateway file does NOT deploy via the FTP pipeline. It is always deployed manually by the user (copy-paste into Supabase dashboard). Pushing it to `main` just keeps GitHub in sync as a reference. Push gateway changes directly to `main` — no branch/PR needed.
+
+After pushing, always remind the user: "The gateway file has been updated on GitHub. Go to `supabase/functions/gateway/index.ts` on GitHub, copy the full contents, and paste into the Supabase dashboard Edge Function editor."
+
+### General rules
+
+The live URL is the ONLY place the user tests — there is no local dev server, no staging, no preview. NEVER ask "are you testing locally?" — the answer is always no.
 
 ## Deployment
 
