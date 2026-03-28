@@ -43,7 +43,7 @@
             <input type="text" id="api-key-top" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" class="submit-btn-alt">Look Up</button>
           </form>
-          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create one</a> — it only shares your name, level, faction, event log, and item market prices. Nothing else. See our <a href="#api-tos">API Terms of Service</a>.</p>
+          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create one</a> — it only shares your name, level, faction, event log, and item market prices. Nothing else.</p>
         </div>
       </div>
 
@@ -99,43 +99,7 @@
             <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is used once to verify your identity and is never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a custom key</a> that only shares your name, level, faction, event log, and item market prices — nothing else. See our <a href="#api-tos">API Terms of Service</a>.</p>
-        </div>
-      </div>
-
-      <!-- API Terms of Service -->
-      <div class="card" id="api-tos">
-        <div class="card-header">
-          <span>API Terms of Service</span>
-        </div>
-        <div class="card-body">
-          <table class="tos-table">
-            <thead>
-              <tr>
-                <th>Data Storage</th>
-                <th>Data Sharing</th>
-                <th>Purpose of Use</th>
-                <th>Key Storage &amp; Sharing</th>
-                <th>Key Access Level</th>
-              </tr>
-              <tr class="tos-subheader">
-                <td>Will the data be stored for any purpose?</td>
-                <td>Who can access the data besides the end user?</td>
-                <td>What is the stored data being used for?</td>
-                <td>Will the API key be stored securely and who can access it?</td>
-                <td>What key access level or specific selections are required?</td>
-              </tr>
-            </thead>
-            <tbody>
-              <tr>
-                <td data-label="Data Storage">Persistent — transaction history (player name, ID, faction, level) stored until account deletion</td>
-                <td data-label="Data Sharing">Service owners (admin dashboard only)</td>
-                <td data-label="Purpose of Use">Public community tools (OD insurance tracking and payout verification)</td>
-                <td data-label="Key Storage & Sharing">Not stored / Not shared — API key is used once server-side for identity verification and immediately discarded</td>
-                <td data-label="Key Access Level">Custom: <code>user</code> → <code>basic, profile, events, log</code>; <code>torn</code> → <code>items</code></td>
-              </tr>
-            </tbody>
-          </table>
+          <p class="key-note">Your key is used once to verify your identity and is never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a custom key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
         </div>
       </div>
     </section>
