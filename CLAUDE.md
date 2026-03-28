@@ -190,7 +190,15 @@ Cache market prices (refresh every 15 min max). Client-submitted API key used on
 
 ## Git Workflow
 
-**All work happens on `main`. No feature branches. No exceptions.** Push directly to `main` — this triggers the deploy workflow. When working from a Claude feature branch, always merge to `main` and push `main` so the code actually deploys. The live URL is the ONLY place the user tests — there is no local dev server, no staging, no preview. If code is not on `main`, it is not deployed, and the user cannot see it. NEVER ask "are you testing locally?" — the answer is always no.
+**Branch → PR → User merges.** Never push directly to `main`. Always:
+
+1. Create or use a Claude feature branch (e.g. `claude/fix-something-XYZ`)
+2. Commit and push changes to the feature branch
+3. Tell the user the branch is ready for review
+4. User reviews the diff on GitHub Compare, checks for conflicts, and merges via Pull Request
+5. Merge to `main` triggers GitHub Actions → Vite build → FTP deploy
+
+**Never push to `main` directly or merge behind the scenes.** The user must see every change before it goes live. The live URL is the ONLY place the user tests — there is no local dev server, no staging, no preview. NEVER ask "are you testing locally?" — the answer is always no.
 
 ## Deployment
 
