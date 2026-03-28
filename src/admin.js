@@ -424,7 +424,15 @@ async function loadConfig() {
   document.getElementById('cfg-margin-road').value = data.margin_road;
   document.getElementById('cfg-margin-legend').value = data.margin_legend;
   document.getElementById('cfg-reserve').value = '$' + Number(data.current_reserve).toLocaleString();
+  // Reset dirty flag — reserve was just loaded from DB, not manually edited
+  window._reserveManuallyEdited = false;
 }
+
+// Track manual edits to the reserve field so config saves don't overwrite
+// reserve changes made automatically by transaction creates/closes
+document.getElementById('cfg-reserve').addEventListener('input', () => {
+  window._reserveManuallyEdited = true;
+});
 
 configForm.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -445,8 +453,12 @@ configForm.addEventListener('submit', async (e) => {
     margin_safe: Number(document.getElementById('cfg-margin-safe').value),
     margin_road: Number(document.getElementById('cfg-margin-road').value),
     margin_legend: Number(document.getElementById('cfg-margin-legend').value),
-    current_reserve: Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, '')),
   };
+  // Only include reserve if admin explicitly edited it — prevents stale form
+  // values from overwriting reserve changes made by transaction locks/releases
+  if (window._reserveManuallyEdited) {
+    updates.current_reserve = Number(document.getElementById('cfg-reserve').value.replace(/[^0-9]/g, ''));
+  }
 
   try {
     await updateConfig(updates);
@@ -454,6 +466,7 @@ configForm.addEventListener('submit', async (e) => {
     statusEl.textContent = 'Saved';
     statusEl.style.color = '#6bff8e';
     showToast('Config updated', 'success');
+    window._reserveManuallyEdited = false;
   } catch (e) {
     saveBtn.disabled = false;
     statusEl.textContent = 'Save failed';
