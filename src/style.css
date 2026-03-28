@@ -870,3 +870,33 @@ body {
 .shield-feature.eco-feature {
   border-left-color: #ffb86b;
 }
+
+/* API Terms of Service table */
+.tos-scroll {
+  overflow-x: auto;
+}
+
+.tos-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.75rem;
+  line-height: 1.4;
+  color: #ccc;
+}
+
+.tos-table th,
+.tos-table td {
+  border: 1px solid #2a2a3e;
+  padding: 0.5rem;
+  text-align: left;
+  vertical-align: top;
+}
+
+.tos-table th {
+  background: #1a1a2e;
+  color: #e94560;
+  font-size: 0.7rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.3px;
+}
