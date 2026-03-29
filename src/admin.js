@@ -118,13 +118,29 @@ async function loadStats() {
 
   const totalOd = xanOd + ecsOd;
   const totalCompleted = clean + totalOd;
-  const successPct = totalCompleted > 0 ? ((clean / totalCompleted) * 100).toFixed(1) : '—';
+  const expectedPct = 84.1;
+  const actualPct = totalCompleted > 0 ? (clean / totalCompleted) * 100 : null;
 
   document.getElementById('stat-active').textContent = active;
-  document.getElementById('stat-clean').textContent = totalCompleted > 0 ? `${successPct}%` : '—';
-  document.getElementById('stat-clean-label').textContent = totalCompleted > 0
-    ? `${clean} Clean / ${totalOd} OD (expected 84.1%)`
-    : 'SUCCESS RATE';
+
+  if (actualPct !== null) {
+    document.getElementById('stat-clean').innerHTML =
+      `<span style="color:${actualPct >= expectedPct ? '#6bff8e' : '#ff6b81'}">${actualPct.toFixed(1)}%</span>` +
+      ` <span style="font-size:0.8rem;color:#888">/</span> ` +
+      `<span style="font-size:0.9rem;color:#6bff8e">${expectedPct}%</span>`;
+    document.getElementById('stat-success-detail').textContent =
+      `${clean} clean · ${totalOd} OD · ${totalCompleted} total`;
+  } else {
+    document.getElementById('stat-clean').textContent = '—';
+    document.getElementById('stat-success-detail').textContent = '';
+  }
+
+  const successCard = document.getElementById('stat-success-card');
+  if (actualPct !== null && actualPct >= expectedPct) {
+    successCard.style.borderColor = '#2a4a2e';
+  } else if (actualPct !== null) {
+    successCard.style.borderColor = '#4a2a2e';
+  }
   document.getElementById('stat-revenue').textContent = $(revenue);
   document.getElementById('stat-paid').textContent = $(paid);
   document.getElementById('stat-net').textContent = $(net);

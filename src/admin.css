@@ -100,6 +100,12 @@
   letter-spacing: 0.5px;
 }
 
+.stat-sub {
+  font-size: 0.65rem;
+  color: #666;
+  margin-top: 0.25rem;
+}
+
 /* Filter bar */
 .filter-bar {
   display: flex;
