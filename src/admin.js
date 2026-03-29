@@ -116,8 +116,15 @@ async function loadStats() {
     .reduce((sum, t) => sum + (Number(t.suggested_price || 0) - Number(t.package_cost || 0)), 0);
   const net = margin - paid;
 
+  const totalOd = xanOd + ecsOd;
+  const totalCompleted = clean + totalOd;
+  const successPct = totalCompleted > 0 ? ((clean / totalCompleted) * 100).toFixed(1) : '—';
+
   document.getElementById('stat-active').textContent = active;
-  document.getElementById('stat-clean').textContent = clean;
+  document.getElementById('stat-clean').textContent = totalCompleted > 0 ? `${successPct}%` : '—';
+  document.getElementById('stat-clean-label').textContent = totalCompleted > 0
+    ? `${clean} Clean / ${totalOd} OD (expected 84.1%)`
+    : 'SUCCESS RATE';
   document.getElementById('stat-revenue').textContent = $(revenue);
   document.getElementById('stat-paid').textContent = $(paid);
   document.getElementById('stat-net').textContent = $(net);
