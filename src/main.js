@@ -348,6 +348,7 @@ function showPlayerView(player, config, history, apiKey) {
 
   const cleanCount = history.clean_count || 0;
   const hasActive = history.has_active_deal;
+  const isFamigliaPermanent = history.famiglia_permanent === true;
   const tier = getTier(cleanCount);
   const isReturning = (history.transactions || []).length > 0;
 
@@ -356,9 +357,10 @@ function showPlayerView(player, config, history, apiKey) {
   document.getElementById('pv-name').textContent = `${greeting}, ${player.torn_name}`;
   document.getElementById('pv-meta').textContent = `Level ${player.torn_level} | ${player.torn_faction || 'No faction'} | ${cleanCount} clean jump${cleanCount !== 1 ? 's' : ''}`;
 
-  // Tier badge
+  // Tier badge — Famiglia members get a permanent marker
+  const permanentTag = isFamigliaPermanent ? ' <span class="famiglia-permanent-tag">Permanent</span>' : '';
   document.getElementById('pv-tier-badge').innerHTML =
-    `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>`;
+    `<span class="tier-badge ${tier.css}">${esc(tier.name)}</span>${permanentTag}`;
 
   // When there's an active deal, set selectedProduct to match it and hide the pricing card.
   // Keep product tabs visible so they can browse tier prices for either product.

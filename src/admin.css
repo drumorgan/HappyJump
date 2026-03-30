@@ -602,3 +602,4 @@
 .tier-badge.amico { background: #1a3a1a; color: #6bff8e; }
 .tier-badge.braccio-destro { background: #1a1a3a; color: #6b8eff; }
 .tier-badge.famiglia { background: #3a1a3a; color: #c06bff; }
+.famiglia-permanent-tag { display: inline-block; padding: 0.1rem 0.4rem; margin-left: 0.3rem; border-radius: 3px; font-size: 0.65rem; font-weight: 600; background: #3a1a3a; color: #c06bff; border: 1px solid #c06bff44; vertical-align: middle; }

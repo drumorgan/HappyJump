@@ -353,7 +353,7 @@ function renderClients(clients) {
           <span class="txn-player-id">[${esc(c.torn_id)}]</span>
           ${c.is_blocked ? '<span class="blocked-badge">BLOCKED</span>' : ''}
         </div>
-        <span class="tier-badge ${tierClass}">${esc(tierName)}</span>
+        <span class="tier-badge ${tierClass}">${esc(tierName)}</span>${c.famiglia_permanent ? '<span class="famiglia-permanent-tag">Permanent</span>' : ''}
       </div>
       <div class="client-stats">
         <span>Lvl ${c.torn_level || '?'}${faction}</span>
