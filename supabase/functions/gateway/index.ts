@@ -251,12 +251,22 @@ async function handleValidatePlayer(body: any) {
   const { key } = body;
   if (!key) return json({ error: 'Missing API key' }, 400);
 
-  const url = `${TORN_API}/user/?selections=basic,profile&key=${key}`;
-  const res = await fetch(url);
-  const data = await res.json();
+  // Fetch basic info and verify events+log permissions in parallel
+  const [basicRes, eventsRes] = await Promise.all([
+    fetch(`${TORN_API}/user/?selections=basic,profile&key=${key}`),
+    fetch(`${TORN_API}/user/?selections=events,log&limit=1&key=${key}`),
+  ]);
+  const [data, eventsData] = await Promise.all([basicRes.json(), eventsRes.json()]);
 
   if (data.error) {
     return json({ error: `Torn API: ${data.error.error}` }, 400);
+  }
+
+  // If events/log check fails, the key doesn't have sufficient permissions
+  if (eventsData.error) {
+    return json({
+      error: 'Your API key is missing required permissions. Please create a new key with "Events" and "Log" access enabled. Click the "Create a Custom Key" link on the site for a pre-filled setup.',
+    }, 400);
   }
 
   return json({
