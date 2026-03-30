@@ -450,6 +450,19 @@ body {
   color: #c06bff;
 }
 
+.famiglia-permanent-tag {
+  display: inline-block;
+  padding: 0.15rem 0.5rem;
+  margin-left: 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  font-weight: 600;
+  background: #2a1a3a;
+  color: #c06bff;
+  border: 1px solid #c06bff44;
+  vertical-align: middle;
+}
+
 .tier-detail {
   color: #aaa;
   font-size: 0.85rem;

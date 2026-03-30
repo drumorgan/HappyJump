@@ -67,10 +67,17 @@ function computeCleanStreak(txns: any[]): number {
 // Recompute and upsert client stats from transactions.
 // Optional `extraFields` allows setting torn_name etc. when available.
 async function syncClientStats(supabase: any, tornId: string, extraFields?: Record<string, unknown>) {
-  const { data: allTxns } = await supabase
-    .from('transactions')
-    .select('status, suggested_price, payout_amount, created_at, torn_name')
-    .eq('torn_id', tornId);
+  const [{ data: allTxns }, { data: existingClient }] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('status, suggested_price, payout_amount, created_at, torn_name')
+      .eq('torn_id', tornId),
+    supabase
+      .from('clients')
+      .select('famiglia_permanent')
+      .eq('torn_id', tornId)
+      .maybeSingle(),
+  ]);
 
   const txns = allTxns || [];
   const cleanCount = computeCleanStreak(txns);
@@ -82,11 +89,18 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
     .filter((t: any) => t.status === 'payout_sent')
     .reduce((s: number, t: any) => s + Number(t.payout_amount || 0), 0);
 
+  // Famiglia is permanent: once reached, never drops below legend
+  const alreadyFamiglia = existingClient?.famiglia_permanent === true;
+  const computedTier = computeTier(cleanCount);
+  const isFamigliaNow = alreadyFamiglia || computedTier === 'legend';
+  const effectiveTier = isFamigliaNow ? 'legend' : computedTier;
+
   // If torn_name not provided in extraFields, pull from most recent transaction
   const upsertFields: Record<string, unknown> = {
     torn_id: tornId,
     clean_count: cleanCount,
-    tier: computeTier(cleanCount),
+    tier: effectiveTier,
+    famiglia_permanent: isFamigliaNow,
     transaction_count: txnCount,
     total_spent: totalSpent,
     total_payouts: totalPayouts,
@@ -329,17 +343,25 @@ async function handleCreateTransaction(body: any) {
     return json({ error: 'No packages available right now. Check back later.' }, 400);
   }
 
-  // Determine tier based on consecutive clean streak
-  const { data: playerHistory } = await supabase
-    .from('transactions')
-    .select('status, created_at')
-    .eq('torn_id', String(torn_id))
-    .in('status', ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']);
+  // Determine tier based on consecutive clean streak (Famiglia is permanent)
+  const [{ data: playerHistory }, { data: clientRecord }] = await Promise.all([
+    supabase
+      .from('transactions')
+      .select('status, created_at')
+      .eq('torn_id', String(torn_id))
+      .in('status', ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent']),
+    supabase
+      .from('clients')
+      .select('famiglia_permanent')
+      .eq('torn_id', String(torn_id))
+      .maybeSingle(),
+  ]);
 
   const cleanCount = computeCleanStreak(playerHistory || []);
+  const isFamigliaPermanent = clientRecord?.famiglia_permanent === true;
 
   let tierMargin;
-  if (cleanCount >= 5) tierMargin = Number(config.margin_legend);
+  if (isFamigliaPermanent || cleanCount >= 5) tierMargin = Number(config.margin_legend);
   else if (cleanCount >= 3) tierMargin = Number(config.margin_road);
   else if (cleanCount >= 1) tierMargin = Number(config.margin_safe);
   else tierMargin = Number(config.margin_new);
@@ -438,7 +460,7 @@ async function handleGetPlayerTransactions(body: any) {
       .order('created_at', { ascending: false }),
     supabase
       .from('clients')
-      .select('torn_id, torn_name, torn_faction, torn_level, clean_count, tier, total_spent, total_payouts, transaction_count, is_blocked, first_seen_at, updated_at')
+      .select('torn_id, torn_name, torn_faction, torn_level, clean_count, tier, total_spent, total_payouts, transaction_count, is_blocked, famiglia_permanent, first_seen_at, updated_at')
       .eq('torn_id', String(torn_id))
       .maybeSingle(),
   ]);
@@ -451,12 +473,17 @@ async function handleGetPlayerTransactions(body: any) {
     (t: any) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
   );
 
+  // Famiglia is permanent — if flagged, effective tier is always legend
+  const isFamigliaPermanent = clientResult.data?.famiglia_permanent === true;
+  const effectiveCleanCount = isFamigliaPermanent ? Math.max(cleanCount, 5) : cleanCount;
+
   return json({
     torn_id: String(torn_id),
     transactions,
-    clean_count: cleanCount,
+    clean_count: effectiveCleanCount,
     has_active_deal: hasActiveDeal,
     is_blocked: clientResult.data?.is_blocked ?? false,
+    famiglia_permanent: isFamigliaPermanent,
     client: clientResult.data || null,
   });
 }
