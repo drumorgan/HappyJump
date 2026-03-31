@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, verifyPayment, getPublicStats } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, verifyPayment, testApiAccess, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -345,6 +345,7 @@ form.addEventListener('submit', async (e) => {
 function showPlayerView(player, config, history, apiKey) {
   storefrontEl.classList.add('hidden');
   playerViewEl.classList.remove('hidden');
+  initTestButtons();
 
   const cleanCount = history.clean_count || 0;
   const hasActive = history.has_active_deal;
@@ -682,6 +683,73 @@ async function handleVerifyPayment(e) {
     statusEl.className = 'od-report-error';
     btn.disabled = false;
   }
+}
+
+// --- API access test buttons ---
+function initTestButtons() {
+  const paymentBtn = document.getElementById('test-payment-btn');
+  const odBtn = document.getElementById('test-od-btn');
+  const statusEl = document.getElementById('api-test-status');
+
+  if (!paymentBtn || !odBtn) return;
+
+  async function runTest() {
+    if (!currentApiKey) {
+      statusEl.textContent = 'Session expired — please re-enter your API key.';
+      statusEl.style.color = '#ef5350';
+      return;
+    }
+
+    paymentBtn.disabled = true;
+    odBtn.disabled = true;
+    paymentBtn.className = 'btn-api-test';
+    odBtn.className = 'btn-api-test';
+    statusEl.textContent = 'Testing...';
+    statusEl.style.color = '#888';
+
+    try {
+      const result = await testApiAccess(currentApiKey);
+      const r = result.results;
+
+      // Payment log test
+      if (r.log?.ok) {
+        paymentBtn.classList.add('test-pass');
+        paymentBtn.textContent = 'Payment Log ✓';
+      } else {
+        paymentBtn.classList.add('test-fail');
+        paymentBtn.textContent = 'Payment Log ✗';
+      }
+
+      // OD events test
+      if (r.events?.ok) {
+        odBtn.classList.add('test-pass');
+        odBtn.textContent = 'OD Events ✓';
+      } else {
+        odBtn.classList.add('test-fail');
+        odBtn.textContent = 'OD Events ✗';
+      }
+
+      if (result.ok) {
+        statusEl.textContent = 'All permissions OK — your key is ready.';
+        statusEl.style.color = '#4caf50';
+      } else {
+        const missing = [];
+        if (!r.log?.ok) missing.push('Log');
+        if (!r.events?.ok) missing.push('Events');
+        statusEl.innerHTML = `Missing: ${missing.join(', ')}. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" style="color:#e94560">Create a new key</a>`;
+        statusEl.style.color = '#ef5350';
+      }
+    } catch (err) {
+      statusEl.textContent = 'Test failed: ' + err.message;
+      statusEl.style.color = '#ef5350';
+    }
+
+    paymentBtn.disabled = false;
+    odBtn.disabled = false;
+  }
+
+  paymentBtn.addEventListener('click', runTest);
+  odBtn.addEventListener('click', runTest);
 }
 
 function renderHistory(transactions) {
