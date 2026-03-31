@@ -1165,6 +1165,43 @@ async function handleGetPublicStats() {
     best_seller: bestSeller,
   });
 }
+async function handleTestApiAccess(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const results: Record<string, { ok: boolean; detail: string }> = {};
+
+  // Test basic,profile access
+  const basicRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const basicData = await basicRes.json();
+  if (basicData.error) {
+    results.basic = { ok: false, detail: basicData.error.error || 'Unknown error' };
+  } else {
+    results.basic = { ok: true, detail: `${basicData.name} [${basicData.player_id}]` };
+  }
+
+  // Test events access (needed for OD reporting)
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&limit=1&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+  if (eventsData.error) {
+    results.events = { ok: false, detail: eventsData.error.error || 'Unknown error' };
+  } else {
+    results.events = { ok: true, detail: 'Events access confirmed' };
+  }
+
+  // Test log access (needed for payment verification)
+  const logRes = await fetch(`${TORN_API}/user/?selections=log&limit=1&key=${api_key}`);
+  const logData = await logRes.json();
+  if (logData.error) {
+    results.log = { ok: false, detail: logData.error.error || 'Unknown error' };
+  } else {
+    results.log = { ok: true, detail: 'Log access confirmed' };
+  }
+
+  const allOk = results.basic.ok && results.events.ok && results.log.ok;
+  return json({ ok: allOk, results });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -1205,6 +1242,8 @@ serve(async (req) => {
         return await handleAdminSyncAllClients(req);
       case 'test-email':
         return await handleTestEmail(req);
+      case 'test-api-access':
+        return await handleTestApiAccess(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
