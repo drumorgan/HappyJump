@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -544,6 +544,43 @@ document.getElementById('test-email-btn')?.addEventListener('click', async () =>
 
   btn.disabled = false;
   btn.textContent = 'Test Email';
+});
+
+// Client API Key Diagnostics
+document.getElementById('diag-test-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-test-btn');
+  const apiKey = keyInput.value.trim();
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter a client API key first.</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Testing...';
+  resultsEl.textContent = '';
+
+  try {
+    const result = await testApiAccess(apiKey);
+    const r = result.results;
+    const icon = (ok) => ok ? '<span style="color:#6bff8e">✓</span>' : '<span style="color:#ff6b81">✗</span>';
+
+    resultsEl.innerHTML = [
+      `${icon(r.basic?.ok)} <strong>Basic/Profile:</strong> ${r.basic?.ok ? r.basic.detail : r.basic?.detail || 'Failed'}`,
+      `${icon(r.events?.ok)} <strong>Events</strong> (OD reporting): ${r.events?.detail || 'Failed'}`,
+      `${icon(r.log?.ok)} <strong>Log</strong> (payment verification): ${r.log?.detail || 'Failed'}`,
+      result.ok
+        ? '<span style="color:#6bff8e">All permissions OK</span>'
+        : '<span style="color:#ff6b81">Key is missing required permissions</span>',
+    ].join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Test failed: ${e.message}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Test Permissions';
 });
 
 // Config panel toggle
