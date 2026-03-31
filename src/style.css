@@ -775,6 +775,51 @@ body {
   font-weight: 600;
 }
 
+/* API test buttons */
+.api-test-row {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #333;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  align-items: center;
+}
+
+.btn-api-test {
+  background: #333;
+  color: #ccc;
+  border: 1px solid #555;
+  padding: 0.4rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.8rem;
+  cursor: pointer;
+}
+
+.btn-api-test:hover {
+  background: #444;
+}
+
+.btn-api-test:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+.btn-api-test.test-pass {
+  border-color: #4caf50;
+  color: #4caf50;
+}
+
+.btn-api-test.test-fail {
+  border-color: #ef5350;
+  color: #ef5350;
+}
+
+#api-test-status {
+  font-size: 0.8rem;
+  width: 100%;
+}
+
 /* Product tabs */
 .product-tabs {
   display: flex;
