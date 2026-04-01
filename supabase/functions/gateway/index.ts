@@ -909,11 +909,23 @@ async function handleVerifyPayment(body: any) {
   const createdAt = txn.created_at ? new Date(txn.created_at) : null;
   const fromTs = createdAt ? Math.floor(createdAt.getTime() / 1000) : undefined;
   const selectionsParam = 'events,log';
-  const apiUrl = fromTs
-    ? `${TORN_API}/user/?selections=${selectionsParam}&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=${selectionsParam}&key=${api_key}`;
-  const apiRes = await fetch(apiUrl);
-  const apiData = await apiRes.json();
+
+  // First try with from-filter, then fall back to unfiltered if empty
+  let apiData: any = null;
+  for (const useFrom of [true, false]) {
+    const apiUrl = (useFrom && fromTs)
+      ? `${TORN_API}/user/?selections=${selectionsParam}&from=${fromTs}&key=${api_key}`
+      : `${TORN_API}/user/?selections=${selectionsParam}&key=${api_key}`;
+    const apiRes = await fetch(apiUrl);
+    apiData = await apiRes.json();
+    if (apiData.error) break;
+
+    // Check if we got any entries — if not and we used from-filter, retry without it
+    const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
+    const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
+    if (evtCount + logCount > 0 || !useFrom || !fromTs) break;
+    console.log(`[verify-payment] 0 entries with from=${fromTs}, retrying without filter`);
+  }
 
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
   const expectedAmount = Number(txn.suggested_price);
@@ -973,9 +985,15 @@ async function handleVerifyPayment(body: any) {
 
   // No payments found at all
   if (totalPaid === 0) {
+    const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
+    const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
+    const responseKeys = Object.keys(apiData).join(', ');
+    const diag = `[events: ${evtCount}, log: ${logCount}, keys: ${responseKeys}]`;
     return json({
       verified: false,
-      detail: `Could not find any payment to Giro in ${allEntries.length} recent events/log entries. If you just sent the money, wait a moment and try again.`,
+      detail: allEntries.length === 0
+        ? `Your Torn API returned 0 events/log entries ${diag}. This usually means your API key is missing "Log" permissions. Try creating a new key with the link on the home page.`
+        : `Could not find any payment to Giro in ${allEntries.length} recent entries. If you just sent the money, wait a moment and try again.`,
     });
   }
 
