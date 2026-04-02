@@ -763,10 +763,12 @@ async function handleReportOd(body: any) {
   // Verify OD via events log — works for both Xanax (hospitalizes) and Ecstasy (does NOT hospitalize).
   // We always use the events log so we can capture the event timestamp for replay prevention.
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
+  // Fetch events (for OD detection) and log (for drug usage detection).
+  // Drug USAGE appears in log, ODs appear in events.
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
   const eventsUrl = fromTs
-    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+    ? `${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events,log&key=${api_key}`;
   const eventsRes = await fetch(eventsUrl);
   const eventsData = await eventsRes.json();
 
@@ -774,26 +776,38 @@ async function handleReportOd(body: any) {
   let odEventTimestamp: number | null = null;
   let ecstasyUsedTimestamp: number | null = null; // earliest successful Ecstasy use
 
-  if (!eventsData.error && eventsData.events) {
-    const events = Object.values(eventsData.events) as any[];
-    // Sort by timestamp descending so we find the most recent OD first
-    events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
-    for (const evt of events) {
-      // Strip HTML tags — Torn API event text contains <a> tags etc.
-      const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('overdos')) {
-        if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
-        if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
+  if (!eventsData.error) {
+    // Check events for ODs
+    if (eventsData.events) {
+      const events = Object.values(eventsData.events) as any[];
+      events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+      for (const evt of events) {
+        const evtText = stripHtml(evt.event || '').toLowerCase();
+        if (evtText.includes('overdos')) {
+          if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
+          if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
+        }
       }
     }
 
-    // Also scan for successful Ecstasy usage (e.g. "You used some Ecstasy gaining 15,850 happiness")
-    // If Ecstasy was already taken cleanly, the insured tab is consumed — policy should close.
-    for (const evt of events) {
-      const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('ecstasy') && evtText.includes('happiness') && !evtText.includes('overdos')) {
-        // Track earliest usage event (events are sorted desc, so keep overwriting)
-        ecstasyUsedTimestamp = evt.timestamp;
+    // Check both events AND log for successful Ecstasy usage
+    const allEntries: any[] = [];
+    if (eventsData.events) {
+      for (const evt of Object.values(eventsData.events) as any[]) {
+        allEntries.push({ timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+      }
+    }
+    if (eventsData.log) {
+      for (const entry of Object.values(eventsData.log) as any[]) {
+        allEntries.push({ timestamp: entry.timestamp, text: stripHtml(entry.log || entry.title || '') });
+      }
+    }
+    // Sort descending so we find earliest by overwriting
+    allEntries.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+    for (const entry of allEntries) {
+      const entryLower = entry.text.toLowerCase();
+      if (entryLower.includes('ecstasy') && entryLower.includes('happiness') && !entryLower.includes('overdos')) {
+        ecstasyUsedTimestamp = entry.timestamp;
       }
     }
   }
@@ -929,21 +943,32 @@ async function handleCheckEcstasyUsage(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'purchased') return json({ used: false });
 
-  // Fetch events since purchase
+  // Fetch events AND log since purchase — drug usage appears in log, not events
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
   const eventsUrl = fromTs
-    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+    ? `${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events,log&key=${api_key}`;
   const eventsRes = await fetch(eventsUrl);
   const eventsData = await eventsRes.json();
 
-  if (eventsData.error || !eventsData.events) return json({ used: false });
+  if (eventsData.error) return json({ used: false });
 
-  const events = Object.values(eventsData.events) as any[];
-  const ecstasyUsed = events.some((evt: any) =>
-    (() => { const t = stripHtml(evt.event || '').toLowerCase(); return t.includes('ecstasy') && t.includes('happiness') && !t.includes('overdos'); })()
+  // Combine events and log entries
+  const allEntries: string[] = [];
+  if (eventsData.events) {
+    for (const evt of Object.values(eventsData.events) as any[]) {
+      allEntries.push(stripHtml(evt.event || '').toLowerCase());
+    }
+  }
+  if (eventsData.log) {
+    for (const entry of Object.values(eventsData.log) as any[]) {
+      allEntries.push(stripHtml(entry.log || entry.title || '').toLowerCase());
+    }
+  }
+  const ecstasyUsed = allEntries.some((text) =>
+    text.includes('ecstasy') && text.includes('happiness') && !text.includes('overdos')
   );
 
   if (ecstasyUsed) {
@@ -1328,30 +1353,41 @@ async function handleAdminCheckEcstasy(body: any) {
   const playerName = identData.name || tornId;
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
 
-  // Fetch events from the last 14 days (covers full insurance window + buffer)
+  // Fetch events AND log from the last 14 days.
+  // Drug USAGE appears in log (actions player took), ODs appear in events (things that happened to them).
   const fromTs = Math.floor((Date.now() - 14 * 86400_000) / 1000);
-  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`);
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`);
   const eventsData = await eventsRes.json();
 
-  if (eventsData.error || !eventsData.events) {
-    return json({ error: 'Could not fetch events — key may lack events permission' }, 400);
+  if (eventsData.error) {
+    return json({ error: `Torn API: ${eventsData.error.error || 'Unknown error'}. Key may need Events+Log permissions.` }, 400);
   }
 
-  const events = Object.values(eventsData.events) as any[];
-  const ecstasyEvents: { type: string; timestamp: number; text: string }[] = [];
+  // Combine events and log entries into one list
+  const allEntries: { timestamp: number; text: string; source: string }[] = [];
+  if (eventsData.events) {
+    for (const evt of Object.values(eventsData.events) as any[]) {
+      allEntries.push({ timestamp: evt.timestamp, text: stripHtml(evt.event || ''), source: 'event' });
+    }
+  }
+  if (eventsData.log) {
+    for (const entry of Object.values(eventsData.log) as any[]) {
+      allEntries.push({ timestamp: entry.timestamp, text: stripHtml(entry.log || entry.title || ''), source: 'log' });
+    }
+  }
 
-  // Debug: collect any event mentioning ecstasy (regardless of pattern)
+  const ecstasyEvents: { type: string; timestamp: number; text: string; source: string }[] = [];
   const debugEcstasyMentions: string[] = [];
 
-  for (const evt of events) {
-    const evtText = stripHtml(evt.event || '').toLowerCase();
-    if (evtText.includes('ecstasy')) {
-      debugEcstasyMentions.push(`[${evt.timestamp}] ${stripHtml(evt.event || '')}`);
+  for (const entry of allEntries) {
+    const entryLower = entry.text.toLowerCase();
+    if (entryLower.includes('ecstasy')) {
+      debugEcstasyMentions.push(`[${entry.source}:${entry.timestamp}] ${entry.text}`);
     }
-    if (evtText.includes('ecstasy') && evtText.includes('happiness') && !evtText.includes('overdos')) {
-      ecstasyEvents.push({ type: 'used', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
-    } else if (evtText.includes('overdos') && evtText.includes('ecstasy')) {
-      ecstasyEvents.push({ type: 'od', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+    if (entryLower.includes('ecstasy') && entryLower.includes('happiness') && !entryLower.includes('overdos')) {
+      ecstasyEvents.push({ type: 'used', timestamp: entry.timestamp, text: entry.text, source: entry.source });
+    } else if (entryLower.includes('overdos') && entryLower.includes('ecstasy')) {
+      ecstasyEvents.push({ type: 'od', timestamp: entry.timestamp, text: entry.text, source: entry.source });
     }
   }
 
@@ -1364,7 +1400,7 @@ async function handleAdminCheckEcstasy(body: any) {
     has_usage: ecstasyEvents.some((e) => e.type === 'used'),
     has_od: ecstasyEvents.some((e) => e.type === 'od'),
     debug: {
-      total_events: events.length,
+      total_events: allEntries.length,
       from_timestamp: fromTs,
       from_date: new Date(fromTs * 1000).toISOString(),
       ecstasy_mentions: debugEcstasyMentions,
