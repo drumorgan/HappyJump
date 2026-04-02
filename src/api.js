@@ -143,6 +143,13 @@ export async function adminRejectAndBlock(tornId) {
 }
 
 /**
+ * Check if client already took their Ecstasy tab (policy should auto-close).
+ */
+export async function checkEcstasyUsage(apiKey, txnId) {
+  return gateway('check-ecstasy-usage', { api_key: apiKey, txn_id: txnId });
+}
+
+/**
  * Report and verify an OD — client provides their API key for verification.
  */
 export async function reportOd(apiKey, txnId) {
@@ -158,6 +165,10 @@ export async function verifyPayment(apiKey, txnId) {
 
 export async function testApiAccess(apiKey) {
   return gateway('test-api-access', { api_key: apiKey });
+}
+
+export async function adminCheckEcstasy(apiKey) {
+  return gateway('admin-check-ecstasy', { api_key: apiKey });
 }
 
 /**

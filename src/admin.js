@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess, adminCheckEcstasy } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -581,6 +581,50 @@ document.getElementById('diag-test-btn')?.addEventListener('click', async () => 
 
   btn.disabled = false;
   btn.textContent = 'Test Permissions';
+});
+
+// Check Ecstasy Usage (admin diagnostics)
+document.getElementById('diag-ecstasy-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-ecstasy-btn');
+  const apiKey = keyInput.value.trim();
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter a client API key first.</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  resultsEl.textContent = '';
+
+  try {
+    const result = await adminCheckEcstasy(apiKey);
+    const lines = [`<strong>${esc(result.player)}</strong>`];
+
+    if (result.ecstasy_events.length === 0) {
+      lines.push('<span style="color:#888">No Ecstasy events found in recent history.</span>');
+    } else {
+      for (const evt of result.ecstasy_events) {
+        const date = new Date(evt.timestamp * 1000).toLocaleString();
+        const color = evt.type === 'od' ? '#ff6b81' : '#6bff8e';
+        const label = evt.type === 'od' ? 'OD' : 'USED';
+        lines.push(`<span style="color:${color}">[${label}]</span> ${date} — ${esc(evt.text)}`);
+      }
+    }
+
+    if (result.has_usage) {
+      lines.push('<br><span style="color:#e8a735;font-weight:bold">Ecstasy was taken — policy should auto-close if active.</span>');
+    }
+
+    resultsEl.innerHTML = lines.join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Check failed: ${esc(e.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Check Ecstasy Usage';
 });
 
 // Config panel toggle

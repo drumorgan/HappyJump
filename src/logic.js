@@ -128,6 +128,7 @@ export function stripHtml(s) {
 export function parseOdFromEvents(eventsData) {
   let odDrug = null;
   let odEventTimestamp = null;
+  let ecstasyUsedTimestamp = null;
 
   if (!eventsData?.error && eventsData?.events) {
     const events = Object.values(eventsData.events);
@@ -148,9 +149,19 @@ export function parseOdFromEvents(eventsData) {
         }
       }
     }
+
+    // Scan for successful Ecstasy usage (e.g. "You used some Ecstasy gaining 15,850 happiness")
+    // If found, the insured tab is consumed — policy should close.
+    for (const evt of events) {
+      const evtText = stripHtml(evt.event || '').toLowerCase();
+      if (evtText.includes('used some ecstasy')) {
+        // Keep overwriting to find earliest (events sorted desc)
+        ecstasyUsedTimestamp = evt.timestamp;
+      }
+    }
   }
 
-  return { odDrug, odEventTimestamp };
+  return { odDrug, odEventTimestamp, ecstasyUsedTimestamp };
 }
 
 /**
