@@ -791,7 +791,7 @@ async function handleReportOd(body: any) {
     // If Ecstasy was already taken cleanly, the insured tab is consumed — policy should close.
     for (const evt of events) {
       const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('used some ecstasy')) {
+      if (evtText.includes('ecstasy') && evtText.includes('happiness') && !evtText.includes('overdos')) {
         // Track earliest usage event (events are sorted desc, so keep overwriting)
         ecstasyUsedTimestamp = evt.timestamp;
       }
@@ -943,7 +943,7 @@ async function handleCheckEcstasyUsage(body: any) {
 
   const events = Object.values(eventsData.events) as any[];
   const ecstasyUsed = events.some((evt: any) =>
-    stripHtml(evt.event || '').toLowerCase().includes('used some ecstasy')
+    (() => { const t = stripHtml(evt.event || '').toLowerCase(); return t.includes('ecstasy') && t.includes('happiness') && !t.includes('overdos'); })()
   );
 
   if (ecstasyUsed) {
@@ -1348,7 +1348,7 @@ async function handleAdminCheckEcstasy(body: any) {
     if (evtText.includes('ecstasy')) {
       debugEcstasyMentions.push(`[${evt.timestamp}] ${stripHtml(evt.event || '')}`);
     }
-    if (evtText.includes('used some ecstasy')) {
+    if (evtText.includes('ecstasy') && evtText.includes('happiness') && !evtText.includes('overdos')) {
       ecstasyEvents.push({ type: 'used', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
     } else if (evtText.includes('overdos') && evtText.includes('ecstasy')) {
       ecstasyEvents.push({ type: 'od', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
