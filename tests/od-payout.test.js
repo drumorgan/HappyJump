@@ -430,6 +430,16 @@ describe('parseOdFromEvents', () => {
     expect(r.ecstasyUsedTimestamp).toBeNull();
   });
 
+  it('detects ecstasy usage with player name instead of "You"', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'GiroVagabondo used some Ecstasy gaining 15,850 happiness' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.ecstasyUsedTimestamp).toBe(1000);
+  });
+
   it('handles ecstasy usage with HTML tags', () => {
     const events = {
       events: {
