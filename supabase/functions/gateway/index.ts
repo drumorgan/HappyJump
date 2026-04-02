@@ -1340,8 +1340,14 @@ async function handleAdminCheckEcstasy(body: any) {
   const events = Object.values(eventsData.events) as any[];
   const ecstasyEvents: { type: string; timestamp: number; text: string }[] = [];
 
+  // Debug: collect any event mentioning ecstasy (regardless of pattern)
+  const debugEcstasyMentions: string[] = [];
+
   for (const evt of events) {
     const evtText = stripHtml(evt.event || '').toLowerCase();
+    if (evtText.includes('ecstasy')) {
+      debugEcstasyMentions.push(`[${evt.timestamp}] ${stripHtml(evt.event || '')}`);
+    }
     if (evtText.includes('used some ecstasy')) {
       ecstasyEvents.push({ type: 'used', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
     } else if (evtText.includes('overdos') && evtText.includes('ecstasy')) {
@@ -1357,6 +1363,12 @@ async function handleAdminCheckEcstasy(body: any) {
     ecstasy_events: ecstasyEvents,
     has_usage: ecstasyEvents.some((e) => e.type === 'used'),
     has_od: ecstasyEvents.some((e) => e.type === 'od'),
+    debug: {
+      total_events: events.length,
+      from_timestamp: fromTs,
+      from_date: new Date(fromTs * 1000).toISOString(),
+      ecstasy_mentions: debugEcstasyMentions,
+    },
   });
 }
 
