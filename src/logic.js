@@ -154,7 +154,7 @@ export function parseOdFromEvents(eventsData) {
     // If found, the insured tab is consumed — policy should close.
     for (const evt of events) {
       const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('used some ecstasy')) {
+      if (evtText.includes('ecstasy') && evtText.includes('happiness') && !evtText.includes('overdos')) {
         // Keep overwriting to find earliest (events sorted desc)
         ecstasyUsedTimestamp = evt.timestamp;
       }
