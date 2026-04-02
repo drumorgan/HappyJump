@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, verifyPayment, getPublicStats } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkEcstasyUsage, verifyPayment, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -597,6 +597,20 @@ function renderActiveDeal(transactions) {
     if (verifyBtn) {
       verifyBtn.addEventListener('click', handleVerifyPayment);
     }
+
+    // Proactive check: if purchased, see if Ecstasy was already taken (auto-close policy)
+    if (activeTxn.status === 'purchased' && currentApiKey) {
+      checkEcstasyUsage(currentApiKey, activeTxn.id).then((result) => {
+        if (result && result.policy_closed) {
+          showToast(result.detail || 'Policy closed — Ecstasy taken successfully!', 'success');
+          // Refresh to show updated status
+          getPlayerTransactions(activeTxn.torn_id || '').then((h) => {
+            renderActiveDeal(h.transactions);
+            renderHistory(h.transactions);
+          });
+        }
+      }).catch(() => { /* silent — non-critical check */ });
+    }
   }
 }
 
@@ -623,6 +637,14 @@ async function handleReportOd(e) {
       // Refresh the active deal view
       const history = await getPlayerTransactions(result.torn_id || '');
       renderActiveDeal(history.transactions);
+    } else if (result.policy_closed) {
+      // Ecstasy was already taken — policy auto-closed
+      statusEl.textContent = result.detail;
+      statusEl.className = 'od-report-success';
+      showToast(result.detail, 'success');
+      const history = await getPlayerTransactions(result.torn_id || '');
+      renderActiveDeal(history.transactions);
+      renderHistory(history.transactions);
     } else {
       statusEl.textContent = result.detail;
       statusEl.className = 'od-report-error';
