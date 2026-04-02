@@ -1328,8 +1328,9 @@ async function handleAdminCheckEcstasy(body: any) {
   const playerName = identData.name || tornId;
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
 
-  // Fetch recent events
-  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  // Fetch events from the last 14 days (covers full insurance window + buffer)
+  const fromTs = Math.floor((Date.now() - 14 * 86400_000) / 1000);
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`);
   const eventsData = await eventsRes.json();
 
   if (eventsData.error || !eventsData.events) {
