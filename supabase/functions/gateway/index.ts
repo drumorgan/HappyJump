@@ -772,6 +772,7 @@ async function handleReportOd(body: any) {
 
   let odDrug: string | null = null;
   let odEventTimestamp: number | null = null;
+  let ecstasyUsedTimestamp: number | null = null; // earliest successful Ecstasy use
 
   if (!eventsData.error && eventsData.events) {
     const events = Object.values(eventsData.events) as any[];
@@ -785,6 +786,40 @@ async function handleReportOd(body: any) {
         if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
       }
     }
+
+    // Also scan for successful Ecstasy usage (e.g. "You used some Ecstasy gaining 15,850 happiness")
+    // If Ecstasy was already taken cleanly, the insured tab is consumed — policy should close.
+    for (const evt of events) {
+      const evtText = stripHtml(evt.event || '').toLowerCase();
+      if (evtText.includes('used some ecstasy')) {
+        // Track earliest usage event (events are sorted desc, so keep overwriting)
+        ecstasyUsedTimestamp = evt.timestamp;
+      }
+    }
+  }
+
+  // If Ecstasy was used successfully, the insured tab is consumed.
+  // Any subsequent OD is on an uninsured tab — reject and auto-close.
+  if (ecstasyUsedTimestamp) {
+    // Auto-close the policy as closed_clean
+    const nowIso = new Date().toISOString();
+    await supabase
+      .from('transactions')
+      .update({ status: 'closed_clean', closed_at: nowIso })
+      .eq('id', txn_id);
+
+    // Release locked reserve
+    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+
+    // Sync client stats
+    await syncClientStats(supabase, tornId, { torn_name: identData.name });
+
+    return json({
+      verified: false,
+      policy_closed: true,
+      torn_id: tornId,
+      detail: `Your Ecstasy tab was already taken successfully — the insured package is consumed and your policy has been closed clean. Any further ODs are not covered under this policy.`,
+    });
   }
 
   if (!odDrug) {
@@ -870,6 +905,66 @@ async function handleReportOd(body: any) {
     torn_id: tornId,
     detail: `OD on ${drugLabel} verified. Giro has been notified and will send your payout.`,
   });
+}
+
+async function handleCheckEcstasyUsage(body: any) {
+  const { api_key, txn_id } = body;
+  if (!api_key || !txn_id) return json({ error: 'Missing api_key or txn_id' }, 400);
+
+  // Validate API key
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  const tornId = String(identData.player_id);
+  const supabase = serviceClient();
+
+  const { data: txn, error: txnErr } = await supabase
+    .from('transactions')
+    .select('id, torn_id, purchased_at, status, ecstasy_payout')
+    .eq('id', txn_id)
+    .single();
+
+  if (txnErr || !txn) return json({ error: 'Transaction not found' }, 404);
+  if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
+  if (txn.status !== 'purchased') return json({ used: false });
+
+  // Fetch events since purchase
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
+  const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
+  const eventsUrl = fromTs
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+  const eventsRes = await fetch(eventsUrl);
+  const eventsData = await eventsRes.json();
+
+  if (eventsData.error || !eventsData.events) return json({ used: false });
+
+  const events = Object.values(eventsData.events) as any[];
+  const ecstasyUsed = events.some((evt: any) =>
+    stripHtml(evt.event || '').toLowerCase().includes('used some ecstasy')
+  );
+
+  if (ecstasyUsed) {
+    // Auto-close the policy
+    const nowIso = new Date().toISOString();
+    await supabase
+      .from('transactions')
+      .update({ status: 'closed_clean', closed_at: nowIso })
+      .eq('id', txn_id);
+
+    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+    await syncClientStats(supabase, tornId, { torn_name: identData.name });
+
+    return json({
+      used: true,
+      policy_closed: true,
+      detail: 'Your Ecstasy tab was taken successfully — policy closed clean. Congrats!',
+    });
+  }
+
+  return json({ used: false });
 }
 
 async function handleVerifyPayment(body: any) {
@@ -1220,6 +1315,50 @@ async function handleTestApiAccess(body: any) {
   return json({ ok: allOk, results });
 }
 
+async function handleAdminCheckEcstasy(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  // Get player identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  const tornId = String(identData.player_id);
+  const playerName = identData.name || tornId;
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+
+  // Fetch recent events
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+
+  if (eventsData.error || !eventsData.events) {
+    return json({ error: 'Could not fetch events — key may lack events permission' }, 400);
+  }
+
+  const events = Object.values(eventsData.events) as any[];
+  const ecstasyEvents: { type: string; timestamp: number; text: string }[] = [];
+
+  for (const evt of events) {
+    const evtText = stripHtml(evt.event || '').toLowerCase();
+    if (evtText.includes('used some ecstasy')) {
+      ecstasyEvents.push({ type: 'used', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+    } else if (evtText.includes('overdos') && evtText.includes('ecstasy')) {
+      ecstasyEvents.push({ type: 'od', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+    }
+  }
+
+  // Sort chronologically
+  ecstasyEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+  return json({
+    player: `${playerName} [${tornId}]`,
+    ecstasy_events: ecstasyEvents,
+    has_usage: ecstasyEvents.some((e) => e.type === 'used'),
+    has_od: ecstasyEvents.some((e) => e.type === 'od'),
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -1254,6 +1393,8 @@ serve(async (req) => {
         return await handleUpdateConfig(req, body);
       case 'report-od':
         return await handleReportOd(body);
+      case 'check-ecstasy-usage':
+        return await handleCheckEcstasyUsage(body);
       case 'verify-payment':
         return await handleVerifyPayment(body);
       case 'admin-sync-all-clients':
@@ -1262,6 +1403,8 @@ serve(async (req) => {
         return await handleTestEmail(req);
       case 'test-api-access':
         return await handleTestApiAccess(body);
+      case 'admin-check-ecstasy':
+        return await handleAdminCheckEcstasy(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
