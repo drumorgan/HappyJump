@@ -167,6 +167,10 @@ export async function testApiAccess(apiKey) {
   return gateway('test-api-access', { api_key: apiKey });
 }
 
+export async function adminCheckEcstasy(apiKey) {
+  return gateway('admin-check-ecstasy', { api_key: apiKey });
+}
+
 /**
  * Admin: resync all client stats from transactions (fixes stale data).
  */

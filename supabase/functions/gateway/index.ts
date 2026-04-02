@@ -1315,6 +1315,50 @@ async function handleTestApiAccess(body: any) {
   return json({ ok: allOk, results });
 }
 
+async function handleAdminCheckEcstasy(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  // Get player identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  const tornId = String(identData.player_id);
+  const playerName = identData.name || tornId;
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+
+  // Fetch recent events
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+
+  if (eventsData.error || !eventsData.events) {
+    return json({ error: 'Could not fetch events — key may lack events permission' }, 400);
+  }
+
+  const events = Object.values(eventsData.events) as any[];
+  const ecstasyEvents: { type: string; timestamp: number; text: string }[] = [];
+
+  for (const evt of events) {
+    const evtText = stripHtml(evt.event || '').toLowerCase();
+    if (evtText.includes('used some ecstasy')) {
+      ecstasyEvents.push({ type: 'used', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+    } else if (evtText.includes('overdos') && evtText.includes('ecstasy')) {
+      ecstasyEvents.push({ type: 'od', timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
+    }
+  }
+
+  // Sort chronologically
+  ecstasyEvents.sort((a, b) => a.timestamp - b.timestamp);
+
+  return json({
+    player: `${playerName} [${tornId}]`,
+    ecstasy_events: ecstasyEvents,
+    has_usage: ecstasyEvents.some((e) => e.type === 'used'),
+    has_od: ecstasyEvents.some((e) => e.type === 'od'),
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -1359,6 +1403,8 @@ serve(async (req) => {
         return await handleTestEmail(req);
       case 'test-api-access':
         return await handleTestApiAccess(body);
+      case 'admin-check-ecstasy':
+        return await handleAdminCheckEcstasy(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

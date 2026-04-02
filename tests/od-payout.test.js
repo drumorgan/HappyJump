@@ -385,6 +385,60 @@ describe('parseOdFromEvents', () => {
     const r = parseOdFromEvents(events);
     expect(r.odDrug).toBe('xanax');
   });
+
+  it('detects successful ecstasy usage', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'You used some Ecstasy gaining 15,850 happiness' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.odDrug).toBeNull();
+    expect(r.ecstasyUsedTimestamp).toBe(1000);
+  });
+
+  it('detects ecstasy usage even when OD also present', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'You used some Ecstasy gaining 15,850 happiness' },
+        '2': { timestamp: 2000, event: 'You <b>overdosed</b> on Ecstasy' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.odDrug).toBe('ecstasy');
+    expect(r.ecstasyUsedTimestamp).toBe(1000);
+  });
+
+  it('finds earliest ecstasy usage when multiple uses', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'You used some Ecstasy gaining 12,000 happiness' },
+        '2': { timestamp: 3000, event: 'You used some Ecstasy gaining 15,850 happiness' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.ecstasyUsedTimestamp).toBe(1000);
+  });
+
+  it('returns null ecstasyUsedTimestamp when no usage', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'You <b>overdosed</b> on Ecstasy' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.ecstasyUsedTimestamp).toBeNull();
+  });
+
+  it('handles ecstasy usage with HTML tags', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 500, event: 'You <a href="#">used</a> some <b>Ecstasy</b> gaining 15,850 happiness' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.ecstasyUsedTimestamp).toBe(500);
+  });
 });
 
 // ── OD Coverage Validation ──────────────────────────────────────────
