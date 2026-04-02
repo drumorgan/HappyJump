@@ -618,6 +618,11 @@ document.getElementById('diag-ecstasy-btn')?.addEventListener('click', async () 
       lines.push('<br><span style="color:#e8a735;font-weight:bold">Ecstasy was taken — policy should auto-close if active.</span>');
     }
 
+    // Debug info
+    if (result.debug) {
+      lines.push(`<br><span style="color:#666;font-size:0.8rem">DEBUG: ${result.debug.total_events} events from ${result.debug.from_date} | ecstasy mentions: ${result.debug.ecstasy_mentions.length > 0 ? result.debug.ecstasy_mentions.join(', ') : 'none'}</span>`);
+    }
+
     resultsEl.innerHTML = lines.join('<br>');
   } catch (e) {
     resultsEl.innerHTML = `<span style="color:#ff6b81">Check failed: ${esc(e.message)}</span>`;
