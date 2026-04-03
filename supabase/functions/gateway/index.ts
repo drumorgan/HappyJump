@@ -1075,30 +1075,21 @@ async function handleVerifyPayment(body: any) {
     }
   }
 
-  const debugEntries: string[] = [];
   for (const entry of allEntries) {
     const rawHtml = entry.text;
     const evtText = stripHtml(rawHtml);
     const evtLower = evtText.toLowerCase();
 
-    // Collect first 5 entries for diagnostics if no match is found
-    if (debugEntries.length < 5) {
-      debugEntries.push(evtText.substring(0, 120));
-    }
-
     // Match money-send events: look for send-like verbs + "$"
     // Torn log format (sender side): "You sent $X to [PlayerName]"
-    // Also match trade events: "You and PlayerName traded..."
     const hasMoney = evtLower.includes('$');
     const hasSendVerb = evtLower.includes('sent') || evtLower.includes('send')
-      || evtLower.includes('transfer') || evtLower.includes('paid')
-      || evtLower.includes('trade') || evtLower.includes('traded');
+      || evtLower.includes('transfer') || evtLower.includes('paid');
     if (!hasMoney || !hasSendVerb) continue;
 
     // Check if the entry mentions the operator (by name in stripped text, or by ID in raw HTML)
     const mentionsOperator =
       (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
-      evtLower.includes('giro') ||
       rawHtml.includes(String(operatorTornId));
 
     if (!mentionsOperator) continue;
@@ -1118,16 +1109,11 @@ async function handleVerifyPayment(body: any) {
     const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
     const responseKeys = Object.keys(apiData).join(', ');
     const diag = `[events: ${evtCount}, log: ${logCount}, keys: ${responseKeys}]`;
-    const sampleEntries = debugEntries.length > 0
-      ? ` Recent entries: ${debugEntries.map((e, i) => `(${i + 1}) "${e}"`).join('; ')}`
-      : '';
-    console.log(`[verify-payment] No match found. ${diag}${sampleEntries}`);
     return json({
       verified: false,
       detail: allEntries.length === 0
         ? `Your Torn API returned 0 events/log entries ${diag}. This usually means your API key is missing "Log" permissions. Try creating a new key with the link on the home page.`
         : `Could not find any payment to Giro in ${allEntries.length} recent entries. If you just sent the money, wait a moment and try again.`,
-      debug_entries: debugEntries,
     });
   }
 
@@ -1367,24 +1353,24 @@ async function handleAdminCheckEcstasy(body: any) {
   const playerName = identData.name || tornId;
   const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
 
-  // Fetch events AND log from the last 14 days.
-  // Drug USAGE appears in log (actions player took), ODs appear in events (things that happened to them).
+  // Fetch events and log SEPARATELY — combined request may only return one type.
   const fromTs = Math.floor((Date.now() - 14 * 86400_000) / 1000);
-  const eventsRes = await fetch(`${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`);
-  const eventsData = await eventsRes.json();
-
-  if (eventsData.error) {
-    return json({ error: `Torn API: ${eventsData.error.error || 'Unknown error'}. Key may need Events+Log permissions.` }, 400);
-  }
+  const [eventsRes, logRes] = await Promise.all([
+    fetch(`${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=log&from=${fromTs}&key=${api_key}`),
+  ]);
+  const [eventsData, logData] = await Promise.all([eventsRes.json(), logRes.json()]);
 
   const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
-  const logCount = eventsData.log ? Object.keys(eventsData.log).length : 0;
+  const logCount = logData.log ? Object.keys(logData.log).length : 0;
+  const apiEventsKeys = Object.keys(eventsData).join(',');
+  const apiLogKeys = Object.keys(logData).join(',');
 
   // Grab first log entry raw for debugging structure
   let sampleLogEntry: any = null;
-  if (eventsData.log) {
-    const firstKey = Object.keys(eventsData.log)[0];
-    if (firstKey) sampleLogEntry = eventsData.log[firstKey];
+  if (logData.log) {
+    const firstKey = Object.keys(logData.log)[0];
+    if (firstKey) sampleLogEntry = logData.log[firstKey];
   }
 
   // Combine events and log entries into one list
@@ -1394,8 +1380,8 @@ async function handleAdminCheckEcstasy(body: any) {
       allEntries.push({ timestamp: evt.timestamp, text: stripHtml(evt.event || ''), source: 'event' });
     }
   }
-  if (eventsData.log) {
-    for (const entry of Object.values(eventsData.log) as any[]) {
+  if (logData.log) {
+    for (const entry of Object.values(logData.log) as any[]) {
       allEntries.push({ timestamp: entry.timestamp, text: stripHtml(entry.log || entry.title || ''), source: 'log' });
     }
   }
@@ -1427,7 +1413,8 @@ async function handleAdminCheckEcstasy(body: any) {
       total_combined: allEntries.length,
       events_count: evtCount,
       log_count: logCount,
-      api_keys: Object.keys(eventsData).join(','),
+      api_events_keys: apiEventsKeys,
+      api_log_keys: apiLogKeys,
       sample_log_entry: sampleLogEntry,
       from_timestamp: fromTs,
       from_date: new Date(fromTs * 1000).toISOString(),
