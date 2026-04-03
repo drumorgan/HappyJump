@@ -1357,8 +1357,8 @@ async function handleAdminCheckEcstasy(body: any) {
   // Don't use 'from' — it returns oldest-first, and active players overflow the 100 limit.
   // Without 'from', Torn API returns the most recent 100 entries.
   const [eventsRes, logRes] = await Promise.all([
-    fetch(`${TORN_API}/user/?selections=events&key=${api_key}`),
-    fetch(`${TORN_API}/user/?selections=log&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=events&limit=1000&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=log&limit=1000&key=${api_key}`),
   ]);
   const fromTs = 0; // kept for debug output compatibility
   const [eventsData, logData] = await Promise.all([eventsRes.json(), logRes.json()]);
