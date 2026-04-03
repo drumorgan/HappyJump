@@ -1090,7 +1090,9 @@ async function handleVerifyPayment(body: any) {
     }
   }
   for (const entry of allLogEntries) {
-    allEntries.push({ text: entry.log || entry.title || '' });
+    const titlePart = entry.log || entry.title || '';
+    const dataPart = entry.data ? ' ' + JSON.stringify(entry.data) : '';
+    allEntries.push({ text: titlePart + dataPart });
   }
 
   for (const entry of allEntries) {
@@ -1271,7 +1273,9 @@ async function handleAdminCheckPayment(body: any) {
     }
   }
   for (const entry of allLogEntries) {
-    const rawText = entry.log || entry.title || '';
+    const titlePart = entry.log || entry.title || '';
+    const dataPart = entry.data ? ' ' + JSON.stringify(entry.data) : '';
+    const rawText = titlePart + dataPart;
     allEntries.push({ text: stripHtml(rawText), raw: rawText, timestamp: entry.timestamp || 0, source: 'log' });
   }
 
