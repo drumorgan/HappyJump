@@ -1036,51 +1036,61 @@ async function handleVerifyPayment(body: any) {
   // not EVENTS (things that happened to them).
   const createdAt = txn.created_at ? new Date(txn.created_at) : null;
   const fromTs = createdAt ? Math.floor(createdAt.getTime() / 1000) : undefined;
-  const selectionsParam = 'events,log';
-
-  // First try with from-filter, then fall back to unfiltered if empty
-  let apiData: any = null;
-  for (const useFrom of [true, false]) {
-    const apiUrl = (useFrom && fromTs)
-      ? `${TORN_API}/user/?selections=${selectionsParam}&from=${fromTs}&key=${api_key}`
-      : `${TORN_API}/user/?selections=${selectionsParam}&key=${api_key}`;
-    const apiRes = await fetch(apiUrl);
-    apiData = await apiRes.json();
-    if (apiData.error) break;
-
-    // Check if we got any entries — if not and we used from-filter, retry without it
-    const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
-    const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
-    if (evtCount + logCount > 0 || !useFrom || !fromTs) break;
-    console.log(`[verify-payment] 0 entries with from=${fromTs}, retrying without filter`);
-  }
 
   const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
+
+  // Fetch events (single call, with from-filter if available)
+  const eventsUrl = fromTs
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+  const eventsRes = await fetch(eventsUrl);
+  const eventsData = await eventsRes.json();
+
+  if (eventsData.error) {
+    return json({
+      verified: false,
+      detail: `Torn API error: ${eventsData.error.error || JSON.stringify(eventsData.error)}. Your API key may need "Events" and "Log" permissions enabled.`,
+    });
+  }
+
+  // Paginate log: fetch batches of 100 using 'to' parameter, up to 7 days back or 10 pages
+  const allLogEntries: any[] = [];
+  const cutoffTs = fromTs || Math.floor((Date.now() - 7 * 86400_000) / 1000);
+  let toParam = '';
+
+  for (let page = 0; page < 10; page++) {
+    const fromParam = fromTs ? `&from=${fromTs}` : '';
+    const logUrl = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${api_key}`;
+    const logRes = await fetch(logUrl);
+    const logData = await logRes.json();
+    if (logData.error || !logData.log) break;
+
+    const entries = Object.values(logData.log) as any[];
+    if (entries.length === 0) break;
+
+    allLogEntries.push(...entries);
+
+    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
+    if (oldestTs <= cutoffTs) break;
+    if (entries.length < 100) break;
+
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
   const expectedAmount = Number(txn.suggested_price);
   const previouslyPaid = Number(txn.amount_paid || 0);
   let totalPaid = 0;
   const matchedEvents: string[] = [];
 
-  // Surface Torn API errors instead of silently returning "no payment found"
-  if (apiData.error) {
-    return json({
-      verified: false,
-      detail: `Torn API error: ${apiData.error.error || JSON.stringify(apiData.error)}. Your API key may need "Events" and "Log" permissions enabled.`,
-    });
-  }
-
   // Collect entries from both events and log into a single list.
-  // Events have .event field, log entries have .log field for the text.
   const allEntries: { text: string }[] = [];
-  if (apiData.events) {
-    for (const evt of Object.values(apiData.events) as any[]) {
+  if (eventsData.events) {
+    for (const evt of Object.values(eventsData.events) as any[]) {
       allEntries.push({ text: evt.event || '' });
     }
   }
-  if (apiData.log) {
-    for (const entry of Object.values(apiData.log) as any[]) {
-      allEntries.push({ text: entry.log || entry.title || '' });
-    }
+  for (const entry of allLogEntries) {
+    allEntries.push({ text: entry.log || entry.title || '' });
   }
 
   for (const entry of allEntries) {
@@ -1113,15 +1123,19 @@ async function handleVerifyPayment(body: any) {
 
   // No payments found at all
   if (totalPaid === 0) {
-    const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
-    const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
-    const responseKeys = Object.keys(apiData).join(', ');
-    const diag = `[events: ${evtCount}, log: ${logCount}, keys: ${responseKeys}]`;
+    const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
+    const logCount = allLogEntries.length;
+    const diag = `[events: ${evtCount}, log: ${logCount}]`;
+    const sampleEntries = debugEntries.length > 0
+      ? ` Recent entries: ${debugEntries.map((e, i) => `(${i + 1}) "${e}"`).join('; ')}`
+      : '';
+    console.log(`[verify-payment] No match found. ${diag}${sampleEntries}`);
     return json({
       verified: false,
       detail: allEntries.length === 0
         ? `Your Torn API returned 0 events/log entries ${diag}. This usually means your API key is missing "Log" permissions. Try creating a new key with the link on the home page.`
         : `Could not find any payment to Giro in ${allEntries.length} recent entries. If you just sent the money, wait a moment and try again.`,
+      debug_entries: debugEntries,
     });
   }
 
@@ -1208,33 +1222,57 @@ async function handleAdminCheckPayment(body: any) {
   const recipientName = recipient || 'GiroVagabondo';
   const operatorTornId = '3667375';
 
-  // Fetch events + log
-  const apiUrl = `${TORN_API}/user/?selections=events,log&key=${api_key}`;
-  const apiRes = await fetch(apiUrl);
-  const apiData = await apiRes.json();
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
 
-  if (apiData.error) {
+  // Fetch events (single call)
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+  if (eventsData.error) {
     return json({
       player: `${playerName} [${tornId}]`,
-      error: `Torn API error: ${apiData.error.error || JSON.stringify(apiData.error)}`,
+      error: `Torn API error: ${eventsData.error.error || JSON.stringify(eventsData.error)}`,
     });
   }
 
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
-  const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
-  const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
+  // Paginate log: fetch batches of 100 using 'to' parameter, up to 7 days back or 10 pages
+  const allLogEntries: any[] = [];
+  const sevenDaysAgo = Math.floor((Date.now() - 7 * 86400_000) / 1000);
+  let toParam = '';
+  let pagesScanned = 0;
+
+  for (let page = 0; page < 10; page++) {
+    const logUrl = `${TORN_API}/user/?selections=log${toParam}&key=${api_key}`;
+    const logRes = await fetch(logUrl);
+    const logData = await logRes.json();
+    if (logData.error || !logData.log) break;
+
+    const entries = Object.values(logData.log) as any[];
+    if (entries.length === 0) break;
+
+    allLogEntries.push(...entries);
+    pagesScanned = page + 1;
+
+    // Find oldest timestamp in this batch to paginate further back
+    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
+    if (oldestTs <= sevenDaysAgo) break;
+    if (entries.length < 100) break;
+
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
+  const logCount = allLogEntries.length;
 
   // Collect all entries
   const allEntries: { text: string; raw: string; timestamp: number; source: string }[] = [];
-  if (apiData.events) {
-    for (const [key, evt] of Object.entries(apiData.events) as any[]) {
+  if (eventsData.events) {
+    for (const [key, evt] of Object.entries(eventsData.events) as any[]) {
       allEntries.push({ text: stripHtml(evt.event || ''), raw: evt.event || '', timestamp: evt.timestamp || 0, source: 'event' });
     }
   }
-  if (apiData.log) {
-    for (const [key, entry] of Object.entries(apiData.log) as any[]) {
-      allEntries.push({ text: stripHtml(entry.log || entry.title || ''), raw: entry.log || entry.title || '', timestamp: entry.timestamp || 0, source: 'log' });
-    }
+  for (const entry of allLogEntries) {
+    const rawText = entry.log || entry.title || '';
+    allEntries.push({ text: stripHtml(rawText), raw: rawText, timestamp: entry.timestamp || 0, source: 'log' });
   }
 
   // Same matching logic as verify-payment but with configurable recipient
@@ -1275,6 +1313,7 @@ async function handleAdminCheckPayment(body: any) {
     total_entries: allEntries.length,
     events_count: evtCount,
     log_count: logCount,
+    pages_scanned: pagesScanned,
     matched_payments: matched,
     total_matched: matched.reduce((sum, m) => sum + m.amount, 0),
     money_entries: moneyEntries,

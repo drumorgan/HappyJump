@@ -665,7 +665,7 @@ document.getElementById('diag-payment-btn')?.addEventListener('click', async () 
     }
 
     const lines = [`<strong>${esc(result.player)}</strong>`];
-    lines.push(`<span style="color:#888;font-size:0.8rem">Searching for payments to: <strong>${esc(result.recipient)}</strong> | ${result.total_entries} entries (${result.events_count} events, ${result.log_count} log)</span>`);
+    lines.push(`<span style="color:#888;font-size:0.8rem">Searching for payments to: <strong>${esc(result.recipient)}</strong> | ${result.total_entries} entries (${result.events_count} events, ${result.log_count} log, ${result.pages_scanned || 1} pages)</span>`);
 
     if (result.matched_payments && result.matched_payments.length > 0) {
       lines.push('<br><span style="color:#6bff8e;font-weight:bold">Matched payments:</span>');
