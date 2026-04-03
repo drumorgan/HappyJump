@@ -1075,21 +1075,30 @@ async function handleVerifyPayment(body: any) {
     }
   }
 
+  const debugEntries: string[] = [];
   for (const entry of allEntries) {
     const rawHtml = entry.text;
     const evtText = stripHtml(rawHtml);
     const evtLower = evtText.toLowerCase();
 
+    // Collect first 5 entries for diagnostics if no match is found
+    if (debugEntries.length < 5) {
+      debugEntries.push(evtText.substring(0, 120));
+    }
+
     // Match money-send events: look for send-like verbs + "$"
     // Torn log format (sender side): "You sent $X to [PlayerName]"
+    // Also match trade events: "You and PlayerName traded..."
     const hasMoney = evtLower.includes('$');
     const hasSendVerb = evtLower.includes('sent') || evtLower.includes('send')
-      || evtLower.includes('transfer') || evtLower.includes('paid');
+      || evtLower.includes('transfer') || evtLower.includes('paid')
+      || evtLower.includes('trade') || evtLower.includes('traded');
     if (!hasMoney || !hasSendVerb) continue;
 
     // Check if the entry mentions the operator (by name in stripped text, or by ID in raw HTML)
     const mentionsOperator =
       (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
+      evtLower.includes('giro') ||
       rawHtml.includes(String(operatorTornId));
 
     if (!mentionsOperator) continue;
@@ -1109,11 +1118,16 @@ async function handleVerifyPayment(body: any) {
     const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
     const responseKeys = Object.keys(apiData).join(', ');
     const diag = `[events: ${evtCount}, log: ${logCount}, keys: ${responseKeys}]`;
+    const sampleEntries = debugEntries.length > 0
+      ? ` Recent entries: ${debugEntries.map((e, i) => `(${i + 1}) "${e}"`).join('; ')}`
+      : '';
+    console.log(`[verify-payment] No match found. ${diag}${sampleEntries}`);
     return json({
       verified: false,
       detail: allEntries.length === 0
         ? `Your Torn API returned 0 events/log entries ${diag}. This usually means your API key is missing "Log" permissions. Try creating a new key with the link on the home page.`
         : `Could not find any payment to Giro in ${allEntries.length} recent entries. If you just sent the money, wait a moment and try again.`,
+      debug_entries: debugEntries,
     });
   }
 
