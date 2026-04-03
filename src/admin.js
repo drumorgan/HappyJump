@@ -678,19 +678,36 @@ document.getElementById('diag-payment-btn')?.addEventListener('click', async () 
       lines.push(`<br><span style="color:#ff6b81;font-weight:bold">No payments to ${esc(result.recipient)} found.</span>`);
     }
 
-    if (result.money_entries && result.money_entries.length > 0) {
-      lines.push('<br><span style="color:#e8a735">All money-related entries ($ + send/trade verb):</span>');
-      for (const m of result.money_entries) {
+    if (result.money_log_entries && result.money_log_entries.length > 0) {
+      lines.push('<br><span style="color:#e8a735">Money-related log entries (structured):</span>');
+      for (const m of result.money_log_entries) {
         const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '?';
-        lines.push(`<span style="color:#888;font-size:0.8rem">[${m.source}] ${date} — ${esc(m.text)}</span>`);
+        lines.push(`<span style="color:#888;font-size:0.8rem">${date} — title: ${esc(m.title)} | data: ${esc(m.data)}</span>`);
       }
     }
 
-    if (result.sample_entries && result.sample_entries.length > 0 && (!result.matched_payments || result.matched_payments.length === 0)) {
-      lines.push('<br><span style="color:#666">Sample entries (first 10):</span>');
-      for (const s of result.sample_entries) {
-        const date = s.timestamp ? new Date(s.timestamp * 1000).toLocaleString() : '?';
-        lines.push(`<span style="color:#666;font-size:0.75rem">[${s.source}] ${date} — ${esc(s.text)}</span>`);
+    if (result.money_event_entries && result.money_event_entries.length > 0) {
+      lines.push('<br><span style="color:#e8a735">Money-related event entries (text):</span>');
+      for (const m of result.money_event_entries) {
+        const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '?';
+        lines.push(`<span style="color:#888;font-size:0.8rem">[event] ${date} — ${esc(m.text)}</span>`);
+      }
+    }
+
+    if (!result.matched_payments || result.matched_payments.length === 0) {
+      if (result.sample_log_entries && result.sample_log_entries.length > 0) {
+        lines.push('<br><span style="color:#666">Sample log entries (first 5):</span>');
+        for (const s of result.sample_log_entries) {
+          const date = s.timestamp ? new Date(s.timestamp * 1000).toLocaleString() : '?';
+          lines.push(`<span style="color:#666;font-size:0.75rem">${date} — title: ${esc(s.title)}${s.data ? ' | data: ' + esc(s.data) : ''}</span>`);
+        }
+      }
+      if (result.sample_entries && result.sample_entries.length > 0) {
+        lines.push('<br><span style="color:#666">Sample event entries (first 5):</span>');
+        for (const s of result.sample_entries) {
+          const date = s.timestamp ? new Date(s.timestamp * 1000).toLocaleString() : '?';
+          lines.push(`<span style="color:#666;font-size:0.75rem">[event] ${date} — ${esc(s.text)}</span>`);
+        }
       }
     }
 

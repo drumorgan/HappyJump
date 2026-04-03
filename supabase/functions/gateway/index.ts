@@ -1279,11 +1279,49 @@ async function handleAdminCheckPayment(body: any) {
     allEntries.push({ text: stripHtml(rawText), raw: rawText, timestamp: entry.timestamp || 0, source: 'log' });
   }
 
-  // Same matching logic as verify-payment but with configurable recipient
+  // 1. Check raw log entries by structured data (most reliable for money sends)
   const matched: { text: string; amount: number; timestamp: number; source: string }[] = [];
-  const moneyEntries: { text: string; timestamp: number; source: string }[] = [];
+  const moneyLogEntries: { title: string; data: any; timestamp: number }[] = [];
 
+  for (const entry of allLogEntries) {
+    const title = String(entry.title || entry.log || '').toLowerCase();
+    const data = entry.data || {};
+
+    // Detect money-related log entries by title keywords or data fields
+    const hasMoney = data.money || data.amount || data.cost || data.value;
+    const isMoneySend = title.includes('send') || title.includes('sent') || title.includes('money')
+      || title.includes('trade') || title.includes('transfer') || title.includes('pay');
+
+    if (hasMoney || isMoneySend) {
+      moneyLogEntries.push({ title: entry.title || entry.log || '', data, timestamp: entry.timestamp || 0 });
+
+      // Check if recipient matches
+      const dataStr = JSON.stringify(data).toLowerCase();
+      const titleLower = title;
+      const mentionsRecipient =
+        dataStr.includes(recipientName.toLowerCase()) ||
+        titleLower.includes(recipientName.toLowerCase()) ||
+        (recipientName.toLowerCase() === 'girovagabondo' && (dataStr.includes('giro') || titleLower.includes('giro'))) ||
+        dataStr.includes(String(operatorTornId));
+
+      if (mentionsRecipient) {
+        const amount = Number(data.money || data.amount || data.cost || data.value || 0);
+        if (amount > 0) {
+          matched.push({
+            text: `${entry.title || ''} ${JSON.stringify(data)}`.substring(0, 200),
+            amount,
+            timestamp: entry.timestamp || 0,
+            source: 'log',
+          });
+        }
+      }
+    }
+  }
+
+  // 2. Also check event text (plain text format: "You sent $X to PlayerName")
+  const moneyEventEntries: { text: string; timestamp: number; source: string }[] = [];
   for (const entry of allEntries) {
+    if (entry.source !== 'event') continue;
     const evtLower = entry.text.toLowerCase();
 
     const hasMoney = evtLower.includes('$');
@@ -1293,10 +1331,8 @@ async function handleAdminCheckPayment(body: any) {
 
     if (!hasMoney || !hasSendVerb) continue;
 
-    // Track all money-related entries
-    moneyEntries.push({ text: entry.text.substring(0, 200), timestamp: entry.timestamp, source: entry.source });
+    moneyEventEntries.push({ text: entry.text.substring(0, 200), timestamp: entry.timestamp, source: 'event' });
 
-    // Check if mentions the recipient (by name or operator ID in raw HTML)
     const mentionsRecipient =
       evtLower.includes(recipientName.toLowerCase()) ||
       (recipientName.toLowerCase() === 'girovagabondo' && evtLower.includes('giro')) ||
@@ -1308,8 +1344,15 @@ async function handleAdminCheckPayment(body: any) {
     if (!amountMatch) continue;
 
     const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
-    matched.push({ text: entry.text.substring(0, 200), amount: eventAmount, timestamp: entry.timestamp, source: entry.source });
+    matched.push({ text: entry.text.substring(0, 200), amount: eventAmount, timestamp: entry.timestamp, source: 'event' });
   }
+
+  // Sample log entries (to debug structured format)
+  const sampleLogEntries = allLogEntries.slice(0, 5).map((e: any) => ({
+    title: String(e.title || e.log || '').substring(0, 100),
+    data: e.data ? JSON.stringify(e.data).substring(0, 200) : null,
+    timestamp: e.timestamp || 0,
+  }));
 
   return json({
     player: `${playerName} [${tornId}]`,
@@ -1320,8 +1363,10 @@ async function handleAdminCheckPayment(body: any) {
     pages_scanned: pagesScanned,
     matched_payments: matched,
     total_matched: matched.reduce((sum, m) => sum + m.amount, 0),
-    money_entries: moneyEntries,
-    sample_entries: allEntries.slice(0, 10).map(e => ({ text: e.text.substring(0, 150), source: e.source, timestamp: e.timestamp })),
+    money_event_entries: moneyEventEntries,
+    money_log_entries: moneyLogEntries.slice(0, 20).map(e => ({ title: e.title, data: JSON.stringify(e.data).substring(0, 200), timestamp: e.timestamp })),
+    sample_log_entries: sampleLogEntries,
+    sample_entries: allEntries.filter(e => e.source === 'event').slice(0, 5).map(e => ({ text: e.text.substring(0, 150), source: e.source, timestamp: e.timestamp })),
   });
 }
 
