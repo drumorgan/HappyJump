@@ -806,7 +806,7 @@ async function handleReportOd(body: any) {
     allEntries.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
     for (const entry of allEntries) {
       const entryLower = entry.text.toLowerCase();
-      if (entryLower.includes('ecstasy') && entryLower.includes('happiness') && !entryLower.includes('overdos')) {
+      if (entryLower.includes('ecstasy') && entryLower.includes('happ') && !entryLower.includes('overdos')) {
         ecstasyUsedTimestamp = entry.timestamp;
       }
     }
@@ -968,7 +968,7 @@ async function handleCheckEcstasyUsage(body: any) {
     }
   }
   const ecstasyUsed = allEntries.some((text) =>
-    text.includes('ecstasy') && text.includes('happiness') && !text.includes('overdos')
+    text.includes('ecstasy') && text.includes('happ') && !text.includes('overdos')
   );
 
   if (ecstasyUsed) {
@@ -1408,7 +1408,7 @@ async function handleAdminCheckEcstasy(body: any) {
     if (entryLower.includes('ecstasy')) {
       debugEcstasyMentions.push(`[${entry.source}:${entry.timestamp}] ${entry.text}`);
     }
-    if (entryLower.includes('ecstasy') && entryLower.includes('happiness') && !entryLower.includes('overdos')) {
+    if (entryLower.includes('ecstasy') && entryLower.includes('happ') && !entryLower.includes('overdos')) {
       ecstasyEvents.push({ type: 'used', timestamp: entry.timestamp, text: entry.text, source: entry.source });
     } else if (entryLower.includes('overdos') && entryLower.includes('ecstasy')) {
       ecstasyEvents.push({ type: 'od', timestamp: entry.timestamp, text: entry.text, source: entry.source });
