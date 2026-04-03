@@ -694,7 +694,12 @@ async function handleVerifyPayment(e) {
       renderActiveDeal(history.transactions);
       showToast(result.detail, 'error');
     } else {
-      statusEl.textContent = result.detail;
+      let msg = result.detail;
+      if (result.debug_entries && result.debug_entries.length > 0) {
+        msg += '\n\nRecent log entries found:\n' + result.debug_entries.map((e, i) => `${i + 1}. ${e}`).join('\n');
+      }
+      statusEl.textContent = msg;
+      statusEl.style.whiteSpace = 'pre-wrap';
       statusEl.className = 'od-report-error';
       btn.disabled = false;
       btn.textContent = btn.textContent; // preserve current label
