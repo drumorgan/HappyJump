@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess, adminCheckEcstasy } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess, adminCheckEcstasy, adminCheckPayment } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -635,6 +635,72 @@ document.getElementById('diag-ecstasy-btn')?.addEventListener('click', async () 
 
   btn.disabled = false;
   btn.textContent = 'Check Ecstasy Usage';
+});
+
+// Check Payment diagnostics — scans API key owner's events/log for outgoing payments
+document.getElementById('diag-payment-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const recipientInput = document.getElementById('diag-recipient');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-payment-btn');
+  const apiKey = keyInput.value.trim();
+  const recipient = recipientInput?.value.trim() || null;
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter an API key first.</span>';
+    return;
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Checking...';
+  resultsEl.textContent = '';
+
+  try {
+    const result = await adminCheckPayment(apiKey, recipient);
+    if (result.error) {
+      resultsEl.innerHTML = `<span style="color:#ff6b81">${esc(result.error)}</span>`;
+      btn.disabled = false;
+      btn.textContent = 'Check Payments';
+      return;
+    }
+
+    const lines = [`<strong>${esc(result.player)}</strong>`];
+    lines.push(`<span style="color:#888;font-size:0.8rem">Searching for payments to: <strong>${esc(result.recipient)}</strong> | ${result.total_entries} entries (${result.events_count} events, ${result.log_count} log)</span>`);
+
+    if (result.matched_payments && result.matched_payments.length > 0) {
+      lines.push('<br><span style="color:#6bff8e;font-weight:bold">Matched payments:</span>');
+      for (const m of result.matched_payments) {
+        const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '?';
+        lines.push(`<span style="color:#6bff8e">&#10003;</span> <strong>$${Number(m.amount).toLocaleString()}</strong> — ${date} [${m.source}] — ${esc(m.text)}`);
+      }
+      lines.push(`<br><span style="color:#6bff8e;font-weight:bold">Total: $${Number(result.total_matched).toLocaleString()}</span>`);
+    } else {
+      lines.push(`<br><span style="color:#ff6b81;font-weight:bold">No payments to ${esc(result.recipient)} found.</span>`);
+    }
+
+    if (result.money_entries && result.money_entries.length > 0) {
+      lines.push('<br><span style="color:#e8a735">All money-related entries ($ + send/trade verb):</span>');
+      for (const m of result.money_entries) {
+        const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '?';
+        lines.push(`<span style="color:#888;font-size:0.8rem">[${m.source}] ${date} — ${esc(m.text)}</span>`);
+      }
+    }
+
+    if (result.sample_entries && result.sample_entries.length > 0 && (!result.matched_payments || result.matched_payments.length === 0)) {
+      lines.push('<br><span style="color:#666">Sample entries (first 10):</span>');
+      for (const s of result.sample_entries) {
+        const date = s.timestamp ? new Date(s.timestamp * 1000).toLocaleString() : '?';
+        lines.push(`<span style="color:#666;font-size:0.75rem">[${s.source}] ${date} — ${esc(s.text)}</span>`);
+      }
+    }
+
+    resultsEl.innerHTML = lines.join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Check failed: ${esc(e.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Check Payments';
 });
 
 // Config panel toggle

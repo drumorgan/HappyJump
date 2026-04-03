@@ -1191,7 +1191,7 @@ async function handleVerifyPayment(body: any) {
 }
 
 async function handleAdminCheckPayment(body: any) {
-  const { api_key } = body;
+  const { api_key, recipient } = body;
   if (!api_key) return json({ error: 'Missing api_key' }, 400);
 
   // Validate API key and get player identity
@@ -1203,10 +1203,12 @@ async function handleAdminCheckPayment(body: any) {
 
   const playerName = identData.name || 'Unknown';
   const tornId = String(identData.player_id);
-  const operatorName = 'GiroVagabondo';
+
+  // Default recipient is GiroVagabondo; can override for testing
+  const recipientName = recipient || 'GiroVagabondo';
   const operatorTornId = '3667375';
 
-  // Fetch events + log (no from-filter, scan all recent)
+  // Fetch events + log
   const apiUrl = `${TORN_API}/user/?selections=events,log&key=${api_key}`;
   const apiRes = await fetch(apiUrl);
   const apiData = await apiRes.json();
@@ -1222,7 +1224,7 @@ async function handleAdminCheckPayment(body: any) {
   const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
   const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
 
-  // Collect all entries with timestamps
+  // Collect all entries
   const allEntries: { text: string; raw: string; timestamp: number; source: string }[] = [];
   if (apiData.events) {
     for (const [key, evt] of Object.entries(apiData.events) as any[]) {
@@ -1235,7 +1237,7 @@ async function handleAdminCheckPayment(body: any) {
     }
   }
 
-  // Run the same matching logic as verify-payment
+  // Same matching logic as verify-payment but with configurable recipient
   const matched: { text: string; amount: number; timestamp: number; source: string }[] = [];
   const moneyEntries: { text: string; timestamp: number; source: string }[] = [];
 
@@ -1249,15 +1251,16 @@ async function handleAdminCheckPayment(body: any) {
 
     if (!hasMoney || !hasSendVerb) continue;
 
-    // Track all money-related entries for debug
-    moneyEntries.push({ text: entry.text.substring(0, 150), timestamp: entry.timestamp, source: entry.source });
+    // Track all money-related entries
+    moneyEntries.push({ text: entry.text.substring(0, 200), timestamp: entry.timestamp, source: entry.source });
 
-    const mentionsOperator =
-      evtLower.includes(operatorName.toLowerCase()) ||
-      evtLower.includes('giro') ||
+    // Check if mentions the recipient (by name or operator ID in raw HTML)
+    const mentionsRecipient =
+      evtLower.includes(recipientName.toLowerCase()) ||
+      (recipientName.toLowerCase() === 'girovagabondo' && evtLower.includes('giro')) ||
       entry.raw.includes(String(operatorTornId));
 
-    if (!mentionsOperator) continue;
+    if (!mentionsRecipient) continue;
 
     const amountMatch = entry.text.match(/\$([0-9,]+)/);
     if (!amountMatch) continue;
@@ -1268,13 +1271,14 @@ async function handleAdminCheckPayment(body: any) {
 
   return json({
     player: `${playerName} [${tornId}]`,
+    recipient: recipientName,
     total_entries: allEntries.length,
     events_count: evtCount,
     log_count: logCount,
     matched_payments: matched,
     total_matched: matched.reduce((sum, m) => sum + m.amount, 0),
     money_entries: moneyEntries,
-    sample_entries: allEntries.slice(0, 5).map(e => ({ text: e.text.substring(0, 120), source: e.source, timestamp: e.timestamp })),
+    sample_entries: allEntries.slice(0, 10).map(e => ({ text: e.text.substring(0, 150), source: e.source, timestamp: e.timestamp })),
   });
 }
 
