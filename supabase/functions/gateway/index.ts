@@ -1190,6 +1190,94 @@ async function handleVerifyPayment(body: any) {
   });
 }
 
+async function handleAdminCheckPayment(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  // Validate API key and get player identity
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  const playerName = identData.name || 'Unknown';
+  const tornId = String(identData.player_id);
+  const operatorName = 'GiroVagabondo';
+  const operatorTornId = '3667375';
+
+  // Fetch events + log (no from-filter, scan all recent)
+  const apiUrl = `${TORN_API}/user/?selections=events,log&key=${api_key}`;
+  const apiRes = await fetch(apiUrl);
+  const apiData = await apiRes.json();
+
+  if (apiData.error) {
+    return json({
+      player: `${playerName} [${tornId}]`,
+      error: `Torn API error: ${apiData.error.error || JSON.stringify(apiData.error)}`,
+    });
+  }
+
+  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const evtCount = apiData.events ? Object.keys(apiData.events).length : 0;
+  const logCount = apiData.log ? Object.keys(apiData.log).length : 0;
+
+  // Collect all entries with timestamps
+  const allEntries: { text: string; raw: string; timestamp: number; source: string }[] = [];
+  if (apiData.events) {
+    for (const [key, evt] of Object.entries(apiData.events) as any[]) {
+      allEntries.push({ text: stripHtml(evt.event || ''), raw: evt.event || '', timestamp: evt.timestamp || 0, source: 'event' });
+    }
+  }
+  if (apiData.log) {
+    for (const [key, entry] of Object.entries(apiData.log) as any[]) {
+      allEntries.push({ text: stripHtml(entry.log || entry.title || ''), raw: entry.log || entry.title || '', timestamp: entry.timestamp || 0, source: 'log' });
+    }
+  }
+
+  // Run the same matching logic as verify-payment
+  const matched: { text: string; amount: number; timestamp: number; source: string }[] = [];
+  const moneyEntries: { text: string; timestamp: number; source: string }[] = [];
+
+  for (const entry of allEntries) {
+    const evtLower = entry.text.toLowerCase();
+
+    const hasMoney = evtLower.includes('$');
+    const hasSendVerb = evtLower.includes('sent') || evtLower.includes('send')
+      || evtLower.includes('transfer') || evtLower.includes('paid')
+      || evtLower.includes('trade') || evtLower.includes('traded');
+
+    if (!hasMoney || !hasSendVerb) continue;
+
+    // Track all money-related entries for debug
+    moneyEntries.push({ text: entry.text.substring(0, 150), timestamp: entry.timestamp, source: entry.source });
+
+    const mentionsOperator =
+      evtLower.includes(operatorName.toLowerCase()) ||
+      evtLower.includes('giro') ||
+      entry.raw.includes(String(operatorTornId));
+
+    if (!mentionsOperator) continue;
+
+    const amountMatch = entry.text.match(/\$([0-9,]+)/);
+    if (!amountMatch) continue;
+
+    const eventAmount = Number(amountMatch[1].replace(/,/g, ''));
+    matched.push({ text: entry.text.substring(0, 200), amount: eventAmount, timestamp: entry.timestamp, source: entry.source });
+  }
+
+  return json({
+    player: `${playerName} [${tornId}]`,
+    total_entries: allEntries.length,
+    events_count: evtCount,
+    log_count: logCount,
+    matched_payments: matched,
+    total_matched: matched.reduce((sum, m) => sum + m.amount, 0),
+    money_entries: moneyEntries,
+    sample_entries: allEntries.slice(0, 5).map(e => ({ text: e.text.substring(0, 120), source: e.source, timestamp: e.timestamp })),
+  });
+}
+
 async function handleAdminSyncAllClients(req: Request) {
   const user = await requireAuth(req);
   if (!user) return json({ error: 'Not authenticated' }, 401);
@@ -1501,6 +1589,8 @@ serve(async (req) => {
         return await handleTestApiAccess(body);
       case 'admin-check-ecstasy':
         return await handleAdminCheckEcstasy(body);
+      case 'admin-check-payment':
+        return await handleAdminCheckPayment(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
