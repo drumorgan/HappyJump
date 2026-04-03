@@ -621,8 +621,7 @@ document.getElementById('diag-ecstasy-btn')?.addEventListener('click', async () 
     // Debug info
     if (result.debug) {
       const d = result.debug;
-      lines.push(`<br><span style="color:#666;font-size:0.8rem">DEBUG: ${d.total_combined} total (${d.events_count} events, ${d.log_count} log) from ${d.from_date}</span>`);
-      lines.push(`<span style="color:#666;font-size:0.75rem">Events API keys: ${d.api_events_keys} | Log API keys: ${d.api_log_keys}</span>`);
+      lines.push(`<br><span style="color:#666;font-size:0.8rem">DEBUG: ${d.total_combined} total (${d.events_count} events, ${d.log_count} log, ${d.log_pages_scanned} pages scanned)</span>`);
       lines.push(`<span style="color:#666;font-size:0.75rem">Ecstasy mentions: ${d.ecstasy_mentions?.length > 0 ? d.ecstasy_mentions.join(', ') : 'none'}</span>`);
       if (d.sample_log_entry) {
         lines.push(`<span style="color:#666;font-size:0.75rem">Sample log: ${esc(JSON.stringify(d.sample_log_entry).slice(0, 500))}</span>`);

@@ -1353,27 +1353,40 @@ async function handleAdminCheckEcstasy(body: any) {
   const playerName = identData.name || tornId;
   const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
 
-  // Fetch events and log SEPARATELY.
-  // Don't use 'from' — it returns oldest-first, and active players overflow the 100 limit.
-  // Without 'from', Torn API returns the most recent 100 entries.
-  const [eventsRes, logRes] = await Promise.all([
-    fetch(`${TORN_API}/user/?selections=events&limit=1000&key=${api_key}`),
-    fetch(`${TORN_API}/user/?selections=log&limit=1000&key=${api_key}`),
-  ]);
-  const fromTs = 0; // kept for debug output compatibility
-  const [eventsData, logData] = await Promise.all([eventsRes.json(), logRes.json()]);
+  // Fetch events (single call) and log (paginated — active players have 100s of market entries).
+  const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
+  const eventsData = await eventsRes.json();
+
+  // Paginate log: fetch batches of 100 using 'to' parameter, up to 7 days back or 10 pages
+  const allLogEntries: any[] = [];
+  const sevenDaysAgo = Math.floor((Date.now() - 7 * 86400_000) / 1000);
+  let toParam = '';
+  let sampleLogEntry: any = null;
+  let pagesScanned = 0;
+
+  for (let page = 0; page < 10; page++) {
+    const logUrl = `${TORN_API}/user/?selections=log${toParam}&key=${api_key}`;
+    const logRes = await fetch(logUrl);
+    const logData = await logRes.json();
+    if (logData.error || !logData.log) break;
+
+    const entries = Object.values(logData.log) as any[];
+    if (entries.length === 0) break;
+
+    if (page === 0 && entries.length > 0) sampleLogEntry = entries[0];
+    allLogEntries.push(...entries);
+    pagesScanned = page + 1;
+
+    // Find oldest timestamp in this batch to paginate further back
+    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
+    if (oldestTs <= sevenDaysAgo) break; // gone back far enough
+    if (entries.length < 100) break; // no more pages
+
+    toParam = `&to=${oldestTs - 1}`; // next page: before this batch's oldest
+  }
 
   const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
-  const logCount = logData.log ? Object.keys(logData.log).length : 0;
-  const apiEventsKeys = Object.keys(eventsData).join(',');
-  const apiLogKeys = Object.keys(logData).join(',');
-
-  // Grab first log entry raw for debugging structure
-  let sampleLogEntry: any = null;
-  if (logData.log) {
-    const firstKey = Object.keys(logData.log)[0];
-    if (firstKey) sampleLogEntry = logData.log[firstKey];
-  }
+  const logCount = allLogEntries.length;
 
   // Combine events and log entries into one list
   const allEntries: { timestamp: number; text: string; source: string }[] = [];
@@ -1382,12 +1395,9 @@ async function handleAdminCheckEcstasy(body: any) {
       allEntries.push({ timestamp: evt.timestamp, text: stripHtml(evt.event || ''), source: 'event' });
     }
   }
-  if (logData.log) {
-    for (const entry of Object.values(logData.log) as any[]) {
-      // Log entries may have: title (string), log (number = type ID), data (object with details)
-      const textParts = [entry.title || '', entry.data ? JSON.stringify(entry.data) : ''];
-      allEntries.push({ timestamp: entry.timestamp, text: textParts.join(' '), source: 'log' });
-    }
+  for (const entry of allLogEntries) {
+    const textParts = [entry.title || '', entry.data ? JSON.stringify(entry.data) : ''];
+    allEntries.push({ timestamp: entry.timestamp, text: textParts.join(' '), source: 'log' });
   }
 
   const ecstasyEvents: { type: string; timestamp: number; text: string; source: string }[] = [];
@@ -1417,11 +1427,8 @@ async function handleAdminCheckEcstasy(body: any) {
       total_combined: allEntries.length,
       events_count: evtCount,
       log_count: logCount,
-      api_events_keys: apiEventsKeys,
-      api_log_keys: apiLogKeys,
+      log_pages_scanned: pagesScanned,
       sample_log_entry: sampleLogEntry,
-      from_timestamp: fromTs,
-      from_date: new Date(fromTs * 1000).toISOString(),
       ecstasy_mentions: debugEcstasyMentions,
     },
   });
