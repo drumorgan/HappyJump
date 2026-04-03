@@ -758,7 +758,7 @@ async function handleReportOd(body: any) {
   if (txn.status !== 'purchased') return json({ error: 'Transaction is not in active insurance window' }, 400);
 
   // Strip HTML tags helper
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
 
   // Verify OD via events log — works for both Xanax (hospitalizes) and Ecstasy (does NOT hospitalize).
   // We always use the events log so we can capture the event timestamp for replay prevention.
@@ -944,7 +944,7 @@ async function handleCheckEcstasyUsage(body: any) {
   if (txn.status !== 'purchased') return json({ used: false });
 
   // Fetch events AND log since purchase — drug usage appears in log, not events
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
   const eventsUrl = fromTs
@@ -1047,7 +1047,7 @@ async function handleVerifyPayment(body: any) {
     console.log(`[verify-payment] 0 entries with from=${fromTs}, retrying without filter`);
   }
 
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
   const expectedAmount = Number(txn.suggested_price);
   const previouslyPaid = Number(txn.amount_paid || 0);
   let totalPaid = 0;
@@ -1351,7 +1351,7 @@ async function handleAdminCheckEcstasy(body: any) {
 
   const tornId = String(identData.player_id);
   const playerName = identData.name || tornId;
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
 
   // Fetch events and log SEPARATELY — combined request may only return one type.
   const fromTs = Math.floor((Date.now() - 14 * 86400_000) / 1000);
@@ -1382,7 +1382,9 @@ async function handleAdminCheckEcstasy(body: any) {
   }
   if (logData.log) {
     for (const entry of Object.values(logData.log) as any[]) {
-      allEntries.push({ timestamp: entry.timestamp, text: stripHtml(entry.log || entry.title || ''), source: 'log' });
+      // Log entries may have: title (string), log (number = type ID), data (object with details)
+      const textParts = [entry.title || '', entry.data ? JSON.stringify(entry.data) : ''];
+      allEntries.push({ timestamp: entry.timestamp, text: textParts.join(' '), source: 'log' });
     }
   }
 
