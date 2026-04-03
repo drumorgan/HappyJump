@@ -1363,6 +1363,16 @@ async function handleAdminCheckEcstasy(body: any) {
     return json({ error: `Torn API: ${eventsData.error.error || 'Unknown error'}. Key may need Events+Log permissions.` }, 400);
   }
 
+  const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
+  const logCount = eventsData.log ? Object.keys(eventsData.log).length : 0;
+
+  // Grab first log entry raw for debugging structure
+  let sampleLogEntry: any = null;
+  if (eventsData.log) {
+    const firstKey = Object.keys(eventsData.log)[0];
+    if (firstKey) sampleLogEntry = eventsData.log[firstKey];
+  }
+
   // Combine events and log entries into one list
   const allEntries: { timestamp: number; text: string; source: string }[] = [];
   if (eventsData.events) {
@@ -1400,7 +1410,11 @@ async function handleAdminCheckEcstasy(body: any) {
     has_usage: ecstasyEvents.some((e) => e.type === 'used'),
     has_od: ecstasyEvents.some((e) => e.type === 'od'),
     debug: {
-      total_events: allEntries.length,
+      total_combined: allEntries.length,
+      events_count: evtCount,
+      log_count: logCount,
+      api_keys: Object.keys(eventsData).join(','),
+      sample_log_entry: sampleLogEntry,
       from_timestamp: fromTs,
       from_date: new Date(fromTs * 1000).toISOString(),
       ecstasy_mentions: debugEcstasyMentions,
