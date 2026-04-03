@@ -1222,7 +1222,7 @@ async function handleAdminCheckPayment(body: any) {
   const recipientName = recipient || 'GiroVagabondo';
   const operatorTornId = '3667375';
 
-  const stripHtml = (s: string) => s.replace(/<[^>]*>/g, '');
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
 
   // Fetch events (single call)
   const eventsRes = await fetch(`${TORN_API}/user/?selections=events&key=${api_key}`);
