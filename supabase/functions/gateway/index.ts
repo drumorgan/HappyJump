@@ -1089,32 +1089,49 @@ async function handleVerifyPayment(body: any) {
       allEntries.push({ text: evt.event || '' });
     }
   }
+  // 1. Check structured log data for "Money send" to operator (most reliable)
+  for (const entry of allLogEntries) {
+    const title = String(entry.title || entry.log || '').toLowerCase();
+    const data = entry.data || {};
+    if ((title.includes('money send') || title.includes('money transfer')) &&
+        String(data.receiver || '') === operatorTornId &&
+        Number(data.money || 0) > 0) {
+      const amount = Number(data.money);
+      totalPaid += amount;
+      matchedEvents.push(`${entry.title} — $${amount.toLocaleString()} (log structured data)`);
+    }
+  }
+
+  // 2. Also check event text for plain-text matches (fallback)
   for (const entry of allLogEntries) {
     const titlePart = entry.log || entry.title || '';
     const dataPart = entry.data ? ' ' + JSON.stringify(entry.data) : '';
     allEntries.push({ text: titlePart + dataPart });
   }
 
+  const debugEntries: string[] = [];
   for (const entry of allEntries) {
     const rawHtml = entry.text;
     const evtText = stripHtml(rawHtml);
     const evtLower = evtText.toLowerCase();
 
-    // Match money-send events: look for send-like verbs + "$"
-    // Torn log format (sender side): "You sent $X to [PlayerName]"
+    if (debugEntries.length < 5) {
+      debugEntries.push(evtText.substring(0, 120));
+    }
+
     const hasMoney = evtLower.includes('$');
     const hasSendVerb = evtLower.includes('sent') || evtLower.includes('send')
-      || evtLower.includes('transfer') || evtLower.includes('paid');
+      || evtLower.includes('transfer') || evtLower.includes('paid')
+      || evtLower.includes('trade') || evtLower.includes('traded');
     if (!hasMoney || !hasSendVerb) continue;
 
-    // Check if the entry mentions the operator (by name in stripped text, or by ID in raw HTML)
     const mentionsOperator =
       (operatorName && evtLower.includes(operatorName.toLowerCase())) ||
+      evtLower.includes('giro') ||
       rawHtml.includes(String(operatorTornId));
 
     if (!mentionsOperator) continue;
 
-    // Extract dollar amount from text — format: "$1,234,567" or "$1234567"
     const amountMatch = evtText.match(/\$([0-9,]+)/);
     if (!amountMatch) continue;
 
@@ -1221,8 +1238,11 @@ async function handleAdminCheckPayment(body: any) {
   const tornId = String(identData.player_id);
 
   // Default recipient is GiroVagabondo; can override for testing
-  const recipientName = recipient || 'GiroVagabondo';
-  const operatorTornId = '3667375';
+  // Accept either a name or a Torn ID
+  const recipientInput = recipient || 'GiroVagabondo';
+  const isRecipientId = /^\d+$/.test(recipientInput);
+  const recipientName = isRecipientId ? null : recipientInput;
+  const recipientTornId = isRecipientId ? recipientInput : '3667375'; // default to operator ID
 
   const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
 
@@ -1295,14 +1315,12 @@ async function handleAdminCheckPayment(body: any) {
     if (hasMoney || isMoneySend) {
       moneyLogEntries.push({ title: entry.title || entry.log || '', data, timestamp: entry.timestamp || 0 });
 
-      // Check if recipient matches
-      const dataStr = JSON.stringify(data).toLowerCase();
-      const titleLower = title;
+      // Check if recipient matches — by receiver ID in data, or name in text
+      const receiverId = String(data.receiver || data.player_id || '');
       const mentionsRecipient =
-        dataStr.includes(recipientName.toLowerCase()) ||
-        titleLower.includes(recipientName.toLowerCase()) ||
-        (recipientName.toLowerCase() === 'girovagabondo' && (dataStr.includes('giro') || titleLower.includes('giro'))) ||
-        dataStr.includes(String(operatorTornId));
+        (receiverId && receiverId === recipientTornId) ||
+        (recipientName && JSON.stringify(data).toLowerCase().includes(recipientName.toLowerCase())) ||
+        (recipientName && title.includes(recipientName.toLowerCase()));
 
       if (mentionsRecipient) {
         const amount = Number(data.money || data.amount || data.cost || data.value || 0);
@@ -1334,9 +1352,9 @@ async function handleAdminCheckPayment(body: any) {
     moneyEventEntries.push({ text: entry.text.substring(0, 200), timestamp: entry.timestamp, source: 'event' });
 
     const mentionsRecipient =
-      evtLower.includes(recipientName.toLowerCase()) ||
-      (recipientName.toLowerCase() === 'girovagabondo' && evtLower.includes('giro')) ||
-      entry.raw.includes(String(operatorTornId));
+      (recipientName && evtLower.includes(recipientName.toLowerCase())) ||
+      (recipientName && recipientName.toLowerCase() === 'girovagabondo' && evtLower.includes('giro')) ||
+      entry.raw.includes(recipientTornId);
 
     if (!mentionsRecipient) continue;
 
@@ -1356,7 +1374,7 @@ async function handleAdminCheckPayment(body: any) {
 
   return json({
     player: `${playerName} [${tornId}]`,
-    recipient: recipientName,
+    recipient: recipientName || `ID:${recipientTornId}`,
     total_entries: allEntries.length,
     events_count: evtCount,
     log_count: logCount,
