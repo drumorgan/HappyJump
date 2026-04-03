@@ -620,7 +620,11 @@ document.getElementById('diag-ecstasy-btn')?.addEventListener('click', async () 
 
     // Debug info
     if (result.debug) {
-      lines.push(`<br><span style="color:#666;font-size:0.8rem">DEBUG: ${result.debug.total_events} events from ${result.debug.from_date} | ecstasy mentions: ${result.debug.ecstasy_mentions.length > 0 ? result.debug.ecstasy_mentions.join(', ') : 'none'}</span>`);
+      const d = result.debug;
+      lines.push(`<br><span style="color:#666;font-size:0.8rem">DEBUG: ${d.total_combined} total (${d.events_count} events, ${d.log_count} log) from ${d.from_date} | api keys: ${d.api_keys} | ecstasy mentions: ${d.ecstasy_mentions?.length > 0 ? d.ecstasy_mentions.join(', ') : 'none'}</span>`);
+      if (d.sample_log_entry) {
+        lines.push(`<span style="color:#666;font-size:0.75rem">Sample log: ${esc(JSON.stringify(d.sample_log_entry).slice(0, 300))}</span>`);
+      }
     }
 
     resultsEl.innerHTML = lines.join('<br>');
