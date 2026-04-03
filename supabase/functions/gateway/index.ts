@@ -199,6 +199,60 @@ async function adjustReserve(supabase: any, amount: number) {
   return data; // returns new current_reserve
 }
 
+// ── Ecstasy usage detection (shared helper) ─────────────────────────
+// Paginates through Torn API log entries to find Ecstasy usage.
+// Returns the timestamp of the earliest Ecstasy use, or null if none found.
+// Uses structured data (item ID 197) as primary check, text matching as fallback.
+
+const ECSTASY_ITEM_ID = 197;
+
+async function findEcstasyUsageInLog(
+  apiKey: string,
+  sinceTimestamp?: number, // only find usage after this time (e.g. purchased_at)
+  maxPages = 10,
+): Promise<{ timestamp: number; detail: string } | null> {
+  let toParam = '';
+  let earliestUsage: { timestamp: number; detail: string } | null = null;
+  const cutoff = sinceTimestamp || 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) break;
+
+    const entries = Object.values(data.log) as any[];
+    if (entries.length === 0) break;
+
+    for (const entry of entries) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff) continue; // before our window
+
+      // Primary: structured data check (item ID 197 = Ecstasy)
+      if (entry.data?.item === ECSTASY_ITEM_ID && entry.title?.toLowerCase().includes('item use')) {
+        earliestUsage = { timestamp: ts, detail: `Ecstasy used (item ${ECSTASY_ITEM_ID}) at ${new Date(ts * 1000).toISOString()}` };
+        continue; // keep scanning for earlier usage
+      }
+
+      // Fallback: text matching
+      const text = [entry.title || '', entry.data ? JSON.stringify(entry.data) : ''].join(' ').toLowerCase();
+      if (text.includes('ecstasy') && text.includes('happ') && !text.includes('overdos')) {
+        if (!earliestUsage || ts < earliestUsage.timestamp) {
+          earliestUsage = { timestamp: ts, detail: `Ecstasy used (text match) at ${new Date(ts * 1000).toISOString()}` };
+        }
+      }
+    }
+
+    // Find oldest timestamp in this batch to paginate further back
+    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) break; // gone back past our window
+    if (entries.length < 100) break; // no more pages
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  return earliestUsage;
+}
+
 // ── Auto-close expired transactions ──────────────────────────────────
 
 let lastAutoCloseRun = 0;
@@ -763,58 +817,35 @@ async function handleReportOd(body: any) {
   // Verify OD via events log — works for both Xanax (hospitalizes) and Ecstasy (does NOT hospitalize).
   // We always use the events log so we can capture the event timestamp for replay prevention.
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
-  // Fetch events (for OD detection) and log (for drug usage detection).
-  // Drug USAGE appears in log, ODs appear in events.
+  // 1. Check events for OD (ODs appear in events endpoint)
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
   const eventsUrl = fromTs
-    ? `${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=events,log&key=${api_key}`;
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
   const eventsRes = await fetch(eventsUrl);
   const eventsData = await eventsRes.json();
 
   let odDrug: string | null = null;
   let odEventTimestamp: number | null = null;
-  let ecstasyUsedTimestamp: number | null = null; // earliest successful Ecstasy use
 
-  if (!eventsData.error) {
-    // Check events for ODs
-    if (eventsData.events) {
-      const events = Object.values(eventsData.events) as any[];
-      events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
-      for (const evt of events) {
-        const evtText = stripHtml(evt.event || '').toLowerCase();
-        if (evtText.includes('overdos')) {
-          if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
-          if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
-        }
-      }
-    }
-
-    // Check both events AND log for successful Ecstasy usage
-    const allEntries: any[] = [];
-    if (eventsData.events) {
-      for (const evt of Object.values(eventsData.events) as any[]) {
-        allEntries.push({ timestamp: evt.timestamp, text: stripHtml(evt.event || '') });
-      }
-    }
-    if (eventsData.log) {
-      for (const entry of Object.values(eventsData.log) as any[]) {
-        allEntries.push({ timestamp: entry.timestamp, text: stripHtml(entry.log || entry.title || '') });
-      }
-    }
-    // Sort descending so we find earliest by overwriting
-    allEntries.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
-    for (const entry of allEntries) {
-      const entryLower = entry.text.toLowerCase();
-      if (entryLower.includes('ecstasy') && entryLower.includes('happ') && !entryLower.includes('overdos')) {
-        ecstasyUsedTimestamp = entry.timestamp;
+  if (!eventsData.error && eventsData.events) {
+    const events = Object.values(eventsData.events) as any[];
+    events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
+    for (const evt of events) {
+      const evtText = stripHtml(evt.event || '').toLowerCase();
+      if (evtText.includes('overdos')) {
+        if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
+        if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
       }
     }
   }
 
+  // 2. Check log for Ecstasy usage (paginated — drug use is in log, not events)
+  const ecstasyUsage = await findEcstasyUsageInLog(api_key, fromTs);
+
   // If Ecstasy was used successfully, the insured tab is consumed.
   // Any subsequent OD is on an uninsured tab — reject and auto-close.
-  if (ecstasyUsedTimestamp) {
+  if (ecstasyUsage) {
     // Auto-close the policy as closed_clean
     const nowIso = new Date().toISOString();
     await supabase
@@ -943,35 +974,12 @@ async function handleCheckEcstasyUsage(body: any) {
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'purchased') return json({ used: false });
 
-  // Fetch events AND log since purchase — drug usage appears in log, not events
-  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
+  // Paginate through log entries since purchase to check for Ecstasy usage
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
-  const eventsUrl = fromTs
-    ? `${TORN_API}/user/?selections=events,log&from=${fromTs}&key=${api_key}`
-    : `${TORN_API}/user/?selections=events,log&key=${api_key}`;
-  const eventsRes = await fetch(eventsUrl);
-  const eventsData = await eventsRes.json();
+  const ecstasyUsage = await findEcstasyUsageInLog(api_key, fromTs);
 
-  if (eventsData.error) return json({ used: false });
-
-  // Combine events and log entries
-  const allEntries: string[] = [];
-  if (eventsData.events) {
-    for (const evt of Object.values(eventsData.events) as any[]) {
-      allEntries.push(stripHtml(evt.event || '').toLowerCase());
-    }
-  }
-  if (eventsData.log) {
-    for (const entry of Object.values(eventsData.log) as any[]) {
-      allEntries.push(stripHtml(entry.log || entry.title || '').toLowerCase());
-    }
-  }
-  const ecstasyUsed = allEntries.some((text) =>
-    text.includes('ecstasy') && text.includes('happ') && !text.includes('overdos')
-  );
-
-  if (ecstasyUsed) {
+  if (ecstasyUsage) {
     // Auto-close the policy
     const nowIso = new Date().toISOString();
     await supabase
@@ -1403,13 +1411,26 @@ async function handleAdminCheckEcstasy(body: any) {
   const ecstasyEvents: { type: string; timestamp: number; text: string; source: string }[] = [];
   const debugEcstasyMentions: string[] = [];
 
+  // Also scan log entries by structured item ID (most reliable)
+  for (const entry of allLogEntries) {
+    if (entry.data?.item === ECSTASY_ITEM_ID && entry.title?.toLowerCase().includes('item use')) {
+      const text = `${entry.title} ecstasy ${JSON.stringify(entry.data)}`;
+      ecstasyEvents.push({ type: 'used', timestamp: entry.timestamp, text, source: 'log' });
+      debugEcstasyMentions.push(`[log:${entry.timestamp}] ${text}`);
+    }
+  }
+
+  // Text-based fallback scan across all entries
   for (const entry of allEntries) {
     const entryLower = entry.text.toLowerCase();
     if (entryLower.includes('ecstasy')) {
       debugEcstasyMentions.push(`[${entry.source}:${entry.timestamp}] ${entry.text}`);
     }
     if (entryLower.includes('ecstasy') && entryLower.includes('happ') && !entryLower.includes('overdos')) {
-      ecstasyEvents.push({ type: 'used', timestamp: entry.timestamp, text: entry.text, source: entry.source });
+      // Avoid duplicates from item ID check
+      if (!ecstasyEvents.some(e => e.timestamp === entry.timestamp && e.type === 'used')) {
+        ecstasyEvents.push({ type: 'used', timestamp: entry.timestamp, text: entry.text, source: entry.source });
+      }
     } else if (entryLower.includes('overdos') && entryLower.includes('ecstasy')) {
       ecstasyEvents.push({ type: 'od', timestamp: entry.timestamp, text: entry.text, source: entry.source });
     }
