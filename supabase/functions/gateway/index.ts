@@ -264,6 +264,44 @@ async function autoCloseExpired(supabase: any) {
   lastAutoCloseRun = now;
 
   const nowIso = new Date().toISOString();
+
+  // Auto-expire requested transactions after 48 hours
+  const { data: expiredRequests } = await supabase
+    .from('transactions')
+    .select('id, torn_id, torn_name, ecstasy_payout')
+    .eq('status', 'requested')
+    .not('expires_at', 'is', null)
+    .lt('expires_at', nowIso);
+
+  if (expiredRequests && expiredRequests.length > 0) {
+    for (const txn of expiredRequests) {
+      await supabase
+        .from('transactions')
+        .update({ status: 'rejected', closed_at: nowIso })
+        .eq('id', txn.id);
+
+      // Release locked reserve (atomic)
+      await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+
+      if (txn.torn_id) {
+        await syncClientStats(supabase, txn.torn_id);
+      }
+
+      const expiredLabel = txn.torn_name ? `${txn.torn_name} [${txn.torn_id}]` : txn.torn_id;
+      await sendNotificationEmail(
+        `Happy Jump — Request Expired — ${expiredLabel}`,
+        [
+          `A purchase request has expired after 48 hours with no payment.`,
+          ``,
+          `Player: ${expiredLabel}`,
+          `Transaction ID: ${txn.id}`,
+          `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+        ].join('\n'),
+      );
+    }
+  }
+
+  // Auto-close purchased transactions after 7 days
   const { data: expired } = await supabase
     .from('transactions')
     .select('id, torn_id, torn_name, ecstasy_payout')
@@ -461,6 +499,7 @@ async function handleCreateTransaction(body: any) {
       suggested_price: suggestedPrice,
       xanax_payout: snapshotXanaxPayout,
       ecstasy_payout: ecstasyPayout,
+      expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     })
     .select('id, status, suggested_price, product_type')
     .single();
@@ -621,6 +660,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     const now = new Date().toISOString();
     updates.purchased_at = now;
     updates.closes_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    updates.expires_at = null; // Clear request expiry once purchased
   }
 
   if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
