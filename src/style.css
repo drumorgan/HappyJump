@@ -703,6 +703,58 @@ body {
   color: #ccc;
 }
 
+/* Happy Jump Checklist */
+.checklist-box {
+  margin-top: 1rem;
+  padding: 1rem 1.25rem;
+  background: #1a1a2e;
+  border: 1px solid #2a2a3e;
+  border-radius: 8px;
+}
+
+.checklist-title {
+  font-weight: 700;
+  font-size: 1rem;
+  color: #ffe66b;
+  margin-bottom: 0.5rem;
+}
+
+.checklist-divider {
+  border-top: 1px solid #2a2a3e;
+  margin: 0.5rem 0;
+}
+
+.checklist-supplies {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1rem;
+  font-size: 0.85rem;
+  color: #ccc;
+}
+
+.checklist-supplies span {
+  background: #2a2a3e;
+  padding: 0.2rem 0.6rem;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.checklist-steps {
+  margin: 0;
+  padding-left: 1.5rem;
+  font-size: 0.85rem;
+  color: #aaa;
+  line-height: 1.8;
+}
+
+.checklist-steps li {
+  padding-left: 0.25rem;
+}
+
+.checklist-steps em {
+  color: #888;
+}
+
 /* OD Report */
 .payment-verify-section {
   margin-top: 1rem;
