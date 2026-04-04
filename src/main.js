@@ -562,6 +562,22 @@ function renderActiveDeal(transactions) {
       }
     }
 
+    if (activeTxn.status === 'requested' && activeTxn.expires_at) {
+      const expiresAt = new Date(activeTxn.expires_at);
+      const now = new Date();
+      const diff = expiresAt - now;
+      if (diff > 0) {
+        const h = Math.floor(diff / 3600000);
+        const m = Math.floor((diff % 3600000) / 60000);
+        const parts = [];
+        if (h > 0) parts.push(`${h}h`);
+        parts.push(`${m}m`);
+        details += `<div class="deal-detail" style="color:#6b8eff">Request expires in <strong>${parts.join(' ')}</strong> — complete payment to activate</div>`;
+      } else {
+        details += `<div class="deal-detail" style="color:#ff4444">Request has expired</div>`;
+      }
+    }
+
     if (activeTxn.status === 'purchased' && activeTxn.closes_at) {
       const closesAt = new Date(activeTxn.closes_at);
       const now = new Date();
