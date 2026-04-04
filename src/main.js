@@ -578,6 +578,33 @@ function renderActiveDeal(transactions) {
       } else {
         details += `<div class="deal-detail">Coverage window has ended</div>`;
       }
+
+      details += `
+        <div class="checklist-box">
+          <div class="checklist-title">Happy Jump Checklist</div>
+          <div class="checklist-divider"></div>
+          <div class="checklist-supplies">
+            <span>5x eDVDs</span>
+            <span>4x Xanax</span>
+            <span>1x Ecstasy</span>
+            <span>30x Points (refill)</span>
+          </div>
+          <div class="checklist-divider"></div>
+          <ol class="checklist-steps">
+            <li>Use up all of your Energy</li>
+            <li>Stack 1000 Energy with Xanax</li>
+            <li>Wait for Drug/Booster Cooldown to clear</li>
+            <li>Wait for the clock to end on :01, :16, :31, :46</li>
+            <li>Use 5x Erotic DVDs</li>
+            <li>Use 1x Ecstasy</li>
+            <li>Dump all Energy at the Gym</li>
+            <li><em>(OPTIONAL)</em> Refill with Points</li>
+            <li>Dump all Energy at the Gym</li>
+            <li>Wait for drug cooldown to clear</li>
+            <li>Repeat</li>
+          </ol>
+        </div>`;
+
       details += `
         <div class="od-report-section">
           <button id="report-od-btn" class="btn-report-od" data-txn-id="${activeTxn.id}">Report OD &amp; Request Payout</button>
