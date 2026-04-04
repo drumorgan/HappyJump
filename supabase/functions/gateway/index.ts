@@ -899,6 +899,18 @@ async function handleReportOd(body: any) {
     // Sync client stats
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
+    await sendNotificationEmail(
+      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      [
+        `Client logged in to claim an OD, but their API log shows Ecstasy was already taken successfully.`,
+        `Policy auto-closed clean.`,
+        ``,
+        `Player: ${identData.name} [${tornId}]`,
+        `Transaction ID: ${txn_id}`,
+        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+      ].join('\n'),
+    );
+
     return json({
       verified: false,
       policy_closed: true,
@@ -1029,6 +1041,18 @@ async function handleCheckEcstasyUsage(body: any) {
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
+
+    await sendNotificationEmail(
+      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      [
+        `Client checked their Ecstasy status and API confirms it was taken successfully.`,
+        `Policy auto-closed clean.`,
+        ``,
+        `Player: ${identData.name} [${tornId}]`,
+        `Transaction ID: ${txn_id}`,
+        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+      ].join('\n'),
+    );
 
     return json({
       used: true,
