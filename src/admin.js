@@ -183,6 +183,44 @@ async function loadTransactions() {
   renderTransactions(filtered);
 }
 
+// --- Request expiry timers ---
+let expiryTimerInterval = null;
+
+function startExpiryTimers() {
+  if (expiryTimerInterval) clearInterval(expiryTimerInterval);
+  updateExpiryTimers();
+  expiryTimerInterval = setInterval(updateExpiryTimers, 1000);
+}
+
+function updateExpiryTimers() {
+  const timers = document.querySelectorAll('.request-expiry-timer');
+  if (timers.length === 0 && expiryTimerInterval) {
+    clearInterval(expiryTimerInterval);
+    expiryTimerInterval = null;
+    return;
+  }
+  const now = Date.now();
+  timers.forEach((el) => {
+    const expiresAt = new Date(el.dataset.expires).getTime();
+    const remaining = expiresAt - now;
+    if (remaining <= 0) {
+      el.textContent = 'EXPIRED — auto-rejecting on next refresh';
+      el.classList.add('expired');
+      return;
+    }
+    const h = Math.floor(remaining / 3600000);
+    const m = Math.floor((remaining % 3600000) / 60000);
+    const s = Math.floor((remaining % 60000) / 1000);
+    const parts = [];
+    if (h > 0) parts.push(`${h}h`);
+    parts.push(`${m}m`);
+    parts.push(`${String(s).padStart(2, '0')}s`);
+    el.textContent = `⏳ Expires in ${parts.join(' ')}`;
+    if (remaining < 3600000) el.classList.add('urgent');
+    else el.classList.remove('urgent');
+  });
+}
+
 function renderTransactions(txns) {
   if (txns.length === 0) {
     txnList.innerHTML = '<div style="color:#888;text-align:center;padding:2rem">No transactions found.</div>';
@@ -202,12 +240,15 @@ function renderTransactions(txns) {
 
     let actionsHtml = '';
     switch (t.status) {
-      case 'requested':
+      case 'requested': {
+        const expiryHtml = t.expires_at ? `<div class="request-expiry-timer" data-expires="${t.expires_at}"></div>` : '';
         actionsHtml = `<div class="collect-banner">Collect: ${$(t.suggested_price)}</div>
+          ${expiryHtml}
           <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>
           <button class="btn-reject" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="rejected">Reject</button>
           <button class="btn-reject-block" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-reject-block="true">Reject &amp; Block</button>`;
         break;
+      }
       case 'purchased':
         actionsHtml = `
           <button class="btn-od-xan" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_xanax">Xanax OD</button>
@@ -250,6 +291,9 @@ function renderTransactions(txns) {
   txnList.querySelectorAll('[data-reject-block]').forEach((btn) => {
     btn.addEventListener('click', () => handleRejectAndBlock(btn.dataset.tornId, btn));
   });
+
+  // Start expiry countdown timers for requested transactions
+  startExpiryTimers();
 }
 
 async function handleAction(txnId, tornId, newStatus, btn) {

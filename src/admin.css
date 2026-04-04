@@ -273,6 +273,30 @@
   background: #4a1a1a;
 }
 
+.request-expiry-timer {
+  background: #1a1a3a;
+  border: 1px solid #3a3a6a;
+  border-radius: 4px;
+  padding: 0.35rem 0.75rem;
+  margin-bottom: 0.5rem;
+  color: #6b8eff;
+  font-size: 0.9rem;
+  font-weight: 600;
+  font-family: monospace;
+}
+
+.request-expiry-timer.urgent {
+  background: #2a1a0a;
+  border-color: #6a4a1a;
+  color: #ffaa44;
+}
+
+.request-expiry-timer.expired {
+  background: #3a0a0a;
+  border-color: #6a1a1a;
+  color: #ff4444;
+}
+
 .status-pill.rejected {
   background: #3a1a0a;
   color: #ff8866;
