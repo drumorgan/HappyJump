@@ -145,6 +145,14 @@ async function loadStats() {
   document.getElementById('stat-paid').textContent = $(paid);
   document.getElementById('stat-net').textContent = $(net);
   document.getElementById('stat-net').style.color = net >= 0 ? '#6bff8e' : '#ff6b81';
+
+  // Availability
+  try {
+    const avail = await getAvailability();
+    document.getElementById('stat-available').textContent = avail.remaining ?? '—';
+  } catch {
+    document.getElementById('stat-available').textContent = '—';
+  }
 }
 
 // --- Transactions ---
