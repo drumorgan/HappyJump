@@ -192,17 +192,17 @@ Cache market prices (refresh every 15 min max). Client-submitted API key used on
 
 Two workflows depending on the file:
 
-### Frontend files (JS, HTML, CSS, config, etc.) — Branch → PR → User merges
+### Frontend files (JS, HTML, CSS, config, etc.) — Branch → PR → Auto-merge
 
-These files deploy to InMotion via FTP when merged to `main`, so the user must review before they go live.
+These files deploy to InMotion via FTP when merged to `main`.
 
 1. Create or use a Claude feature branch (e.g. `claude/fix-something-XYZ`)
 2. Commit and push changes to the feature branch
-3. Tell the user the branch is ready for review
-4. User reviews the diff on GitHub Compare, checks for conflicts, and merges via Pull Request
+3. Create a Pull Request via GitHub API
+4. Merge the PR via GitHub API (squash merge)
 5. Merge to `main` triggers GitHub Actions → Vite build → FTP deploy
 
-**Never push frontend files to `main` directly or merge behind the scenes.** The user must see every change before it goes live.
+**Never push frontend files to `main` directly.** Always go through a PR so changes are tracked.
 
 ### Gateway Edge Function (`supabase/functions/gateway/index.ts`) — Push directly to `main`
 
