@@ -149,7 +149,7 @@ async function loadStats() {
   // Availability
   try {
     const avail = await getAvailability();
-    document.getElementById('stat-available').textContent = avail.remaining ?? '—';
+    document.getElementById('stat-available').textContent = avail.available ?? '—';
   } catch {
     document.getElementById('stat-available').textContent = '—';
   }
