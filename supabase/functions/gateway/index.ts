@@ -1467,31 +1467,48 @@ async function handleAdminSyncAllClients(req: Request) {
   // Get all distinct torn_ids from transactions
   const { data: txns, error } = await supabase
     .from('transactions')
-    .select('torn_id, torn_name, torn_faction, torn_level');
+    .select('torn_id, torn_name, torn_faction, torn_level, status');
 
   if (error) return json({ error: error.message }, 500);
 
-  // Dedupe by torn_id, keeping latest info
+  // Dedupe by torn_id, keeping latest info and collecting all statuses
   const clientMap = new Map<string, any>();
+  const clientTxnStatuses = new Map<string, string[]>();
   for (const t of (txns || [])) {
     if (!t.torn_id) continue;
     if (!clientMap.has(t.torn_id) || (t.torn_name && t.torn_name !== 'null')) {
       clientMap.set(t.torn_id, t);
     }
+    if (!clientTxnStatuses.has(t.torn_id)) clientTxnStatuses.set(t.torn_id, []);
+    clientTxnStatuses.get(t.torn_id)!.push(t.status);
   }
 
+  const details: any[] = [];
   let synced = 0;
   for (const [tornId, info] of clientMap) {
+    const statuses = clientTxnStatuses.get(tornId) || [];
+    const cleanCount = statuses.filter(s => s === 'closed_clean').length;
+    const tier = computeTier(cleanCount);
+
     await syncClientStats(supabase, tornId, {
       torn_name: info.torn_name || undefined,
       torn_faction: info.torn_faction || undefined,
       torn_level: info.torn_level || undefined,
     });
+
+    details.push({
+      torn_id: tornId,
+      name: info.torn_name,
+      txn_count: statuses.length,
+      statuses,
+      clean_count: cleanCount,
+      computed_tier: tier,
+    });
     synced++;
   }
 
   console.log(`[admin-sync-all-clients] Synced ${synced} clients`);
-  return json({ success: true, synced });
+  return json({ success: true, synced, details });
 }
 
 // ── Test email (admin-only diagnostic) ───────────────────────────────
