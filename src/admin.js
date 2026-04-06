@@ -476,6 +476,25 @@ clientBlockedFilter.addEventListener('change', loadClients);
 clientSearch.addEventListener('input', loadClients);
 refreshClientsBtn.addEventListener('click', loadClients);
 
+// Sync all client tiers from transaction history
+const syncClientsBtn = document.getElementById('sync-clients-btn');
+if (syncClientsBtn) {
+  syncClientsBtn.addEventListener('click', async () => {
+    syncClientsBtn.disabled = true;
+    syncClientsBtn.textContent = 'Syncing...';
+    try {
+      const result = await adminSyncAllClients();
+      showToast(`Synced ${result.synced} client(s)`, 'success');
+      await loadClients();
+    } catch (err) {
+      showToast('Sync failed: ' + err.message, 'error');
+    } finally {
+      syncClientsBtn.disabled = false;
+      syncClientsBtn.textContent = 'Sync Tiers';
+    }
+  });
+}
+
 // --- Config ---
 async function loadConfig() {
   const { data, error } = await supabase
