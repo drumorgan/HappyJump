@@ -224,7 +224,21 @@
     <div class="crosslink-box">
       <div class="crosslink-label">MORE TORN TOOLS BY GIRO VAGABONDO</div>
       <a href="https://tornder.girovagabondo.com" target="_blank" rel="noopener" class="crosslink-link">Tornder</a> — Swipe Through Torn
+      <br>
+      <a href="https://yoinkadventure.com" target="_blank" rel="noopener" class="crosslink-link">Yoink Adventure</a> — <span id="yoink-tagline"></span>
     </div>
+    <script>
+      (() => {
+        const tags = [
+          'Turn your travels into a real-world game',
+          'Start collecting your world — on a map',
+          'A travel tracker that feels like a game',
+          'Collect your adventures. See them on a map.',
+          'Explore the world like a game board'
+        ];
+        document.getElementById('yoink-tagline').textContent = tags[Math.floor(Math.random() * tags.length)];
+      })();
+    </script>
   </div>
 
   <script type="module" src="/src/main.js"></script>
