@@ -485,9 +485,10 @@ if (syncClientsBtn) {
     try {
       const result = await adminSyncAllClients();
       if (result.details) {
-        const summary = result.details.map(d =>
-          `${d.name || d.torn_id}: ${d.clean_count} clean / ${d.txn_count} txns → ${d.computed_tier}`
-        ).join('\n');
+        const summary = result.details.map(d => {
+          const err = d.db_error ? ` ❌ ${d.db_error}` : '';
+          return `${d.name || d.torn_id}: ${d.clean_count} clean / ${d.txn_count} txns → ${d.computed_tier}${err}`;
+        }).join('\n');
         console.log('[Sync Tiers]', summary);
         showToast(`Synced ${result.synced} client(s):\n${summary}`, 'success');
       } else {
