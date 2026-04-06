@@ -107,6 +107,7 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
   const { error } = await supabase.from('clients').upsert(upsertFields, { onConflict: 'torn_id' });
 
   if (error) console.error(`[syncClientStats] Failed for ${tornId}:`, error.message);
+  return { error: error?.message || null, cleanCount, tier: effectiveTier };
 }
 
 // ── Email notifications ─────────────────────────────────────────────
@@ -1490,7 +1491,7 @@ async function handleAdminSyncAllClients(req: Request) {
     const cleanCount = statuses.filter(s => s === 'closed_clean').length;
     const tier = computeTier(cleanCount);
 
-    await syncClientStats(supabase, tornId, {
+    const syncResult = await syncClientStats(supabase, tornId, {
       torn_name: info.torn_name || undefined,
       torn_faction: info.torn_faction || undefined,
       torn_level: info.torn_level || undefined,
@@ -1503,6 +1504,7 @@ async function handleAdminSyncAllClients(req: Request) {
       statuses,
       clean_count: cleanCount,
       computed_tier: tier,
+      db_error: syncResult?.error || null,
     });
     synced++;
   }
