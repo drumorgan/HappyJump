@@ -51,9 +51,17 @@ function computeTier(cleanCount: number): string {
   return 'new';
 }
 
-// Count total clean closes (ODs do not reset progress toward next tier).
-function computeCleanCount(txns: any[]): number {
-  return txns.filter((t: any) => t.status === 'closed_clean').length;
+// Count consecutive clean closes from most recent backward (OD resets the streak).
+function computeCleanStreak(txns: any[]): number {
+  const completed = txns
+    .filter((t: any) => ['closed_clean', 'od_xanax', 'od_ecstasy', 'payout_sent'].includes(t.status))
+    .sort((a: any, b: any) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime());
+  let streak = 0;
+  for (const t of completed) {
+    if (t.status === 'closed_clean') streak++;
+    else break;
+  }
+  return streak;
 }
 
 // Recompute and upsert client stats from transactions.
@@ -72,7 +80,7 @@ async function syncClientStats(supabase: any, tornId: string, extraFields?: Reco
   ]);
 
   const txns = allTxns || [];
-  const cleanCount = computeCleanCount(txns);
+  const cleanCount = computeCleanStreak(txns);
   const txnCount = txns.length;
   const totalSpent = txns
     .filter((t: any) => ['closed_clean', 'payout_sent'].includes(t.status))
@@ -452,7 +460,7 @@ async function handleCreateTransaction(body: any) {
       .maybeSingle(),
   ]);
 
-  const cleanCount = computeCleanCount(playerHistory || []);
+  const cleanCount = computeCleanStreak(playerHistory || []);
   const isFamigliaPermanent = clientRecord?.famiglia_permanent === true;
 
   let tierMargin;
@@ -564,7 +572,7 @@ async function handleGetPlayerTransactions(body: any) {
   if (txnResult.error) return json({ error: txnResult.error.message }, 500);
 
   const transactions = txnResult.data || [];
-  const cleanCount = computeCleanCount(transactions);
+  const cleanCount = computeCleanStreak(transactions);
   const hasActiveDeal = transactions.some(
     (t: any) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
   );
