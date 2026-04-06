@@ -484,7 +484,15 @@ if (syncClientsBtn) {
     syncClientsBtn.textContent = 'Syncing...';
     try {
       const result = await adminSyncAllClients();
-      showToast(`Synced ${result.synced} client(s)`, 'success');
+      if (result.details) {
+        const summary = result.details.map(d =>
+          `${d.name || d.torn_id}: ${d.clean_count} clean / ${d.txn_count} txns → ${d.computed_tier}`
+        ).join('\n');
+        console.log('[Sync Tiers]', summary);
+        showToast(`Synced ${result.synced} client(s):\n${summary}`, 'success');
+      } else {
+        showToast(`Synced ${result.synced} client(s)`, 'success');
+      }
       await loadClients();
     } catch (err) {
       showToast('Sync failed: ' + err.message, 'error');
