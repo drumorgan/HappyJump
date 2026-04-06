@@ -580,14 +580,28 @@ async function handleGetPlayerTransactions(body: any) {
   const isFamigliaPermanent = clientResult.data?.famiglia_permanent === true;
   const effectiveCleanCount = isFamigliaPermanent ? Math.max(cleanCount, 5) : cleanCount;
 
+  // Self-healing: if computed tier doesn't match stored tier, resync now
+  const computedTierNow = computeTier(effectiveCleanCount);
+  const storedTier = clientResult.data?.tier;
+  const storedCleanCount = clientResult.data?.clean_count;
+  if (storedTier !== computedTierNow || storedCleanCount !== effectiveCleanCount) {
+    console.log(`[get-player-transactions] Tier mismatch for ${torn_id}: stored=${storedTier}/${storedCleanCount}, computed=${computedTierNow}/${effectiveCleanCount} — resyncing`);
+    await syncClientStats(supabase, String(torn_id));
+  }
+
+  // Re-read client after potential sync so response reflects current state
+  const freshClient = (storedTier !== computedTierNow || storedCleanCount !== effectiveCleanCount)
+    ? (await supabase.from('clients').select('*').eq('torn_id', String(torn_id)).maybeSingle()).data
+    : clientResult.data;
+
   return json({
     torn_id: String(torn_id),
     transactions,
     clean_count: effectiveCleanCount,
     has_active_deal: hasActiveDeal,
-    is_blocked: clientResult.data?.is_blocked ?? false,
-    famiglia_permanent: isFamigliaPermanent,
-    client: clientResult.data || null,
+    is_blocked: freshClient?.is_blocked ?? false,
+    famiglia_permanent: freshClient?.famiglia_permanent ?? isFamigliaPermanent,
+    client: freshClient || clientResult.data || null,
   });
 }
 
