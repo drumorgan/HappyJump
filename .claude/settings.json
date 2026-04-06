@@ -1,0 +1,17 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "if": "Bash(git commit:*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"REMINDER: Check if CLAUDE.md needs to be updated to reflect these changes. Review what was changed and determine if any section of CLAUDE.md should be added or updated.\"}}'",
+            "timeout": 5
+          }
+        ]
+      }
+    ]
+  }
+}
