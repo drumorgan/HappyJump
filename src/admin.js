@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, adminSyncAllClients, testApiAccess, adminCheckEcstasy, adminCheckPayment } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -475,34 +475,6 @@ clientTierFilter.addEventListener('change', loadClients);
 clientBlockedFilter.addEventListener('change', loadClients);
 clientSearch.addEventListener('input', loadClients);
 refreshClientsBtn.addEventListener('click', loadClients);
-
-// Sync all client tiers from transaction history
-const syncClientsBtn = document.getElementById('sync-clients-btn');
-if (syncClientsBtn) {
-  syncClientsBtn.addEventListener('click', async () => {
-    syncClientsBtn.disabled = true;
-    syncClientsBtn.textContent = 'Syncing...';
-    try {
-      const result = await adminSyncAllClients();
-      if (result.details) {
-        const summary = result.details.map(d => {
-          const err = d.db_error ? ` ❌ ${d.db_error}` : '';
-          return `${d.name || d.torn_id}: ${d.clean_count} clean / ${d.txn_count} txns → ${d.computed_tier}${err}`;
-        }).join('\n');
-        console.log('[Sync Tiers]', summary);
-        showToast(`Synced ${result.synced} client(s):\n${summary}`, 'success');
-      } else {
-        showToast(`Synced ${result.synced} client(s)`, 'success');
-      }
-      await loadClients();
-    } catch (err) {
-      showToast('Sync failed: ' + err.message, 'error');
-    } finally {
-      syncClientsBtn.disabled = false;
-      syncClientsBtn.textContent = 'Sync Tiers';
-    }
-  });
-}
 
 // --- Config ---
 async function loadConfig() {
