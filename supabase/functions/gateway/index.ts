@@ -205,6 +205,8 @@ const XANAX_ITEM_ID = 206;
 // category label like "Item use"). Detection matches on narrative text.
 
 function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): boolean {
+  const drugLower = drugName.toLowerCase();
+
   // Build a haystack from every stringy field Torn might put the narrative in
   const parts: string[] = [];
   if (entry.title) parts.push(String(entry.title));
@@ -216,18 +218,19 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
 
   // Exclude overdoses — those aren't successful uses
   if (hay.includes('overdos')) return false;
-  // Exclude buys / trades / sends / receives — only successful uses count
+  // Exclude buys / trades / sends / receives — only successful uses count.
+  // (Intentionally NOT excluding "used" — that's the verb we want.)
   if (/\b(bought|sold|sent|received|dumped|bazaar|market|trade|gift)\b/.test(hay)) return false;
 
-  // Primary signal: the item ID appears in structured data
+  // Primary signal: structured data points at the drug
   const itemField = entry.data?.item;
   const structuredMatch =
     itemField === itemId ||
     itemField === String(itemId) ||
+    (typeof itemField === 'string' && itemField.toLowerCase() === drugLower) ||
     (entry.data?.items && (itemId in entry.data.items || String(itemId) in entry.data.items));
 
   // Narrative signal: drug name plus a "use" verb or a known stat gain phrase
-  const drugLower = drugName.toLowerCase();
   const narrativeMatch =
     hay.includes(drugLower) &&
     (hay.includes('used some ' + drugLower) ||
@@ -242,23 +245,36 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
 async function findEcstasyUsageInLog(
   apiKey: string,
   sinceTimestamp?: number, // only find usage after this time (e.g. purchased_at)
-  maxPages = 20,
+  maxPages = 30,
 ): Promise<{ timestamp: number; detail: string } | null> {
   let toParam = '';
   let earliestUsage: { timestamp: number; detail: string } | null = null;
   const cutoff = sinceTimestamp || 0;
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  let lastOldestTs = Infinity;
+  let pagesFetched = 0;
+  let totalEntries = 0;
 
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (data.error || !data.log) break;
+    if (data.error || !data.log) {
+      console.log(`[findEcstasyUsageInLog] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
 
-    const entries = Object.values(data.log) as any[];
-    if (entries.length === 0) break;
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) {
+      console.log(`[findEcstasyUsageInLog] page=${page} empty page, stopping`);
+      break;
+    }
+    pagesFetched++;
+    totalEntries += entriesKv.length;
+    console.log(`[findEcstasyUsageInLog] page=${page} entries=${entriesKv.length}`);
 
-    for (const entry of entries) {
+    let pageMatches = 0;
+    for (const [, entry] of entriesKv) {
       const ts = entry.timestamp || 0;
       if (ts < cutoff) continue; // before our window
       if (!entryMatchesDrugUse(entry, 'Ecstasy', ECSTASY_ITEM_ID)) continue;
@@ -270,14 +286,26 @@ async function findEcstasyUsageInLog(
           detail: `Ecstasy @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
         };
       }
+      pageMatches++;
     }
+    console.log(`[findEcstasyUsageInLog] page=${page} matchesThisPage=${pageMatches} earliestSoFar=${earliestUsage?.timestamp || 'none'}`);
 
-    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
-    if (oldestTs <= cutoff) break;
-    if (entries.length < 100) break;
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    // Do NOT use `entries.length < 100` as a terminator — Torn returns partial
+    // pages even when more history exists. Rely on cutoff + forward-progress guard.
+    if (oldestTs <= cutoff) {
+      console.log(`[findEcstasyUsageInLog] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      break;
+    }
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
+      console.log(`[findEcstasyUsageInLog] page=${page} no forward progress, stopping`);
+      break;
+    }
+    lastOldestTs = oldestTs;
     toParam = `&to=${oldestTs - 1}`;
   }
 
+  console.log(`[findEcstasyUsageInLog] FINAL earliest=${earliestUsage ? earliestUsage.timestamp : 'none'} pagesFetched=${pagesFetched} totalEntries=${totalEntries}`);
   return earliestUsage;
 }
 
@@ -286,51 +314,82 @@ async function findEcstasyUsageInLog(
 async function countXanaxUsageInLog(
   apiKey: string,
   sinceTimestamp?: number,
-  maxPages = 20,
+  maxPages = 30,
 ): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
   let toParam = '';
-  const uses: { timestamp: number; detail: string }[] = [];
+  const uses: { timestamp: number; detail: string; key: string }[] = [];
   const cutoff = sinceTimestamp || 0;
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
-  const seenTs = new Set<number>();
+  const seenKeys = new Set<string>();
   let pagesFetched = 0;
   let totalEntries = 0;
+  let lastOldestTs = Infinity;
 
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (data.error || !data.log) break;
+    if (data.error || !data.log) {
+      console.log(`[countXanaxUsageInLog] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
 
-    const entries = Object.values(data.log) as any[];
-    if (entries.length === 0) break;
+    // Preserve keys — Torn log is keyed by unique entry IDs, dedupe on those.
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) {
+      console.log(`[countXanaxUsageInLog] page=${page} empty page, stopping`);
+      break;
+    }
     pagesFetched++;
-    totalEntries += entries.length;
+    totalEntries += entriesKv.length;
 
-    for (const entry of entries) {
+    if (page === 0) {
+      const sample = entriesKv[0][1];
+      console.log(`[countXanaxUsageInLog] page=0 entries=${entriesKv.length} sampleEntry=${JSON.stringify(sample).slice(0, 400)}`);
+    } else {
+      console.log(`[countXanaxUsageInLog] page=${page} entries=${entriesKv.length}`);
+    }
+
+    let pageMatches = 0;
+    for (const [key, entry] of entriesKv) {
       const ts = entry.timestamp || 0;
       if (ts < cutoff) continue;
       if (!entryMatchesDrugUse(entry, 'Xanax', XANAX_ITEM_ID)) continue;
 
-      // Dedupe by timestamp — same use can appear on adjacent pages during pagination
-      if (seenTs.has(ts)) continue;
-      seenTs.add(ts);
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
 
       const narrative = String(entry.log || entry.title || '').slice(0, 200);
       uses.push({
         timestamp: ts,
-        detail: `Xanax @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
+        detail: `Xanax @ ${new Date(ts * 1000).toISOString()} — "${narrative}" data=${JSON.stringify(entry.data || {}).slice(0, 120)}`,
+        key,
       });
+      pageMatches++;
     }
+    console.log(`[countXanaxUsageInLog] page=${page} matchesThisPage=${pageMatches} runningTotal=${uses.length}`);
 
-    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
-    if (oldestTs <= cutoff) break;
-    if (entries.length < 100) break;
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    // Stop when we've crossed the since-cutoff or pagination isn't making progress.
+    // Do NOT use `entries.length < 100` as a terminator: Torn's log endpoint
+    // frequently returns partial pages (25-ish) even when more entries exist,
+    // so that check was causing us to stop after a single page and miss older
+    // uses — which was the actual cause of the "2/4" undercount.
+    if (oldestTs <= cutoff) {
+      console.log(`[countXanaxUsageInLog] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      break;
+    }
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
+      console.log(`[countXanaxUsageInLog] page=${page} no forward progress, stopping`);
+      break;
+    }
+    lastOldestTs = oldestTs;
     toParam = `&to=${oldestTs - 1}`;
   }
 
   // Sort uses oldest → newest so the debug list reads naturally
   uses.sort((a, b) => a.timestamp - b.timestamp);
+  console.log(`[countXanaxUsageInLog] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} details=${JSON.stringify(uses.map((u) => u.detail))}`);
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
@@ -1127,6 +1186,8 @@ async function handleCheckDrugUsage(body: any) {
   const { api_key, txn_id } = body;
   if (!api_key || !txn_id) return json({ error: 'Missing api_key or txn_id' }, 400);
 
+  console.log(`[handleCheckDrugUsage] START txn_id=${txn_id}`);
+
   // Validate API key
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
   const identData = await identRes.json();
@@ -1149,6 +1210,8 @@ async function handleCheckDrugUsage(body: any) {
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
 
+  console.log(`[handleCheckDrugUsage] tornId=${tornId} purchased_at=${txn.purchased_at} fromTs=${fromTs}`);
+
   // Check both drugs in parallel
   const [xanaxResult, ecstasyUsage] = await Promise.all([
     countXanaxUsageInLog(api_key, fromTs),
@@ -1157,6 +1220,8 @@ async function handleCheckDrugUsage(body: any) {
 
   const xanaxUsed = Math.min(xanaxResult.count, 4); // cap at 4 for display
   const ecstasyUsed = !!ecstasyUsage;
+
+  console.log(`[handleCheckDrugUsage] RESULT txn_id=${txn_id} xanaxUsed=${xanaxUsed} (raw=${xanaxResult.count}) ecstasyUsed=${ecstasyUsed} pages=${xanaxResult.pages} totalEntries=${xanaxResult.totalEntries}`);
 
   // Debug info surfaced to the client so they (and the operator inspecting
   // the client's view) can verify detection against the Torn log.
@@ -1170,17 +1235,7 @@ async function handleCheckDrugUsage(body: any) {
     ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
   };
 
-  // Persist latest check on the transaction so admin can see the same
-  // numbers the client sees without needing their API key.
   const nowIso = new Date().toISOString();
-  await supabase
-    .from('transactions')
-    .update({
-      last_drug_check_at: nowIso,
-      last_xanax_count: xanaxUsed,
-      last_ecstasy_used: ecstasyUsed,
-    })
-    .eq('id', txn_id);
 
   // Auto-close if all drugs used successfully (4 Xanax + 1 Ecstasy)
   if (xanaxUsed >= 4 && ecstasyUsed) {
