@@ -30,9 +30,32 @@ body {
   letter-spacing: -0.5px;
 }
 
+.site-subtitle {
+  color: #aaa;
+  font-size: 0.9rem;
+  letter-spacing: 0.01em;
+  margin-top: 0.2rem;
+}
+
+.site-credit {
+  color: #888;
+  font-size: 0.75rem;
+  margin-top: 0.25rem;
+}
+
+/* Legacy tagline class still used by admin dashboard */
 .tagline {
   color: #888;
   font-size: 1rem;
+}
+
+.giro-link {
+  color: #e94560;
+  text-decoration: none;
+}
+
+.giro-link:hover {
+  text-decoration: underline;
 }
 
 /* Stats bar */
@@ -966,32 +989,43 @@ body {
   letter-spacing: 0.3px;
 }
 
-/* Cross-link footer */
+/* Cross-link footer — shared pattern across Giro's Torn tools */
 .crosslink-box {
   margin-top: 2.5rem;
-  padding: 1.25rem 1.5rem;
+  padding: 1.5rem 1.5rem 1.25rem;
   background: #1a1a2e;
   border: 1px solid #2a2a3e;
   border-radius: 10px;
   text-align: center;
   color: #999;
-  font-size: 0.9rem;
+  font-size: 0.85rem;
 }
 
 .crosslink-label {
   font-size: 0.7rem;
   text-transform: uppercase;
-  letter-spacing: 1.5px;
+  letter-spacing: 0.18em;
   color: #777;
-  margin-bottom: 0.4rem;
+  margin-bottom: 0.85rem;
+}
+
+.crosslink-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
 }
 
 .crosslink-link {
-  color: #e94560;
   text-decoration: none;
-  font-weight: 600;
+  font-weight: 700;
 }
 
 .crosslink-link:hover {
   text-decoration: underline;
 }
+
+/* Target-app colors — each Giro tool has its own distinct accent */
+.crosslink-valigia   { color: #e8c84a; }  /* Valigia gold */
+.crosslink-happyjump { color: #e94560; }  /* HappyJump coral */
+.crosslink-tornder   { color: #3de8c8; }  /* Tornder teal */
+.crosslink-yoink     { color: #c0c4cc; }  /* Yoink neutral */
