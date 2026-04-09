@@ -603,10 +603,6 @@ function renderActiveDeal(transactions) {
           </div>
           <div class="checklist-divider"></div>
           <div id="drug-progress-content" style="padding:0.5rem;opacity:0.6">Checking your Torn API log...</div>
-          <details id="drug-progress-debug" style="padding:0.25rem 0.5rem;font-size:0.8rem;opacity:0.7;display:none">
-            <summary style="cursor:pointer">Detection details</summary>
-            <pre id="drug-progress-debug-content" style="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0 0"></pre>
-          </details>
         </div>`;
 
       details += `
@@ -701,22 +697,6 @@ function runDrugUsageCheck(activeTxn) {
           <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
           <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
         </div>`;
-    }
-    // Expose debug info if provided (helps diagnose miscounts)
-    if (result && result.debug) {
-      const debugBox = document.getElementById('drug-progress-debug');
-      const debugContent = document.getElementById('drug-progress-debug-content');
-      if (debugBox && debugContent) {
-        debugBox.style.display = 'block';
-        const lines = [
-          `purchased_at: ${result.debug.purchased_at || '(none)'}`,
-          `from_ts: ${result.debug.from_ts || '(none)'}`,
-          `xanax raw count: ${result.debug.xanax_raw_count}`,
-          ...(result.debug.xanax_details || []).map((d, i) => `  ${i + 1}. ${d}`),
-          `ecstasy: ${result.debug.ecstasy_detail || '(not detected)'}`,
-        ];
-        debugContent.textContent = lines.join('\n');
-      }
     }
   }).catch(() => {
     const progressEl = document.getElementById('drug-progress-content');

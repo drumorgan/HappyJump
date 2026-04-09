@@ -148,9 +148,6 @@ payout_amount       bigint    -- populated on OD
 purchased_at        timestamptz
 closes_at           timestamptz  -- purchased_at + 3 days
 closed_at           timestamptz
-last_drug_check_at  timestamptz  -- last time the client-loaded drug-usage check ran
-last_xanax_count    integer      -- cached Xanax usage (0-4) from last check
-last_ecstasy_used   boolean      -- cached ecstasy usage flag from last check
 created_at          timestamptz default now()
 ```
 
