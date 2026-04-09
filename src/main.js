@@ -608,15 +608,16 @@ function renderActiveDeal(transactions) {
           <div class="checklist-divider"></div>
           <ol class="checklist-steps">
             <li>Use up all of your Energy</li>
-            <li>Stack 1000 Energy with Xanax</li>
+            <li>Stack 1000 Energy with Xanax (4 max covered)</li>
             <li>Wait for Drug/Booster Cooldown to clear</li>
             <li>Wait for the clock to end on :01, :16, :31, :46</li>
             <li>Use 5x Erotic DVDs</li>
-            <li>Use 1x Ecstasy</li>
+            <li>Use 1x Ecstasy (1 use covered)</li>
             <li>Dump all Energy at the Gym</li>
             <li><em>(OPTIONAL)</em> Refill with Points</li>
             <li>Dump all Energy at the Gym</li>
             <li>Wait for drug cooldown to clear</li>
+            <li>Purchase a new package for your next Happy Jump</li>
           </ol>
         </div>`;
 
