@@ -202,14 +202,16 @@ const XANAX_ITEM_ID = 206;
 async function findEcstasyUsageInLog(
   apiKey: string,
   sinceTimestamp?: number, // only find usage after this time (e.g. purchased_at)
-  maxPages = 10,
+  maxPages = 20,
 ): Promise<{ timestamp: number; detail: string } | null> {
   let toParam = '';
   let earliestUsage: { timestamp: number; detail: string } | null = null;
   const cutoff = sinceTimestamp || 0;
+  // Use `from=` to filter server-side so pagination only walks the policy window
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
 
   for (let page = 0; page < maxPages; page++) {
-    const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.error || !data.log) break;
@@ -251,14 +253,16 @@ async function findEcstasyUsageInLog(
 async function countXanaxUsageInLog(
   apiKey: string,
   sinceTimestamp?: number,
-  maxPages = 10,
+  maxPages = 20,
 ): Promise<{ count: number; details: string[] }> {
   let toParam = '';
   const uses: { timestamp: number; detail: string }[] = [];
   const cutoff = sinceTimestamp || 0;
+  // Use `from=` so server filters to the policy window — critical for active users
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
 
   for (let page = 0; page < maxPages; page++) {
-    const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.error || !data.log) break;
@@ -1111,6 +1115,15 @@ async function handleCheckDrugUsage(body: any) {
   const xanaxUsed = Math.min(xanaxResult.count, 4); // cap at 4 for display
   const ecstasyUsed = !!ecstasyUsage;
 
+  // Debug info surfaced to the frontend so client/operator can verify detection
+  const debug = {
+    purchased_at: txn.purchased_at,
+    from_ts: fromTs,
+    xanax_raw_count: xanaxResult.count,
+    xanax_details: xanaxResult.details,
+    ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
+  };
+
   // Auto-close if all drugs used successfully (4 Xanax + 1 Ecstasy)
   if (xanaxUsed >= 4 && ecstasyUsed) {
     const nowIso = new Date().toISOString();
@@ -1139,10 +1152,11 @@ async function handleCheckDrugUsage(body: any) {
       ecstasy_used: ecstasyUsed,
       policy_closed: true,
       detail: 'All drugs taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
+      debug,
     });
   }
 
-  return json({ xanax_used: xanaxUsed, ecstasy_used: ecstasyUsed });
+  return json({ xanax_used: xanaxUsed, ecstasy_used: ecstasyUsed, debug });
 }
 
 async function handleVerifyPayment(body: any) {
