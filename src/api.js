@@ -143,10 +143,10 @@ export async function adminRejectAndBlock(tornId) {
 }
 
 /**
- * Check if client already took their Ecstasy tab (policy should auto-close).
+ * Check drug usage progress (Xanax count + Ecstasy) — auto-closes if all used.
  */
-export async function checkEcstasyUsage(apiKey, txnId) {
-  return gateway('check-ecstasy-usage', { api_key: apiKey, txn_id: txnId });
+export async function checkDrugUsage(apiKey, txnId) {
+  return gateway('check-drug-usage', { api_key: apiKey, txn_id: txnId });
 }
 
 /**
