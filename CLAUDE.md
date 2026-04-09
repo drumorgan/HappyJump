@@ -8,8 +8,8 @@
 >
 > 1. Commit to the Claude feature branch
 > 2. `git push -u origin <branch>`
-> 3. **Create a PR via `mcp__github__create_pull_request`** (base: `main`)
-> 4. **Merge the PR via `mcp__github__merge_pull_request`** (squash merge)
+> 3. **Create a PR via the GitHub API** (base: `main`) — use whatever GitHub-API mechanism is available in the current session (the harness may expose it under different names; do not get hung up on tool naming — if you can reach the GitHub API, use it)
+> 4. **Merge the PR via the GitHub API** (squash merge)
 > 5. Report the PR URL + merge status to the user
 >
 > Do NOT stop after pushing. Do NOT wait for the user to say "now open a PR." For frontend files, the merge to `main` is what triggers the FTP deploy — if you skip steps 3–4, the change never reaches the live site.
@@ -216,8 +216,8 @@ These files deploy to InMotion via FTP when merged to `main`.
 
 1. Create or use a Claude feature branch (e.g. `claude/fix-something-XYZ`)
 2. Commit and push changes to the feature branch
-3. **Create a Pull Request via `mcp__github__create_pull_request`** (base: `main`)
-4. **Merge the PR via `mcp__github__merge_pull_request`** (squash merge)
+3. **Create a Pull Request via the GitHub API** (base: `main`)
+4. **Merge the PR via the GitHub API** (squash merge)
 5. Report the PR URL and merge status to the user
 
 Merging to `main` triggers GitHub Actions → Vite build → FTP deploy. **If you skip steps 3–4 the change never reaches the live site** — pushing to a feature branch alone does nothing.
