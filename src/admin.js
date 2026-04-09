@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -782,6 +782,80 @@ document.getElementById('diag-payment-btn')?.addEventListener('click', async () 
 
   btn.disabled = false;
   btn.textContent = 'Check Payments';
+});
+
+// Test Xanax/Ecstasy Count — operator runs the real detection against their
+// own log with an arbitrary "simulated purchased_at" so we can reproduce
+// what a client would see without needing a live transaction.
+document.getElementById('diag-drug-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const fromInput = document.getElementById('diag-drug-from');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-drug-btn');
+  const apiKey = keyInput.value.trim();
+  const fromValue = fromInput?.value;
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter your Torn API key in the field above first.</span>';
+    return;
+  }
+
+  // datetime-local gives "YYYY-MM-DDTHH:mm" in the browser's local tz.
+  // Convert to unix seconds. If blank, send undefined (no cutoff).
+  let fromTs;
+  if (fromValue) {
+    const ms = new Date(fromValue).getTime();
+    if (!Number.isFinite(ms)) {
+      resultsEl.innerHTML = '<span style="color:#ff6b81">Invalid date/time.</span>';
+      return;
+    }
+    fromTs = Math.floor(ms / 1000);
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  resultsEl.textContent = '';
+
+  try {
+    const result = await adminTestDrugCheck(apiKey, fromTs);
+    const lines = [];
+    const xCount = result.xanax_count ?? 0;
+    const eFound = !!result.ecstasy_found;
+    const xColor = xCount >= 4 ? '#6bff8e' : (xCount > 0 ? '#e8a735' : '#ff6b81');
+    const eColor = eFound ? '#6bff8e' : '#888';
+
+    lines.push(`<strong>${esc(result.player?.name || '?')} [${esc(result.player?.id || '?')}]</strong>`);
+    lines.push(
+      `Xanax: <strong style="color:${xColor}">${xCount}/4</strong> &nbsp;·&nbsp; ` +
+      `Ecstasy: <strong style="color:${eColor}">${eFound ? '1/1' : '0/1'}</strong>`,
+    );
+    lines.push(
+      `<span style="color:#888;font-size:0.8rem">from_ts: ${result.from_ts ?? '(none)'} ` +
+      `${result.from_iso ? `(${esc(result.from_iso)})` : ''} · ` +
+      `pages: ${result.xanax_pages} · entries scanned: ${result.xanax_log_entries_scanned}</span>`,
+    );
+
+    if (result.xanax_details && result.xanax_details.length) {
+      lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Xanax matches:</span>');
+      result.xanax_details.forEach((d, i) => {
+        lines.push(`<span style="color:#ccc;font-size:0.8rem">${i + 1}. ${esc(d)}</span>`);
+      });
+    } else {
+      lines.push('<br><span style="color:#ff6b81">No Xanax uses matched in the scanned window.</span>');
+    }
+
+    if (result.ecstasy_detail) {
+      lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Ecstasy match:</span>');
+      lines.push(`<span style="color:#ccc;font-size:0.8rem">${esc(result.ecstasy_detail)}</span>`);
+    }
+
+    resultsEl.innerHTML = lines.join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Test failed: ${esc(e.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Test Xanax/Ecstasy Count';
 });
 
 // Config panel toggle
