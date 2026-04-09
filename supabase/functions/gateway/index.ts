@@ -1124,9 +1124,20 @@ async function handleCheckDrugUsage(body: any) {
     ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
   };
 
+  // Persist latest check on the transaction so admin can see the same
+  // numbers the client sees without needing their API key.
+  const nowIso = new Date().toISOString();
+  await supabase
+    .from('transactions')
+    .update({
+      last_drug_check_at: nowIso,
+      last_xanax_count: xanaxUsed,
+      last_ecstasy_used: ecstasyUsed,
+    })
+    .eq('id', txn_id);
+
   // Auto-close if all drugs used successfully (4 Xanax + 1 Ecstasy)
   if (xanaxUsed >= 4 && ecstasyUsed) {
-    const nowIso = new Date().toISOString();
     await supabase
       .from('transactions')
       .update({ status: 'closed_clean', closed_at: nowIso })

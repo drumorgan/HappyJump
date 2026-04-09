@@ -169,26 +169,29 @@ async function loadTransactions() {
     query = query.eq('status', filter);
   }
 
-  const { data: txns, error } = await query;
+  const [{ data: txns, error }, { data: clients }] = await Promise.all([
+    query,
+    supabase.from('clients').select('torn_id, tier, is_blocked'),
+  ]);
   if (error) {
     showToast('Failed to load transactions: ' + error.message, 'error');
     return;
   }
 
+  const clientsByTornId = new Map((clients || []).map((c) => [String(c.torn_id), c]));
+
   // Hide blocked players' transactions from active view
   let filtered = txns || [];
   if (filter === 'active') {
-    const { data: blockedClients } = await supabase
-      .from('clients')
-      .select('torn_id')
-      .eq('is_blocked', true);
-    const blockedIds = new Set((blockedClients || []).map((c) => c.torn_id));
+    const blockedIds = new Set(
+      (clients || []).filter((c) => c.is_blocked).map((c) => String(c.torn_id)),
+    );
     if (blockedIds.size > 0) {
-      filtered = filtered.filter((t) => !blockedIds.has(t.torn_id));
+      filtered = filtered.filter((t) => !blockedIds.has(String(t.torn_id)));
     }
   }
 
-  renderTransactions(filtered);
+  renderTransactions(filtered, clientsByTornId);
 }
 
 // --- Request expiry timers ---
@@ -229,7 +232,7 @@ function updateExpiryTimers() {
   });
 }
 
-function renderTransactions(txns) {
+function renderTransactions(txns, clientsByTornId = new Map()) {
   if (txns.length === 0) {
     txnList.innerHTML = '<div style="color:#888;text-align:center;padding:2rem">No transactions found.</div>';
     return;
@@ -245,6 +248,12 @@ function renderTransactions(txns) {
       : t.product_type === 'insurance'
       ? '<span class="product-badge shield">Protezione</span>'
       : '<span class="product-badge package">Bella Vita</span>';
+
+    const client = clientsByTornId.get(String(t.torn_id));
+    const tier = client?.tier || 'new';
+    const tierClass = getTierBadgeClass(tier);
+    const tierName = getTierName(tier);
+    const tierBadge = `<span class="tier-badge ${tierClass}">${esc(tierName)}</span>`;
 
     let actionsHtml = '';
     switch (t.status) {
@@ -272,6 +281,26 @@ function renderTransactions(txns) {
     const payoutInfo = t.payout_amount ? ` | Payout: ${$(t.payout_amount)}` : '';
     const closesInfo = t.closes_at ? ` | Closes: ${new Date(t.closes_at).toLocaleDateString()}` : '';
 
+    // Drug usage progress (only shown for active purchased policies)
+    let drugProgressHtml = '';
+    if (t.status === 'purchased') {
+      const xanaxCount = Number(t.last_xanax_count || 0);
+      const ecstasyDone = !!t.last_ecstasy_used;
+      const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
+      const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
+      const lastCheck = t.last_drug_check_at
+        ? new Date(t.last_drug_check_at).toLocaleString()
+        : 'never';
+      drugProgressHtml = `
+        <div class="txn-drug-progress" style="margin-top:0.5rem;padding:0.5rem;background:#1a1a1a;border:1px solid #333;border-radius:4px;font-size:0.9rem">
+          <div style="display:flex;gap:1.25rem;justify-content:center">
+            <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
+            <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
+          </div>
+          <div style="text-align:center;font-size:0.75rem;color:#888;margin-top:0.25rem">Last client check: ${esc(lastCheck)}</div>
+        </div>`;
+    }
+
     return `<div class="txn-card">
       <div class="txn-top">
         <div>
@@ -279,13 +308,17 @@ function renderTransactions(txns) {
           <span class="txn-player-id">[${esc(t.torn_id)}]</span>
           ${productBadge}
         </div>
-        <span class="status-pill ${pillClass}">${esc(label)}</span>
+        <div style="display:flex;gap:0.5rem;align-items:center">
+          ${tierBadge}
+          <span class="status-pill ${pillClass}">${esc(label)}</span>
+        </div>
       </div>
       <div class="txn-meta">
         <span>Lvl ${t.torn_level || '?'}${faction}</span>
         <span>Price: ${$(t.suggested_price)}</span>
         <span>${date}${closesInfo}${payoutInfo}</span>
       </div>
+      ${drugProgressHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
     </div>`;
   }).join('');
