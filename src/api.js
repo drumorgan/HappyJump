@@ -176,6 +176,15 @@ export async function adminCheckPayment(apiKey, recipient) {
 }
 
 /**
+ * Admin: test the Xanax/Ecstasy log-scan detection with an arbitrary API key
+ * and `from_ts` (unix seconds). Mirrors check-drug-usage but doesn't need a
+ * transaction row — operator can point it at their own account.
+ */
+export async function adminTestDrugCheck(apiKey, fromTs) {
+  return gateway('admin-test-drug-check', { api_key: apiKey, from_ts: fromTs });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {
