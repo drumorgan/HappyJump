@@ -597,9 +597,16 @@ function renderActiveDeal(transactions) {
 
       details += `
         <div id="drug-progress-box" class="checklist-box" style="margin-bottom:0.75rem">
-          <div class="checklist-title">Drug Usage Progress</div>
+          <div class="checklist-title" style="display:flex;align-items:center;justify-content:space-between;gap:0.5rem">
+            <span>Drug Usage Progress</span>
+            <button id="drug-progress-refresh" class="btn-secondary" style="padding:0.25rem 0.75rem;font-size:0.85rem" data-txn-id="${activeTxn.id}">Refresh</button>
+          </div>
           <div class="checklist-divider"></div>
           <div id="drug-progress-content" style="padding:0.5rem;opacity:0.6">Checking your Torn API log...</div>
+          <details id="drug-progress-debug" style="padding:0.25rem 0.5rem;font-size:0.8rem;opacity:0.7;display:none">
+            <summary style="cursor:pointer">Detection details</summary>
+            <pre id="drug-progress-debug-content" style="white-space:pre-wrap;word-break:break-word;margin:0.5rem 0 0 0"></pre>
+          </details>
         </div>`;
 
       details += `
@@ -650,37 +657,73 @@ function renderActiveDeal(transactions) {
 
     // Proactive check: if purchased, check drug usage progress and auto-close if complete
     if (activeTxn.status === 'purchased' && currentApiKey) {
-      checkDrugUsage(currentApiKey, activeTxn.id).then((result) => {
-        if (result && result.policy_closed) {
-          showToast(result.detail || 'Happy Jump complete — policy closed clean!', 'success');
-          getPlayerTransactions(activeTxn.torn_id || '').then((h) => {
-            renderActiveDeal(h.transactions);
-            renderHistory(h.transactions);
+      runDrugUsageCheck(activeTxn);
+      const refreshBtn = document.getElementById('drug-progress-refresh');
+      if (refreshBtn) {
+        refreshBtn.addEventListener('click', () => {
+          const progressEl = document.getElementById('drug-progress-content');
+          if (progressEl) {
+            progressEl.style.opacity = '0.6';
+            progressEl.textContent = 'Checking your Torn API log...';
+          }
+          refreshBtn.disabled = true;
+          refreshBtn.textContent = 'Checking...';
+          runDrugUsageCheck(activeTxn).finally(() => {
+            refreshBtn.disabled = false;
+            refreshBtn.textContent = 'Refresh';
           });
-          return;
-        }
-        // Update progress display
-        const progressEl = document.getElementById('drug-progress-content');
-        if (progressEl && result) {
-          const xanaxCount = result.xanax_used || 0;
-          const ecstasyDone = result.ecstasy_used || false;
-          const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
-          const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
-          progressEl.style.opacity = '1';
-          progressEl.innerHTML = `
-            <div style="display:flex;gap:1.5rem;justify-content:center;font-size:1.05rem">
-              <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
-              <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
-            </div>`;
-        }
-      }).catch(() => {
-        const progressEl = document.getElementById('drug-progress-content');
-        if (progressEl) {
-          progressEl.textContent = 'Could not check drug usage — try refreshing.';
-        }
-      });
+        });
+      }
     }
   }
+}
+
+function runDrugUsageCheck(activeTxn) {
+  if (!currentApiKey) return Promise.resolve();
+  return checkDrugUsage(currentApiKey, activeTxn.id).then((result) => {
+    if (result && result.policy_closed) {
+      showToast(result.detail || 'Happy Jump complete — policy closed clean!', 'success');
+      return getPlayerTransactions(activeTxn.torn_id || '').then((h) => {
+        renderActiveDeal(h.transactions);
+        renderHistory(h.transactions);
+      });
+    }
+    // Update progress display
+    const progressEl = document.getElementById('drug-progress-content');
+    if (progressEl && result) {
+      const xanaxCount = result.xanax_used || 0;
+      const ecstasyDone = result.ecstasy_used || false;
+      const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
+      const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
+      progressEl.style.opacity = '1';
+      progressEl.innerHTML = `
+        <div style="display:flex;gap:1.5rem;justify-content:center;font-size:1.05rem">
+          <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
+          <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
+        </div>`;
+    }
+    // Expose debug info if provided (helps diagnose miscounts)
+    if (result && result.debug) {
+      const debugBox = document.getElementById('drug-progress-debug');
+      const debugContent = document.getElementById('drug-progress-debug-content');
+      if (debugBox && debugContent) {
+        debugBox.style.display = 'block';
+        const lines = [
+          `purchased_at: ${result.debug.purchased_at || '(none)'}`,
+          `from_ts: ${result.debug.from_ts || '(none)'}`,
+          `xanax raw count: ${result.debug.xanax_raw_count}`,
+          ...(result.debug.xanax_details || []).map((d, i) => `  ${i + 1}. ${d}`),
+          `ecstasy: ${result.debug.ecstasy_detail || '(not detected)'}`,
+        ];
+        debugContent.textContent = lines.join('\n');
+      }
+    }
+  }).catch(() => {
+    const progressEl = document.getElementById('drug-progress-content');
+    if (progressEl) {
+      progressEl.textContent = 'Could not check drug usage — try refreshing.';
+    }
+  });
 }
 
 async function handleReportOd(e) {
