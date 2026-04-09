@@ -92,8 +92,8 @@ requested → purchased → closed_clean
 ```
 
 - **requested:** Client submits Torn API key, request logged
-- **purchased:** Operator completes in-game trade, marks purchased — 1-week timer starts
-- **closed_clean:** 1 week passes with no OD reported, auto-closes
+- **purchased:** Operator completes in-game trade, marks purchased — 3-day timer starts
+- **closed_clean:** 3 days pass with no OD reported (or all drugs used successfully), auto-closes
 - **od_xanax / od_ecstasy:** Operator marks OD type, payout calculated automatically
 - **payout_sent:** Operator sends replacement + rehab bonus in-game, confirms
 
@@ -130,7 +130,7 @@ xanax_payout        bigint    -- snapshot at time of sale
 ecstasy_payout      bigint    -- snapshot at time of sale
 payout_amount       bigint    -- populated on OD
 purchased_at        timestamptz
-closes_at           timestamptz  -- purchased_at + 7 days
+closes_at           timestamptz  -- purchased_at + 3 days
 closed_at           timestamptz
 created_at          timestamptz default now()
 ```
@@ -231,7 +231,7 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 - **FTP deploy:** Do NOT exclude `assets/dist/` from FTP sync — causes silent failures.
 - **Supabase RLS:** Lock `transactions` table so clients can only insert, never read other clients' rows. Admin operations go through service role key in Edge Functions only.
 - **Price snapshots:** Always snapshot pricing at time of transaction creation — config changes mid-week must not affect open transactions.
-- **1-week timer:** Starts at `purchased_at`, not `created_at`. Auto-close must be idempotent.
+- **3-day timer:** Starts at `purchased_at`, not `created_at`. Auto-close must be idempotent. Also auto-closes early if all drugs (4 Xanax + 1 Ecstasy) are used successfully.
 - **Single gateway pattern:** NEVER create new Edge Functions. Add new actions to `supabase/functions/gateway/index.ts` and route via the `action` field. JWT must stay OFF — admin auth is handled inside the gateway.
 - **Bigint columns:** Supabase returns `bigint` columns as **strings**. Always wrap in `Number()` before arithmetic. The `+` operator concatenates strings — `"200000000" + "1000000"` = `"2000000001000000"` instead of `201000000`. Use `Number(value)` for all bigint fields: prices, payouts, reserve, etc.
 - **Edge Function deploy is manual:** Changes to `supabase/functions/gateway/index.ts` are NOT deployed by the GitHub Actions FTP pipeline. After merging, the user must manually copy the file contents from GitHub and paste them into the Supabase dashboard Edge Function editor.

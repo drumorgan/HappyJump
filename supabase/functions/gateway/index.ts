@@ -192,12 +192,12 @@ async function adjustReserve(supabase: any, amount: number) {
   return data; // returns new current_reserve
 }
 
-// ── Ecstasy usage detection (shared helper) ─────────────────────────
-// Paginates through Torn API log entries to find Ecstasy usage.
-// Returns the timestamp of the earliest Ecstasy use, or null if none found.
-// Uses structured data (item ID 197) as primary check, text matching as fallback.
+// ── Drug usage detection (shared helpers) ────────────────────────────
+// Paginates through Torn API log entries to find drug usage.
+// Uses structured data (item IDs) as primary check, text matching as fallback.
 
 const ECSTASY_ITEM_ID = 197;
+const XANAX_ITEM_ID = 206;
 
 async function findEcstasyUsageInLog(
   apiKey: string,
@@ -244,6 +244,52 @@ async function findEcstasyUsageInLog(
   }
 
   return earliestUsage;
+}
+
+// Counts successful Xanax uses in the Torn API log since a given timestamp.
+// Returns count (max meaningful = 4) and details of each use found.
+async function countXanaxUsageInLog(
+  apiKey: string,
+  sinceTimestamp?: number,
+  maxPages = 10,
+): Promise<{ count: number; details: string[] }> {
+  let toParam = '';
+  const uses: { timestamp: number; detail: string }[] = [];
+  const cutoff = sinceTimestamp || 0;
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) break;
+
+    const entries = Object.values(data.log) as any[];
+    if (entries.length === 0) break;
+
+    for (const entry of entries) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff) continue;
+
+      // Primary: structured data check (item ID 206 = Xanax)
+      if (entry.data?.item === XANAX_ITEM_ID && entry.title?.toLowerCase().includes('item use')) {
+        uses.push({ timestamp: ts, detail: `Xanax used (item ${XANAX_ITEM_ID}) at ${new Date(ts * 1000).toISOString()}` });
+        continue;
+      }
+
+      // Fallback: text matching — "xanax" in title with "item use" context, exclude ODs
+      const title = (entry.title || '').toLowerCase();
+      if (title.includes('xanax') && title.includes('use') && !title.includes('overdos')) {
+        uses.push({ timestamp: ts, detail: `Xanax used (text match) at ${new Date(ts * 1000).toISOString()}` });
+      }
+    }
+
+    const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) break;
+    if (entries.length < 100) break;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  return { count: uses.length, details: uses.map(u => u.detail) };
 }
 
 // ── Auto-close expired transactions ──────────────────────────────────
@@ -294,7 +340,7 @@ async function autoCloseExpired(supabase: any) {
     }
   }
 
-  // Auto-close purchased transactions after 7 days
+  // Auto-close purchased transactions after 3 days
   const { data: expired } = await supabase
     .from('transactions')
     .select('id, torn_id, torn_name, ecstasy_payout')
@@ -320,7 +366,7 @@ async function autoCloseExpired(supabase: any) {
     await sendNotificationEmail(
       `Happy Jump — Clean Close — ${expiredLabel}`,
       [
-        `A 7-day insurance window has expired with no OD claim.`,
+        `A 3-day insurance window has expired with no OD claim.`,
         ``,
         `Player: ${expiredLabel}`,
         `Transaction ID: ${txn.id}`,
@@ -666,7 +712,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   if (new_status === 'purchased') {
     const now = new Date().toISOString();
     updates.purchased_at = now;
-    updates.closes_at = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+    updates.closes_at = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
     updates.expires_at = null; // Clear request expiry once purchased
   }
 
@@ -887,29 +933,30 @@ async function handleReportOd(body: any) {
     }
   }
 
-  // 2. Check log for Ecstasy usage (paginated — drug use is in log, not events)
-  const ecstasyUsage = await findEcstasyUsageInLog(api_key, fromTs);
+  // 2. Check log for drug usage (paginated — drug use is in log, not events)
+  const [xanaxResult, ecstasyUsage] = await Promise.all([
+    countXanaxUsageInLog(api_key, fromTs),
+    findEcstasyUsageInLog(api_key, fromTs),
+  ]);
 
-  // If Ecstasy was used successfully, the insured tab is consumed.
-  // Any subsequent OD is on an uninsured tab — reject and auto-close.
-  if (ecstasyUsage) {
-    // Auto-close the policy as closed_clean
+  const xanaxUsedCount = xanaxResult.count;
+  const ecstasyUsed = !!ecstasyUsage;
+
+  // If all drugs used (4 Xanax + 1 Ecstasy), auto-close — the jump is complete.
+  if (xanaxUsedCount >= 4 && ecstasyUsed) {
     const nowIso = new Date().toISOString();
     await supabase
       .from('transactions')
       .update({ status: 'closed_clean', closed_at: nowIso })
       .eq('id', txn_id);
 
-    // Release locked reserve
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
-
-    // Sync client stats
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      `Happy Jump — Clean Close (All Drugs Used) — ${identData.name} [${tornId}]`,
       [
-        `Client logged in to claim an OD, but their API log shows Ecstasy was already taken successfully.`,
+        `Client tried to claim an OD, but API log shows all drugs taken successfully (${xanaxUsedCount} Xanax + Ecstasy).`,
         `Policy auto-closed clean.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
@@ -922,7 +969,25 @@ async function handleReportOd(body: any) {
       verified: false,
       policy_closed: true,
       torn_id: tornId,
-      detail: `Your Ecstasy tab was already taken successfully — the insured package is consumed and your policy has been closed clean. Any further ODs are not covered under this policy.`,
+      detail: `All 4 Xanax and Ecstasy were already taken successfully — your Happy Jump is complete and the policy has been closed clean.`,
+    });
+  }
+
+  // If all 4 Xanax used and they're claiming a Xanax OD — reject (covered uses consumed)
+  if (xanaxUsedCount >= 4 && odDrug === 'xanax') {
+    return json({
+      verified: false,
+      torn_id: tornId,
+      detail: `All 4 covered Xanax uses have already been taken successfully. This Xanax OD is on an additional, uncovered pill.`,
+    });
+  }
+
+  // If Ecstasy was used and they're claiming an Ecstasy OD — reject (covered use consumed)
+  if (ecstasyUsed) {
+    return json({
+      verified: false,
+      torn_id: tornId,
+      detail: `Your Ecstasy tab was already taken successfully — the insured use is consumed. This OD is not covered under this policy.`,
     });
   }
 
@@ -1011,7 +1076,7 @@ async function handleReportOd(body: any) {
   });
 }
 
-async function handleCheckEcstasyUsage(body: any) {
+async function handleCheckDrugUsage(body: any) {
   const { api_key, txn_id } = body;
   if (!api_key || !txn_id) return json({ error: 'Missing api_key or txn_id' }, 400);
 
@@ -1031,15 +1096,23 @@ async function handleCheckEcstasyUsage(body: any) {
 
   if (txnErr || !txn) return json({ error: 'Transaction not found' }, 404);
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
-  if (txn.status !== 'purchased') return json({ used: false });
+  if (txn.status !== 'purchased') return json({ xanax_used: 0, ecstasy_used: false });
 
-  // Paginate through log entries since purchase to check for Ecstasy usage
+  // Paginate through log entries since purchase to check for drug usage
   const purchasedAt = txn.purchased_at ? new Date(txn.purchased_at) : null;
   const fromTs = purchasedAt ? Math.floor(purchasedAt.getTime() / 1000) : undefined;
-  const ecstasyUsage = await findEcstasyUsageInLog(api_key, fromTs);
 
-  if (ecstasyUsage) {
-    // Auto-close the policy
+  // Check both drugs in parallel
+  const [xanaxResult, ecstasyUsage] = await Promise.all([
+    countXanaxUsageInLog(api_key, fromTs),
+    findEcstasyUsageInLog(api_key, fromTs),
+  ]);
+
+  const xanaxUsed = Math.min(xanaxResult.count, 4); // cap at 4 for display
+  const ecstasyUsed = !!ecstasyUsage;
+
+  // Auto-close if all drugs used successfully (4 Xanax + 1 Ecstasy)
+  if (xanaxUsed >= 4 && ecstasyUsed) {
     const nowIso = new Date().toISOString();
     await supabase
       .from('transactions')
@@ -1050,9 +1123,9 @@ async function handleCheckEcstasyUsage(body: any) {
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      `Happy Jump — Clean Close (All Drugs Used) — ${identData.name} [${tornId}]`,
       [
-        `Client checked their Ecstasy status and API confirms it was taken successfully.`,
+        `Client's API log confirms all drugs taken successfully (${xanaxUsed} Xanax + Ecstasy).`,
         `Policy auto-closed clean.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
@@ -1062,13 +1135,14 @@ async function handleCheckEcstasyUsage(body: any) {
     );
 
     return json({
-      used: true,
+      xanax_used: xanaxUsed,
+      ecstasy_used: ecstasyUsed,
       policy_closed: true,
-      detail: 'Your Ecstasy tab was taken successfully — policy closed clean. Congrats!',
+      detail: 'All drugs taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
     });
   }
 
-  return json({ used: false });
+  return json({ xanax_used: xanaxUsed, ecstasy_used: ecstasyUsed });
 }
 
 async function handleVerifyPayment(body: any) {
@@ -1252,7 +1326,7 @@ async function handleVerifyPayment(body: any) {
 
   // Paid in full (exact or overpaid) — advance to "purchased"
   const now = new Date().toISOString();
-  const closesAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
+  const closesAt = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
 
   const { error: updateErr } = await supabase
     .from('transactions')
@@ -1280,7 +1354,7 @@ async function handleVerifyPayment(body: any) {
       `Events: ${matchedEvents.join(' | ')}`,
       ``,
       `Transaction ID: ${txn_id}`,
-      `Status has been auto-advanced to "purchased" — 7-day insurance window is now active.`,
+      `Status has been auto-advanced to "purchased" — 3-day insurance window is now active.`,
     ].join('\n'),
   );
 
@@ -1290,7 +1364,7 @@ async function handleVerifyPayment(body: any) {
   return json({
     verified: true,
     torn_id: tornId,
-    detail: `Payment of ${formatMoney(totalPaid)} verified! Your 7-day insurance window is now active.`,
+    detail: `Payment of ${formatMoney(totalPaid)} verified! Your 3-day insurance window is now active.`,
   });
 }
 
@@ -1758,8 +1832,9 @@ serve(async (req) => {
         return await handleUpdateConfig(req, body);
       case 'report-od':
         return await handleReportOd(body);
+      case 'check-drug-usage':
       case 'check-ecstasy-usage':
-        return await handleCheckEcstasyUsage(body);
+        return await handleCheckDrugUsage(body);
       case 'verify-payment':
         return await handleVerifyPayment(body);
       case 'admin-sync-all-clients':

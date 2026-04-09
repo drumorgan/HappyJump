@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkEcstasyUsage, verifyPayment, getPublicStats } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -155,7 +155,7 @@ function buildCoverageHTML(product, pricing, config) {
     <tbody>${rows}</tbody>
   </table>`;
 
-  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 7 days from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 3 days from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
 
   return html;
 }
@@ -596,6 +596,13 @@ function renderActiveDeal(transactions) {
       }
 
       details += `
+        <div id="drug-progress-box" class="checklist-box" style="margin-bottom:0.75rem">
+          <div class="checklist-title">Drug Usage Progress</div>
+          <div class="checklist-divider"></div>
+          <div id="drug-progress-content" style="padding:0.5rem;opacity:0.6">Checking your Torn API log...</div>
+        </div>`;
+
+      details += `
         <div class="checklist-box">
           <div class="checklist-title">Happy Jump Checklist</div>
           <div class="checklist-divider"></div>
@@ -641,18 +648,37 @@ function renderActiveDeal(transactions) {
       verifyBtn.addEventListener('click', handleVerifyPayment);
     }
 
-    // Proactive check: if purchased, see if Ecstasy was already taken (auto-close policy)
+    // Proactive check: if purchased, check drug usage progress and auto-close if complete
     if (activeTxn.status === 'purchased' && currentApiKey) {
-      checkEcstasyUsage(currentApiKey, activeTxn.id).then((result) => {
+      checkDrugUsage(currentApiKey, activeTxn.id).then((result) => {
         if (result && result.policy_closed) {
-          showToast(result.detail || 'Policy closed — Ecstasy taken successfully!', 'success');
-          // Refresh to show updated status
+          showToast(result.detail || 'Happy Jump complete — policy closed clean!', 'success');
           getPlayerTransactions(activeTxn.torn_id || '').then((h) => {
             renderActiveDeal(h.transactions);
             renderHistory(h.transactions);
           });
+          return;
         }
-      }).catch(() => { /* silent — non-critical check */ });
+        // Update progress display
+        const progressEl = document.getElementById('drug-progress-content');
+        if (progressEl && result) {
+          const xanaxCount = result.xanax_used || 0;
+          const ecstasyDone = result.ecstasy_used || false;
+          const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
+          const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
+          progressEl.style.opacity = '1';
+          progressEl.innerHTML = `
+            <div style="display:flex;gap:1.5rem;justify-content:center;font-size:1.05rem">
+              <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
+              <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
+            </div>`;
+        }
+      }).catch(() => {
+        const progressEl = document.getElementById('drug-progress-content');
+        if (progressEl) {
+          progressEl.textContent = 'Could not check drug usage — try refreshing.';
+        }
+      });
     }
   }
 }
