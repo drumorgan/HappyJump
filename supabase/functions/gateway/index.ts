@@ -1271,6 +1271,52 @@ async function handleCheckDrugUsage(body: any) {
   return json({ xanax_used: xanaxUsed, ecstasy_used: ecstasyUsed, debug });
 }
 
+// Admin-only: run the same Xanax/Ecstasy log scan as handleCheckDrugUsage
+// but with a caller-supplied API key and arbitrary `from_ts`. Lets the
+// operator test detection against their own Torn account without needing
+// an actual transaction row. Returns the full debug payload.
+async function handleAdminTestDrugCheck(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { api_key, from_ts } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  // Validate API key + grab identity so the operator can confirm it's theirs
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  // from_ts is optional — if omitted, scan default window (no cutoff)
+  const fromTs = from_ts ? Number(from_ts) : undefined;
+  if (from_ts && (!Number.isFinite(fromTs) || fromTs! <= 0)) {
+    return json({ error: 'from_ts must be a positive unix timestamp in seconds' }, 400);
+  }
+
+  console.log(`[admin-test-drug-check] player=${identData.name} [${identData.player_id}] fromTs=${fromTs}`);
+
+  const [xanaxResult, ecstasyUsage] = await Promise.all([
+    countXanaxUsageInLog(api_key, fromTs),
+    findEcstasyUsageInLog(api_key, fromTs),
+  ]);
+
+  return json({
+    player: {
+      name: identData.name,
+      id: String(identData.player_id),
+      level: identData.level || null,
+    },
+    from_ts: fromTs ?? null,
+    from_iso: fromTs ? new Date(fromTs * 1000).toISOString() : null,
+    xanax_count: xanaxResult.count,
+    xanax_pages: xanaxResult.pages,
+    xanax_log_entries_scanned: xanaxResult.totalEntries,
+    xanax_details: xanaxResult.details,
+    ecstasy_found: !!ecstasyUsage,
+    ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
+  });
+}
+
 async function handleVerifyPayment(body: any) {
   const { api_key, txn_id } = body;
   if (!api_key || !txn_id) {
@@ -1973,6 +2019,8 @@ serve(async (req) => {
         return await handleAdminCheckEcstasy(body);
       case 'admin-check-payment':
         return await handleAdminCheckPayment(body);
+      case 'admin-test-drug-check':
+        return await handleAdminTestDrugCheck(req, body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
