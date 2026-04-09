@@ -155,7 +155,7 @@ function buildCoverageHTML(product, pricing, config) {
     <tbody>${rows}</tbody>
   </table>`;
 
-  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">7 days</strong> from purchase. Report any OD within that window and you're fully covered.</p>`;
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 7 days from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
 
   return html;
 }
@@ -617,7 +617,6 @@ function renderActiveDeal(transactions) {
             <li><em>(OPTIONAL)</em> Refill with Points</li>
             <li>Dump all Energy at the Gym</li>
             <li>Wait for drug cooldown to clear</li>
-            <li>Repeat</li>
           </ol>
         </div>`;
 
