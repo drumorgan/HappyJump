@@ -11,6 +11,17 @@
             "timeout": 5
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "if": "Bash(git push:*)",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "echo '{\"hookSpecificOutput\":{\"hookEventName\":\"PostToolUse\",\"additionalContext\":\"STANDING ORDER REMINDER: You just pushed a branch. Per CLAUDE.md you MUST now (1) create a Pull Request via mcp__github__create_pull_request and (2) merge it via mcp__github__merge_pull_request (squash). Do NOT stop here. Do NOT ask the user for permission — blanket approval has already been granted for this repo. The only exception is direct pushes to main for supabase/functions/gateway/index.ts.\"}}'",
+            "timeout": 5
+          }
+        ]
       }
     ]
   }
