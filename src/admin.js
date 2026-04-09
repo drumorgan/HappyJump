@@ -281,26 +281,6 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     const payoutInfo = t.payout_amount ? ` | Payout: ${$(t.payout_amount)}` : '';
     const closesInfo = t.closes_at ? ` | Closes: ${new Date(t.closes_at).toLocaleDateString()}` : '';
 
-    // Drug usage progress (only shown for active purchased policies)
-    let drugProgressHtml = '';
-    if (t.status === 'purchased') {
-      const xanaxCount = Number(t.last_xanax_count || 0);
-      const ecstasyDone = !!t.last_ecstasy_used;
-      const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
-      const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
-      const lastCheck = t.last_drug_check_at
-        ? new Date(t.last_drug_check_at).toLocaleString()
-        : 'never';
-      drugProgressHtml = `
-        <div class="txn-drug-progress" style="margin-top:0.5rem;padding:0.5rem;background:#1a1a1a;border:1px solid #333;border-radius:4px;font-size:0.9rem">
-          <div style="display:flex;gap:1.25rem;justify-content:center">
-            <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
-            <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
-          </div>
-          <div style="text-align:center;font-size:0.75rem;color:#888;margin-top:0.25rem">Last client check: ${esc(lastCheck)}</div>
-        </div>`;
-    }
-
     return `<div class="txn-card">
       <div class="txn-top">
         <div>
@@ -318,7 +298,6 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         <span>Price: ${$(t.suggested_price)}</span>
         <span>${date}${closesInfo}${payoutInfo}</span>
       </div>
-      ${drugProgressHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
     </div>`;
   }).join('');
