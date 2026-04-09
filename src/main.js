@@ -10,7 +10,7 @@ const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;
-let selectedProduct = 'package'; // 'package' | 'insurance' | 'ecstasy_only'
+let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
