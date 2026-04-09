@@ -199,6 +199,46 @@ async function adjustReserve(supabase: any, amount: number) {
 const ECSTASY_ITEM_ID = 197;
 const XANAX_ITEM_ID = 206;
 
+// Verified Torn narrative samples (provided by operator) — all 4 matched:
+//   "You used some Xanax gaining 250 energy and 75 happiness"
+// The drug name lives in the narrative, NOT in entry.title (which is a
+// category label like "Item use"). Detection matches on narrative text.
+
+function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): boolean {
+  // Build a haystack from every stringy field Torn might put the narrative in
+  const parts: string[] = [];
+  if (entry.title) parts.push(String(entry.title));
+  if (entry.log) parts.push(String(entry.log));
+  if (entry.category) parts.push(String(entry.category));
+  if (entry.data) parts.push(JSON.stringify(entry.data));
+  if (entry.params) parts.push(JSON.stringify(entry.params));
+  const hay = parts.join(' ').toLowerCase();
+
+  // Exclude overdoses — those aren't successful uses
+  if (hay.includes('overdos')) return false;
+  // Exclude buys / trades / sends / receives — only successful uses count
+  if (/\b(bought|sold|sent|received|dumped|bazaar|market|trade|gift)\b/.test(hay)) return false;
+
+  // Primary signal: the item ID appears in structured data
+  const itemField = entry.data?.item;
+  const structuredMatch =
+    itemField === itemId ||
+    itemField === String(itemId) ||
+    (entry.data?.items && (itemId in entry.data.items || String(itemId) in entry.data.items));
+
+  // Narrative signal: drug name plus a "use" verb or a known stat gain phrase
+  const drugLower = drugName.toLowerCase();
+  const narrativeMatch =
+    hay.includes(drugLower) &&
+    (hay.includes('used some ' + drugLower) ||
+      hay.includes('used ' + drugLower) ||
+      hay.includes('gaining') ||
+      hay.includes('energy') ||
+      hay.includes('happiness'));
+
+  return structuredMatch || narrativeMatch;
+}
+
 async function findEcstasyUsageInLog(
   apiKey: string,
   sinceTimestamp?: number, // only find usage after this time (e.g. purchased_at)
@@ -207,7 +247,6 @@ async function findEcstasyUsageInLog(
   let toParam = '';
   let earliestUsage: { timestamp: number; detail: string } | null = null;
   const cutoff = sinceTimestamp || 0;
-  // Use `from=` to filter server-side so pagination only walks the policy window
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
 
   for (let page = 0; page < maxPages; page++) {
@@ -222,26 +261,20 @@ async function findEcstasyUsageInLog(
     for (const entry of entries) {
       const ts = entry.timestamp || 0;
       if (ts < cutoff) continue; // before our window
+      if (!entryMatchesDrugUse(entry, 'Ecstasy', ECSTASY_ITEM_ID)) continue;
 
-      // Primary: structured data check (item ID 197 = Ecstasy)
-      if (entry.data?.item === ECSTASY_ITEM_ID && entry.title?.toLowerCase().includes('item use')) {
-        earliestUsage = { timestamp: ts, detail: `Ecstasy used (item ${ECSTASY_ITEM_ID}) at ${new Date(ts * 1000).toISOString()}` };
-        continue; // keep scanning for earlier usage
-      }
-
-      // Fallback: text matching
-      const text = [entry.title || '', entry.data ? JSON.stringify(entry.data) : ''].join(' ').toLowerCase();
-      if (text.includes('ecstasy') && text.includes('happ') && !text.includes('overdos')) {
-        if (!earliestUsage || ts < earliestUsage.timestamp) {
-          earliestUsage = { timestamp: ts, detail: `Ecstasy used (text match) at ${new Date(ts * 1000).toISOString()}` };
-        }
+      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+      if (!earliestUsage || ts < earliestUsage.timestamp) {
+        earliestUsage = {
+          timestamp: ts,
+          detail: `Ecstasy @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
+        };
       }
     }
 
-    // Find oldest timestamp in this batch to paginate further back
     const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
-    if (oldestTs <= cutoff) break; // gone back past our window
-    if (entries.length < 100) break; // no more pages
+    if (oldestTs <= cutoff) break;
+    if (entries.length < 100) break;
     toParam = `&to=${oldestTs - 1}`;
   }
 
@@ -254,12 +287,14 @@ async function countXanaxUsageInLog(
   apiKey: string,
   sinceTimestamp?: number,
   maxPages = 20,
-): Promise<{ count: number; details: string[] }> {
+): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
   let toParam = '';
   const uses: { timestamp: number; detail: string }[] = [];
   const cutoff = sinceTimestamp || 0;
-  // Use `from=` so server filters to the policy window — critical for active users
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  const seenTs = new Set<number>();
+  let pagesFetched = 0;
+  let totalEntries = 0;
 
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
@@ -269,22 +304,23 @@ async function countXanaxUsageInLog(
 
     const entries = Object.values(data.log) as any[];
     if (entries.length === 0) break;
+    pagesFetched++;
+    totalEntries += entries.length;
 
     for (const entry of entries) {
       const ts = entry.timestamp || 0;
       if (ts < cutoff) continue;
+      if (!entryMatchesDrugUse(entry, 'Xanax', XANAX_ITEM_ID)) continue;
 
-      // Primary: structured data check (item ID 206 = Xanax)
-      if (entry.data?.item === XANAX_ITEM_ID && entry.title?.toLowerCase().includes('item use')) {
-        uses.push({ timestamp: ts, detail: `Xanax used (item ${XANAX_ITEM_ID}) at ${new Date(ts * 1000).toISOString()}` });
-        continue;
-      }
+      // Dedupe by timestamp — same use can appear on adjacent pages during pagination
+      if (seenTs.has(ts)) continue;
+      seenTs.add(ts);
 
-      // Fallback: text matching — "xanax" in title with "item use" context, exclude ODs
-      const title = (entry.title || '').toLowerCase();
-      if (title.includes('xanax') && title.includes('use') && !title.includes('overdos')) {
-        uses.push({ timestamp: ts, detail: `Xanax used (text match) at ${new Date(ts * 1000).toISOString()}` });
-      }
+      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+      uses.push({
+        timestamp: ts,
+        detail: `Xanax @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
+      });
     }
 
     const oldestTs = Math.min(...entries.map((e: any) => e.timestamp || Infinity));
@@ -293,7 +329,14 @@ async function countXanaxUsageInLog(
     toParam = `&to=${oldestTs - 1}`;
   }
 
-  return { count: uses.length, details: uses.map(u => u.detail) };
+  // Sort uses oldest → newest so the debug list reads naturally
+  uses.sort((a, b) => a.timestamp - b.timestamp);
+  return {
+    count: uses.length,
+    details: uses.map((u) => u.detail),
+    pages: pagesFetched,
+    totalEntries,
+  };
 }
 
 // ── Auto-close expired transactions ──────────────────────────────────
@@ -1115,11 +1158,14 @@ async function handleCheckDrugUsage(body: any) {
   const xanaxUsed = Math.min(xanaxResult.count, 4); // cap at 4 for display
   const ecstasyUsed = !!ecstasyUsage;
 
-  // Debug info surfaced to the frontend so client/operator can verify detection
+  // Debug info surfaced to the client so they (and the operator inspecting
+  // the client's view) can verify detection against the Torn log.
   const debug = {
     purchased_at: txn.purchased_at,
     from_ts: fromTs,
     xanax_raw_count: xanaxResult.count,
+    xanax_pages: xanaxResult.pages,
+    xanax_log_entries_scanned: xanaxResult.totalEntries,
     xanax_details: xanaxResult.details,
     ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
   };
