@@ -554,6 +554,7 @@ configForm.addEventListener('submit', async (e) => {
     statusEl.style.color = '#6bff8e';
     showToast('Config updated', 'success');
     window._reserveManuallyEdited = false;
+    await loadStats();
   } catch (e) {
     saveBtn.disabled = false;
     statusEl.textContent = 'Save failed';
