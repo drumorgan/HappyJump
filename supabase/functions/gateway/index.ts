@@ -801,7 +801,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Always fetch torn_id from the transaction itself (don't rely on request body)
   const { data: txnRecord, error: fetchErr } = await supabase
     .from('transactions')
-    .select('torn_id, torn_name, xanax_payout, ecstasy_payout, payout_amount')
+    .select('torn_id, torn_name, status, xanax_payout, ecstasy_payout, payout_amount')
     .eq('id', txn_id)
     .single();
 
@@ -822,8 +822,22 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     updates.expires_at = null; // Clear request expiry once purchased
   }
 
+  // Determine reserve transition direction
+  const oldStatus = txnRecord.status;
+  const reserveReleasedStates = ['closed_clean', 'payout_sent', 'rejected'];
+  const reserveLockedStates = ['requested', 'purchased', 'od_xanax', 'od_ecstasy'];
+  const wasReleased = reserveReleasedStates.includes(oldStatus);
+  const willBeLocked = reserveLockedStates.includes(new_status);
+  const wasLocked = reserveLockedStates.includes(oldStatus);
+  const willBeReleased = reserveReleasedStates.includes(new_status);
+
   if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
     updates.closed_at = new Date().toISOString();
+  }
+
+  // Clear closed_at when transitioning back to an active/OD state
+  if (new_status === 'purchased' || new_status === 'od_xanax' || new_status === 'od_ecstasy') {
+    updates.closed_at = null;
   }
 
   // For OD statuses, calculate payout from snapshots
@@ -841,8 +855,19 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
 
   if (updateErr) return json({ error: updateErr.message }, 500);
 
-  // Reserve management: release lock on close/payout/reject (atomic)
-  if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
+  // Reserve management: transition-aware lock/release
+  // Re-lock reserve when moving FROM a closed state TO an active state
+  if (wasReleased && willBeLocked) {
+    try {
+      const ecsP = Number(txnRecord.ecstasy_payout || 0);
+      await adjustReserve(supabase, -ecsP);
+      console.log(`[admin-update-status] Reserve re-locked: -${ecsP} for txn ${txn_id} (${oldStatus} → ${new_status})`);
+    } catch (e) {
+      console.error(`[admin-update-status] Reserve re-lock failed for txn ${txn_id}:`, e?.message || e);
+    }
+  }
+  // Release reserve when moving FROM an active state TO a closed state
+  if (wasLocked && willBeReleased) {
     try {
       const ecsP = Number(txnRecord.ecstasy_payout || 0);
       let releaseAmount: number;
@@ -853,7 +878,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
         releaseAmount = ecsP;
       }
       await adjustReserve(supabase, releaseAmount);
-      console.log(`[admin-update-status] Reserve adjusted: +${releaseAmount} for txn ${txn_id}`);
+      console.log(`[admin-update-status] Reserve released: +${releaseAmount} for txn ${txn_id} (${oldStatus} → ${new_status})`);
     } catch (e) {
       console.error(`[admin-update-status] Reserve release failed for txn ${txn_id}:`, e?.message || e);
     }
