@@ -112,6 +112,14 @@ function constantTimeEqual(a: string, b: string): boolean {
   return diff === 0;
 }
 
+// Returns the canonical "auth failed" response. Intentionally opaque: no
+// `code` field, no distinction between "player not registered" and "wrong
+// token" and "rate-limited-out". Callers that reach this path can't probe
+// the table for registered player_ids.
+function sessionInvalid(): Response {
+  return json({ error: 'session_invalid' }, 401);
+}
+
 // Resolve a Torn API key from either a direct body field (`key` / `api_key`)
 // or from session credentials (`player_id` + `session_token`). Returns either
 // `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
@@ -136,26 +144,30 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
     .eq('torn_player_id', Number(player_id))
     .maybeSingle();
 
-  if (!row) return json({ error: 'session_invalid', code: 'not_found' }, 401);
-
+  // Compute the provided token hash whether or not the row exists — keeps
+  // response timing indistinguishable between "registered" and "unregistered"
+  // player_ids so this endpoint can't be used as a membership oracle.
   const providedHash = await sha256Base64(String(session_token));
+
+  if (!row) return sessionInvalid();
+
   if (!constantTimeEqual(providedHash, row.session_token_hash)) {
     const next = (row.failed_attempts || 0) + 1;
     if (next >= 5) {
-      // Self-destruct after 5 bad attempts. Legitimate user can re-login with
-      // their Torn key; attacker now has no row to guess against.
+      // Self-destruct after 5 bad attempts. Response is the same opaque 401
+      // so an attacker can't tell they just burned the last strike.
       await supabase.from('player_secrets').delete().eq('torn_player_id', row.torn_player_id);
-      return json({ error: 'session_invalid', code: 'locked' }, 401);
+    } else {
+      await supabase
+        .from('player_secrets')
+        .update({ failed_attempts: next })
+        .eq('torn_player_id', row.torn_player_id);
     }
-    await supabase
-      .from('player_secrets')
-      .update({ failed_attempts: next })
-      .eq('torn_player_id', row.torn_player_id);
-    return json({ error: 'session_invalid', code: 'invalid_session' }, 401);
+    return sessionInvalid();
   }
 
   const key = await decryptApiKey(row.api_key_enc, row.api_key_iv);
-  if (!key) return json({ error: 'session_invalid', code: 'decrypt_failed' }, 500);
+  if (!key) return sessionInvalid();
   return { key, torn_id: String(row.torn_player_id) };
 }
 
@@ -750,14 +762,16 @@ async function handleAutoLogin(body: any) {
   const supabase = serviceClient();
 
   if (identData.error) {
+    // Key was revoked / invalid on Torn's side — row is useless, drop it.
+    // Opaque 401 so external callers can't distinguish this from a bad token.
     await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
-    return json({ error: 'session_invalid', code: 'key_invalid' }, 401);
+    return sessionInvalid();
   }
 
   // Defence-in-depth: stored player_id must still match what Torn reports.
   if (String(identData.player_id) !== String(player_id)) {
     await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
-    return json({ error: 'session_invalid', code: 'mismatch' }, 401);
+    return sessionInvalid();
   }
 
   await supabase
