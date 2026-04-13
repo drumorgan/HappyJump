@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats, setApiKey, autoLogin, revokeSession } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -9,23 +9,47 @@ const loadingEl = document.getElementById('loading');
 const form = document.getElementById('api-form');
 const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
-let currentApiKey = null;
+let currentApiKey = null;          // used during the manual-login session only
+let currentSession = null;          // { player_id, session_token } after set-api-key/auto-login
 let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
-// --- API key cache (localStorage) ---
-// Stored only in the user's own browser so returning visitors don't have to
-// re-enter their key each visit. Cleared on explicit Sign Out.
-const API_KEY_STORAGE = 'happyjump_api_key';
-function loadSavedApiKey() {
-  try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch { return ''; }
+// --- Session storage ---
+// We store only { player_id, session_token } in localStorage. The raw Torn API
+// key never touches the client beyond initial form entry — it's encrypted
+// server-side (AES-256-GCM) and fetched on demand via session auth.
+const SESSION_STORAGE = 'happyjump_session';
+const LEGACY_KEY_STORAGE = 'happyjump_api_key';   // PR #150 cache — migrated on first load
+
+function loadSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_STORAGE);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    if (parsed && parsed.player_id && parsed.session_token) return parsed;
+  } catch {}
+  return null;
 }
-function saveApiKey(key) {
-  try { localStorage.setItem(API_KEY_STORAGE, key); } catch {}
+function saveSession(session) {
+  try { localStorage.setItem(SESSION_STORAGE, JSON.stringify(session)); } catch {}
 }
-function clearSavedApiKey() {
-  try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
+function clearSession() {
+  try { localStorage.removeItem(SESSION_STORAGE); } catch {}
+}
+function loadLegacyKey() {
+  try { return localStorage.getItem(LEGACY_KEY_STORAGE) || ''; } catch { return ''; }
+}
+function clearLegacyKey() {
+  try { localStorage.removeItem(LEGACY_KEY_STORAGE); } catch {}
+}
+
+// Any call that previously needed the raw API key now prefers a session.
+// Falls back to the in-memory raw key (manual-login path).
+function currentAuth() {
+  if (currentSession) return currentSession;
+  if (currentApiKey) return currentApiKey;
+  return null;
 }
 
 function showToast(msg, type) { _showToast(toastEl, msg, type); }
@@ -303,15 +327,73 @@ async function initStorefront() {
 
 initStorefront();
 
-// --- Auto-login for returning visitors with a cached key ---
-(function autoLogin() {
-  const saved = loadSavedApiKey();
-  if (!saved) return;
-  // Pre-fill both inputs so they can edit/retry if auto-login fails silently
-  input.value = saved;
-  topInput.value = saved;
-  // Fire the normal submit flow (shows loading spinner, handles errors, etc.)
-  form.dispatchEvent(new Event('submit', { cancelable: true }));
+// --- Auto-login for returning visitors ---
+// Preferred path: use a stored session token (raw key never leaves the server).
+// Migration path: if a legacy plaintext key from PR #150 is present, silently
+// upgrade it to a session by calling set-api-key, then drop the legacy entry.
+(async function tryAutoLogin() {
+  const session = loadSession();
+  if (session) {
+    loadingEl.classList.remove('hidden');
+    try {
+      const [player, config] = await Promise.all([
+        autoLogin(session.player_id, session.session_token),
+        getConfig(),
+      ]);
+      loadTierMargins(config);
+
+      let history = { transactions: [], clean_count: 0, has_active_deal: false };
+      try {
+        const [histResult, prices] = await Promise.all([
+          getPlayerTransactions(player.torn_id),
+          fetchMarketPrices(session).catch(() => null),
+        ]);
+        history = histResult;
+        if (prices) {
+          if (prices.xanax) config.xanax_price = prices.xanax.market_value;
+          if (prices.edvd) config.edvd_price = prices.edvd.market_value;
+          if (prices.ecstasy) config.ecstasy_price = prices.ecstasy.market_value;
+        }
+      } catch (histErr) {
+        console.warn('History/prices fetch failed during auto-login:', histErr.message);
+      }
+
+      if (history.is_blocked) {
+        loadingEl.classList.add('hidden');
+        clearSession();
+        currentSession = null;
+        showToast('Your account has been blocked. Contact Giro for details.', 'error');
+        return;
+      }
+
+      loadingEl.classList.add('hidden');
+      currentSession = session;
+      currentApiKey = null; // raw key lives server-side now
+      showPlayerView(player, config, history, null);
+    } catch (err) {
+      // key_invalid / invalid_session / locked / not_found — drop the session
+      // so the user sees the normal form and can re-enter their key.
+      loadingEl.classList.add('hidden');
+      clearSession();
+      currentSession = null;
+      console.warn('Auto-login failed, falling back to manual form:', err.message);
+    }
+    return;
+  }
+
+  // --- Legacy migration (from PR #150 plaintext cache) ---
+  const legacy = loadLegacyKey();
+  if (legacy) {
+    input.value = legacy;
+    topInput.value = legacy;
+    // Normal submit flow will: validate, fire set-api-key, save session, and
+    // clearLegacyKey() on success. If it fails, we clear the legacy here too.
+    try {
+      form.dispatchEvent(new Event('submit', { cancelable: true }));
+    } catch {
+      clearLegacyKey();
+    }
+  }
 })();
 
 // --- Form submit: validate player ---
@@ -357,13 +439,23 @@ form.addEventListener('submit', async (e) => {
 
     loadingEl.classList.add('hidden');
     currentApiKey = key;
-    saveApiKey(key);
+
+    // Fire-and-forget: encrypt + store the key server-side so future visits
+    // can auto-login without re-entry. We don't block the UI on this.
+    setApiKey(key).then((res) => {
+      if (res?.success && res.player_id && res.session_token) {
+        currentSession = { player_id: String(res.player_id), session_token: res.session_token };
+        saveSession(currentSession);
+        // Legacy plaintext cache is no longer needed — clean it up.
+        clearLegacyKey();
+      }
+    }).catch((err) => {
+      console.warn('set-api-key failed (auto-login disabled for this session):', err.message);
+    });
+
     showPlayerView(player, config, history, key);
   } catch (err) {
     loadingEl.classList.add('hidden');
-    // If the failing key was our cached one, drop it so the user isn't stuck
-    // in an auto-login loop with a revoked / invalid key.
-    if (loadSavedApiKey() === key) clearSavedApiKey();
     showToast(err.message, 'error');
   } finally {
     submitBtn.disabled = false;
@@ -512,9 +604,16 @@ function showPlayerView(player, config, history, apiKey) {
   // Tier ladder with current highlight
   renderTierLadder(cleanCount, config);
 
-  // Back button — explicit sign-out clears the cached key
+  // Back button — explicit sign-out revokes the server-side session and
+  // clears everything client-side.
   document.getElementById('back-btn').onclick = () => {
-    clearSavedApiKey();
+    if (currentSession) {
+      revokeSession(currentSession.player_id, currentSession.session_token)
+        .catch((err) => console.warn('revoke-session failed:', err.message));
+    }
+    clearSession();
+    clearLegacyKey();
+    currentSession = null;
     currentApiKey = null;
     input.value = '';
     topInput.value = '';
@@ -685,7 +784,7 @@ function renderActiveDeal(transactions) {
     }
 
     // Proactive check: if purchased, check drug usage progress and auto-close if complete
-    if (activeTxn.status === 'purchased' && currentApiKey) {
+    if (activeTxn.status === 'purchased' && currentAuth()) {
       runDrugUsageCheck(activeTxn);
       const refreshBtn = document.getElementById('drug-progress-refresh');
       if (refreshBtn) {
@@ -708,8 +807,9 @@ function renderActiveDeal(transactions) {
 }
 
 function runDrugUsageCheck(activeTxn) {
-  if (!currentApiKey) return Promise.resolve();
-  return checkDrugUsage(currentApiKey, activeTxn.id).then((result) => {
+  const auth = currentAuth();
+  if (!auth) return Promise.resolve();
+  return checkDrugUsage(auth, activeTxn.id).then((result) => {
     if (result && result.policy_closed) {
       showToast(result.detail || 'Happy Jump complete — policy closed clean!', 'success');
       return getPlayerTransactions(activeTxn.torn_id || '').then((h) => {
@@ -744,7 +844,8 @@ async function handleReportOd(e) {
   const txnId = btn.dataset.txnId;
   const statusEl = document.getElementById('od-report-status');
 
-  if (!currentApiKey) {
+  const auth = currentAuth();
+  if (!auth) {
     statusEl.textContent = 'Session expired — please re-enter your API key.';
     statusEl.className = 'od-report-error';
     return;
@@ -755,7 +856,7 @@ async function handleReportOd(e) {
   statusEl.textContent = '';
 
   try {
-    const result = await reportOd(currentApiKey, txnId);
+    const result = await reportOd(auth, txnId);
     if (result.verified) {
       statusEl.textContent = result.detail;
       statusEl.className = 'od-report-success';
@@ -789,7 +890,8 @@ async function handleVerifyPayment(e) {
   const txnId = btn.dataset.txnId;
   const statusEl = document.getElementById('payment-verify-status');
 
-  if (!currentApiKey) {
+  const auth = currentAuth();
+  if (!auth) {
     statusEl.textContent = 'Session expired — please re-enter your API key.';
     statusEl.className = 'od-report-error';
     return;
@@ -800,7 +902,7 @@ async function handleVerifyPayment(e) {
   statusEl.textContent = '';
 
   try {
-    const result = await verifyPayment(currentApiKey, txnId);
+    const result = await verifyPayment(auth, txnId);
     if (result.verified) {
       statusEl.textContent = result.detail;
       statusEl.className = 'od-report-success';

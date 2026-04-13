@@ -52,10 +52,49 @@ export async function validatePlayer(apiKey) {
 }
 
 /**
- * Proxy a Torn API call through the gateway.
+ * Store an encrypted copy of the user's API key server-side and receive an
+ * opaque session token. The raw key is never stored client-side; only
+ * { player_id, session_token } is kept in localStorage for later auto-login.
  */
-export async function fetchTornProxy(apiKey, section, id, selections) {
-  const data = await gateway('torn-proxy', { key: apiKey, section, id, selections });
+export async function setApiKey(apiKey) {
+  return gateway('set-api-key', { api_key: apiKey });
+}
+
+/**
+ * Auto-login using a stored session. Re-validates the key against Torn; on
+ * any failure the server deletes the encrypted row and returns an error so
+ * the client can fall back to the manual login form.
+ */
+export async function autoLogin(playerId, sessionToken) {
+  return gateway('auto-login', { player_id: String(playerId), session_token: sessionToken });
+}
+
+/**
+ * Revoke a session (Sign Out) — deletes the encrypted row server-side.
+ */
+export async function revokeSession(playerId, sessionToken) {
+  return gateway('revoke-session', { player_id: String(playerId), session_token: sessionToken });
+}
+
+// Auth payload shape: either { key } (manual login path) or
+// { player_id, session_token } (auto-login path). Accepts a string (treated
+// as a raw key for backwards-compat) or an object with either shape.
+function authPayload(auth) {
+  if (!auth) return {};
+  if (typeof auth === 'string') return { key: auth };
+  if (auth.key || auth.api_key) return { key: auth.key || auth.api_key };
+  if (auth.player_id && auth.session_token) {
+    return { player_id: String(auth.player_id), session_token: auth.session_token };
+  }
+  return {};
+}
+
+/**
+ * Proxy a Torn API call through the gateway. `auth` accepts either a raw key
+ * string or a session object `{ player_id, session_token }`.
+ */
+export async function fetchTornProxy(auth, section, id, selections) {
+  const data = await gateway('torn-proxy', { ...authPayload(auth), section, id, selections });
   // Torn API errors come in the response body, not as gateway errors
   if (data.error) {
     const err = data.error;
@@ -67,9 +106,9 @@ export async function fetchTornProxy(apiKey, section, id, selections) {
 /**
  * Fetch market prices for Happy Jump items via the Torn API proxy.
  */
-export async function fetchMarketPrices(apiKey) {
+export async function fetchMarketPrices(auth) {
   const ITEM_IDS = { xanax: 206, ecstasy: 197, edvd: 366 };
-  const data = await fetchTornProxy(apiKey, 'torn', '', 'items');
+  const data = await fetchTornProxy(auth, 'torn', '', 'items');
 
   const prices = {};
   for (const [name, id] of Object.entries(ITEM_IDS)) {
@@ -144,23 +183,25 @@ export async function adminRejectAndBlock(tornId) {
 
 /**
  * Check drug usage progress (Xanax count + Ecstasy) — auto-closes if all used.
+ * `auth` accepts a raw key string or a session object.
  */
-export async function checkDrugUsage(apiKey, txnId) {
-  return gateway('check-drug-usage', { api_key: apiKey, txn_id: txnId });
+export async function checkDrugUsage(auth, txnId) {
+  return gateway('check-drug-usage', { ...authPayload(auth), txn_id: txnId });
 }
 
 /**
- * Report and verify an OD — client provides their API key for verification.
+ * Report and verify an OD. `auth` accepts a raw key string or a session object.
  */
-export async function reportOd(apiKey, txnId) {
-  return gateway('report-od', { api_key: apiKey, txn_id: txnId });
+export async function reportOd(auth, txnId) {
+  return gateway('report-od', { ...authPayload(auth), txn_id: txnId });
 }
 
 /**
- * Verify payment — client provides their API key so gateway can check events for money sent to operator.
+ * Verify payment — gateway checks events for money sent to operator.
+ * `auth` accepts a raw key string or a session object.
  */
-export async function verifyPayment(apiKey, txnId) {
-  return gateway('verify-payment', { api_key: apiKey, txn_id: txnId });
+export async function verifyPayment(auth, txnId) {
+  return gateway('verify-payment', { ...authPayload(auth), txn_id: txnId });
 }
 
 export async function testApiAccess(apiKey) {
