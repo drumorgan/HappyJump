@@ -1117,18 +1117,14 @@ async function handleReportOd(body: any) {
     });
   }
 
-  // If Ecstasy was used successfully and the claimed OD is on something other than Ecstasy — reject
-  // (the covered Ecstasy tab is spent).
-  // When odDrug === 'ecstasy' we must NOT reject: Torn logs the Ecstasy as "used" even when that use
-  // caused the OD (the OD itself lives in the events endpoint, not the log entry), so `ecstasyUsed`
-  // is the companion signal for the covered Ecstasy OD — pay it out.
-  if (ecstasyUsed && odDrug !== 'ecstasy') {
-    return json({
-      verified: false,
-      torn_id: tornId,
-      detail: `Your Ecstasy tab was already taken successfully — the insured use is consumed. This OD is not covered under this policy.`,
-    });
-  }
+  // No standalone "ecstasy already used" rejection — it was causing false negatives:
+  //   • For an Ecstasy OD: Torn writes an Ecstasy "use" log entry for the OD itself (the
+  //     overdose is in the events endpoint, not the log narrative), so ecstasyUsed=true IS
+  //     the covered OD and must pay out.
+  //   • For a Xanax OD (on a covered pill 1–4) after the Ecstasy was already used successfully,
+  //     the Xanax OD is still covered — it's the Xanax pill that's being claimed.
+  // Real protections: xanaxUsedCount>=4 check above (uncovered extra Xanax),
+  // od_event_timestamp replay prevention below, and single-active-deal guard on purchase.
 
   if (!odDrug) {
     const playerStatus = identData.status?.description || 'unknown';
