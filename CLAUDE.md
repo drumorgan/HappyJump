@@ -202,7 +202,19 @@ All calls go through the gateway Edge Function. Client never sees API keys.
 - `GET /torn/?selections=items` — item market prices for Xanax (ID 206), EDVD (366), Ecstasy (197)
 - `GET /user/{torn_id}/events` — verify OD event in log
 
-Cache market prices (refresh every 15 min max). Client-submitted API key is used only once server-side for identity verification and is never persisted on the server. For UX convenience it is cached in the user's own browser via `localStorage` (key `happyjump_api_key`) so returning visitors are auto-logged-in; this cache is cleared on explicit Sign Out or on a failed auto-validation (e.g. revoked key).
+Cache market prices (refresh every 15 min max).
+
+**API key handling (encrypted auto-login):**
+- On first login, the key is validated against Torn, then **encrypted with AES-256-GCM** and stored server-side in `player_secrets` (see migration `010_player_secrets.sql`).
+- The master encryption key lives in the Edge Function environment variable `API_KEY_ENCRYPTION_KEY` (base64 of 32 random bytes — generate with `openssl rand -base64 32`).
+- The server issues an opaque random `session_token`; its **SHA-256 hash** is stored alongside the encrypted key. The raw token is returned to the client **exactly once**.
+- The browser stores only `{ player_id, session_token }` under `localStorage['happyjump_session']` — the raw Torn API key never persists client-side.
+- On return visits, the client calls `auto-login`. The gateway looks up the row, constant-time-compares the token hash, decrypts the key, and re-validates it against Torn. If Torn rejects it (revoked key), the row is deleted and the client falls back to the manual form.
+- 5 consecutive bad session tokens self-destructs the row (brute-force protection). Legitimate users can just re-login with their Torn key.
+- Sign Out calls `revoke-session`, which verifies the token and deletes the row — so signing out genuinely removes the server-side key, not just `localStorage`.
+- Legacy `happyjump_api_key` (plaintext cache from PR #150) is silently migrated to a session on first page load, then removed.
+
+**Session-aware gateway actions:** `set-api-key`, `auto-login`, `revoke-session`. Existing actions that take a Torn key (`torn-proxy`, `report-od`, `check-drug-usage`, `verify-payment`) accept either `{ key }` (legacy/manual) or `{ player_id, session_token }` (session). The gateway's `resolveApiKey(body)` helper handles the lookup/decrypt transparently.
 
 ## Git Workflow
 
