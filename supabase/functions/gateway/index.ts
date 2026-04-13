@@ -29,6 +29,136 @@ function serviceClient() {
   );
 }
 
+// ── Encrypted session storage (player_secrets) ───────────────────────
+// Raw Torn API keys are AES-256-GCM encrypted with a master key held in the
+// Edge Function environment. Browsers hold only { player_id, session_token };
+// the server stores SHA-256(session_token) so a DB leak can't be replayed
+// directly. See supabase/migrations/010_player_secrets.sql.
+
+let cachedEncKey: CryptoKey | null = null;
+
+async function getEncryptionKey(): Promise<CryptoKey | null> {
+  if (cachedEncKey) return cachedEncKey;
+  const raw = Deno.env.get('API_KEY_ENCRYPTION_KEY');
+  if (!raw) return null;
+  let keyBytes: Uint8Array;
+  try {
+    keyBytes = Uint8Array.from(atob(raw), (c) => c.charCodeAt(0));
+  } catch {
+    return null;
+  }
+  if (keyBytes.length !== 32) return null;
+  cachedEncKey = await crypto.subtle.importKey(
+    'raw',
+    keyBytes,
+    { name: 'AES-GCM', length: 256 },
+    false,
+    ['encrypt', 'decrypt'],
+  );
+  return cachedEncKey;
+}
+
+function b64Encode(bytes: Uint8Array): string {
+  let bin = '';
+  for (let i = 0; i < bytes.length; i++) bin += String.fromCharCode(bytes[i]);
+  return btoa(bin);
+}
+
+function b64Decode(s: string): Uint8Array {
+  const bin = atob(s);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function encryptApiKey(plain: string): Promise<{ ciphertext: string; iv: string } | null> {
+  const key = await getEncryptionKey();
+  if (!key) return null;
+  const iv = crypto.getRandomValues(new Uint8Array(12));
+  const encoded = new TextEncoder().encode(plain);
+  const cipherBuf = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, encoded);
+  return { ciphertext: b64Encode(new Uint8Array(cipherBuf)), iv: b64Encode(iv) };
+}
+
+async function decryptApiKey(ciphertext: string, iv: string): Promise<string | null> {
+  const key = await getEncryptionKey();
+  if (!key) return null;
+  try {
+    const plainBuf = await crypto.subtle.decrypt(
+      { name: 'AES-GCM', iv: b64Decode(iv) },
+      key,
+      b64Decode(ciphertext),
+    );
+    return new TextDecoder().decode(plainBuf);
+  } catch {
+    return null;
+  }
+}
+
+async function sha256Base64(input: string): Promise<string> {
+  const data = new TextEncoder().encode(input);
+  const hashBuf = await crypto.subtle.digest('SHA-256', data);
+  return b64Encode(new Uint8Array(hashBuf));
+}
+
+function randomTokenBase64(bytes = 32): string {
+  return b64Encode(crypto.getRandomValues(new Uint8Array(bytes)));
+}
+
+function constantTimeEqual(a: string, b: string): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) diff |= a.charCodeAt(i) ^ b.charCodeAt(i);
+  return diff === 0;
+}
+
+// Resolve a Torn API key from either a direct body field (`key` / `api_key`)
+// or from session credentials (`player_id` + `session_token`). Returns either
+// `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
+async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
+  const direct = body.key || body.api_key;
+  if (direct) return { key: direct, torn_id: '' };
+
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing api_key or session credentials' }, 400);
+  }
+
+  const enc = await getEncryptionKey();
+  if (!enc) {
+    return json({ error: 'Encryption not configured (missing API_KEY_ENCRYPTION_KEY)' }, 500);
+  }
+
+  const supabase = serviceClient();
+  const { data: row } = await supabase
+    .from('player_secrets')
+    .select('torn_player_id, api_key_enc, api_key_iv, session_token_hash, failed_attempts')
+    .eq('torn_player_id', Number(player_id))
+    .maybeSingle();
+
+  if (!row) return json({ error: 'session_invalid', code: 'not_found' }, 401);
+
+  const providedHash = await sha256Base64(String(session_token));
+  if (!constantTimeEqual(providedHash, row.session_token_hash)) {
+    const next = (row.failed_attempts || 0) + 1;
+    if (next >= 5) {
+      // Self-destruct after 5 bad attempts. Legitimate user can re-login with
+      // their Torn key; attacker now has no row to guess against.
+      await supabase.from('player_secrets').delete().eq('torn_player_id', row.torn_player_id);
+      return json({ error: 'session_invalid', code: 'locked' }, 401);
+    }
+    await supabase
+      .from('player_secrets')
+      .update({ failed_attempts: next })
+      .eq('torn_player_id', row.torn_player_id);
+    return json({ error: 'session_invalid', code: 'invalid_session' }, 401);
+  }
+
+  const key = await decryptApiKey(row.api_key_enc, row.api_key_iv);
+  if (!key) return json({ error: 'session_invalid', code: 'decrypt_failed' }, 500);
+  return { key, torn_id: String(row.torn_player_id) };
+}
+
 async function requireAuth(req: Request) {
   const authHeader = req.headers.get('Authorization');
   if (!authHeader) return null;
@@ -520,18 +650,156 @@ async function handleValidatePlayer(body: any) {
 }
 
 async function handleTornProxy(body: any) {
-  const { key, section, id, selections } = body;
-  if (!key || !section) {
-    return json({ error: 'Missing required fields: key, section' }, 400);
-  }
+  const { section, id, selections } = body;
+  if (!section) return json({ error: 'Missing required field: section' }, 400);
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
 
   const idPart = id ? `/${id}` : '';
   const selPart = selections ? `?selections=${selections}&` : '?';
-  const url = `${TORN_API}/${section}${idPart}${selPart}key=${key}`;
+  const url = `${TORN_API}/${section}${idPart}${selPart}key=${resolved.key}`;
 
   const res = await fetch(url);
   const data = await res.json();
   return json(data);
+}
+
+// ── Encrypted auto-login actions ────────────────────────────────────
+// set-api-key: called once per key (after a successful manual validation) to
+// encrypt+store the key and issue an opaque session token. The browser stores
+// { player_id, session_token } and never holds the raw key again.
+
+async function handleSetApiKey(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const enc = await getEncryptionKey();
+  if (!enc) {
+    return json({ error: 'Encryption not configured on server (missing API_KEY_ENCRYPTION_KEY)' }, 500);
+  }
+
+  // Validate against Torn — same permission check as validate-player so we
+  // don't store a key that won't work. Derive player_id from Torn's response
+  // (authoritative — never trust a claimed player_id from the client).
+  const [basicRes, eventsRes] = await Promise.all([
+    fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=events,log&limit=1&key=${api_key}`),
+  ]);
+  const [basic, events] = await Promise.all([basicRes.json(), eventsRes.json()]);
+  if (basic.error) return json({ error: `Torn API: ${basic.error.error}` }, 400);
+  if (events.error) {
+    return json({
+      error: 'Your API key is missing required permissions. Please create a new key with "Events" and "Log" access enabled.',
+    }, 400);
+  }
+
+  const tornPlayerId = Number(basic.player_id);
+  const session_token = randomTokenBase64(32);
+  const session_token_hash = await sha256Base64(session_token);
+  const encrypted = await encryptApiKey(api_key);
+  if (!encrypted) return json({ error: 'Encryption failed' }, 500);
+
+  const nowIso = new Date().toISOString();
+  const supabase = serviceClient();
+  const { error: upErr } = await supabase
+    .from('player_secrets')
+    .upsert(
+      {
+        torn_player_id: tornPlayerId,
+        api_key_enc: encrypted.ciphertext,
+        api_key_iv: encrypted.iv,
+        session_token_hash,
+        failed_attempts: 0,
+        updated_at: nowIso,
+        last_login_at: nowIso,
+      },
+      { onConflict: 'torn_player_id' },
+    );
+
+  if (upErr) return json({ error: `Failed to store session: ${upErr.message}` }, 500);
+
+  return json({
+    success: true,
+    player_id: String(tornPlayerId),
+    session_token,
+    torn_id: String(tornPlayerId),
+    torn_name: basic.name,
+    torn_faction: basic.faction?.faction_name || null,
+    torn_level: basic.level,
+    status: basic.status?.description || 'Unknown',
+  });
+}
+
+// auto-login: verifies the session, re-validates the stored key against Torn,
+// and returns player info (NOT the raw key). On any failure the row is deleted
+// so a revoked key or bad token self-cleans.
+async function handleAutoLogin(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+
+  // Re-validate the stored key against Torn. Revoked keys self-clean.
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${resolved.key}`);
+  const identData = await identRes.json();
+
+  const supabase = serviceClient();
+
+  if (identData.error) {
+    await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
+    return json({ error: 'session_invalid', code: 'key_invalid' }, 401);
+  }
+
+  // Defence-in-depth: stored player_id must still match what Torn reports.
+  if (String(identData.player_id) !== String(player_id)) {
+    await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
+    return json({ error: 'session_invalid', code: 'mismatch' }, 401);
+  }
+
+  await supabase
+    .from('player_secrets')
+    .update({ failed_attempts: 0, last_login_at: new Date().toISOString() })
+    .eq('torn_player_id', Number(player_id));
+
+  return json({
+    success: true,
+    torn_id: String(identData.player_id),
+    torn_name: identData.name,
+    torn_faction: identData.faction?.faction_name || null,
+    torn_level: identData.level,
+    status: identData.status?.description || 'Unknown',
+  });
+}
+
+// revoke-session: explicit Sign Out deletes the encrypted row so the server
+// no longer holds the key. Idempotent — unknown/invalid creds still respond ok
+// so callers can't use the endpoint as an oracle for valid player_ids.
+async function handleRevokeSession(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const supabase = serviceClient();
+  const { data: row } = await supabase
+    .from('player_secrets')
+    .select('session_token_hash')
+    .eq('torn_player_id', Number(player_id))
+    .maybeSingle();
+
+  if (!row) return json({ success: true });
+
+  const providedHash = await sha256Base64(String(session_token));
+  if (!constantTimeEqual(providedHash, row.session_token_hash)) {
+    return json({ success: true });
+  }
+
+  await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
+  return json({ success: true });
 }
 
 async function handleCreateTransaction(body: any) {
@@ -1013,10 +1281,12 @@ async function handleUpdateConfig(req: Request, body: any) {
 }
 
 async function handleReportOd(body: any) {
-  const { api_key, txn_id } = body;
-  if (!api_key || !txn_id) {
-    return json({ error: 'Missing api_key or txn_id' }, 400);
-  }
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
 
   // Validate the API key and get player identity
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
@@ -1216,8 +1486,12 @@ async function handleReportOd(body: any) {
 }
 
 async function handleCheckDrugUsage(body: any) {
-  const { api_key, txn_id } = body;
-  if (!api_key || !txn_id) return json({ error: 'Missing api_key or txn_id' }, 400);
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
 
   console.log(`[handleCheckDrugUsage] START txn_id=${txn_id}`);
 
@@ -1351,10 +1625,12 @@ async function handleAdminTestDrugCheck(req: Request, body: any) {
 }
 
 async function handleVerifyPayment(body: any) {
-  const { api_key, txn_id } = body;
-  if (!api_key || !txn_id) {
-    return json({ error: 'Missing api_key or txn_id' }, 400);
-  }
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
 
   // Validate the API key and get player identity
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
@@ -2017,6 +2293,12 @@ serve(async (req) => {
     switch (action) {
       case 'validate-player':
         return await handleValidatePlayer(body);
+      case 'set-api-key':
+        return await handleSetApiKey(body);
+      case 'auto-login':
+        return await handleAutoLogin(body);
+      case 'revoke-session':
+        return await handleRevokeSession(body);
       case 'torn-proxy':
         return await handleTornProxy(body);
       case 'create-transaction':
