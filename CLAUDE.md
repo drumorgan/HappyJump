@@ -202,7 +202,7 @@ All calls go through the gateway Edge Function. Client never sees API keys.
 - `GET /torn/?selections=items` — item market prices for Xanax (ID 206), EDVD (366), Ecstasy (197)
 - `GET /user/{torn_id}/events` — verify OD event in log
 
-Cache market prices (refresh every 15 min max). Client-submitted API key used only once for identity verification, never stored.
+Cache market prices (refresh every 15 min max). Client-submitted API key is used only once server-side for identity verification and is never persisted on the server. For UX convenience it is cached in the user's own browser via `localStorage` (key `happyjump_api_key`) so returning visitors are auto-logged-in; this cache is cleared on explicit Sign Out or on a failed auto-validation (e.g. revoked key).
 
 ## Git Workflow
 

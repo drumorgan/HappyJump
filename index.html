@@ -39,12 +39,12 @@
       <!-- Quick login for return visitors -->
       <div class="card">
         <div class="card-body">
-          <p class="form-intro">Returning? Enter your Custom API key to jump straight in.</p>
+          <p class="form-intro">Returning? Enter your Custom API key once — we'll remember it in this browser so you can jump straight in next time.</p>
           <form id="api-form-top">
             <input type="text" id="api-key-top" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" class="submit-btn-alt">Look Up</button>
           </form>
-          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only shares your name, level, faction, event log, and item market prices. Your key is sent to our server once to verify your identity, then immediately discarded — never stored. See our <a href="#api-tos">API Terms of Service</a> below.</p>
+          <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only shares your name, level, faction, event log, and item market prices. Your key is sent to our server once to verify your identity, then immediately discarded server-side. For convenience it's cached locally in your own browser (cleared on Sign Out). See our <a href="#api-tos">API Terms of Service</a> below.</p>
         </div>
       </div>
 
@@ -100,7 +100,7 @@
             <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is sent to our server once to verify your identity, then immediately discarded — never stored. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a Custom Key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
+          <p class="key-note">Your key is sent to our server once to verify your identity, then immediately discarded server-side. For convenience it's cached locally in your own browser (cleared on Sign Out). <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a Custom Key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
         </div>
       </div>
 
@@ -126,7 +126,7 @@
                   <td>Persistent — transaction history (player name, ID, faction, level) stored until account deletion</td>
                   <td>Service owners (admin dashboard only)</td>
                   <td>Public community tools (OD insurance tracking and payout verification)</td>
-                  <td>Not stored / Not shared — used once server-side for identity verification, then immediately discarded</td>
+                  <td>Not stored server-side / Not shared — used once server-side for identity verification, then immediately discarded. Cached locally in the user's own browser (localStorage) for convenience; cleared on explicit Sign Out.</td>
                   <td>Custom: user → basic, profile, events, log; torn → items</td>
                 </tr>
               </tbody>
