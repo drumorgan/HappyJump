@@ -220,15 +220,19 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
   if (hay.includes('overdos')) return false;
   // Exclude buys / trades / sends / receives — only successful uses count.
   // (Intentionally NOT excluding "used" — that's the verb we want.)
-  if (/\b(bought|sold|sent|received|dumped|bazaar|market|trade|gift)\b/.test(hay)) return false;
+  // "buy" covers Torn titles like "Item buy abroad" / "Item market buy"; "abroad"
+  // catches country-run bulk purchases whose title may not include "buy".
+  if (/\b(buy|bought|buying|purchase|purchased|sold|sell|sent|received|dumped|bazaar|market|trade|traded|gift|abroad)\b/.test(hay)) return false;
 
-  // Primary signal: structured data points at the drug
+  // Primary signal: structured data points at the drug.
+  // IMPORTANT: only data.item (singular) indicates a USE. data.items (plural, an
+  // object like {"197": 19}) is how Torn logs bulk transactions (buys from abroad,
+  // bazaar sales, trades) — those are NOT uses and must not match here.
   const itemField = entry.data?.item;
   const structuredMatch =
     itemField === itemId ||
     itemField === String(itemId) ||
-    (typeof itemField === 'string' && itemField.toLowerCase() === drugLower) ||
-    (entry.data?.items && (itemId in entry.data.items || String(itemId) in entry.data.items));
+    (typeof itemField === 'string' && itemField.toLowerCase() === drugLower);
 
   // Narrative signal: drug name plus a "use" verb or a known stat gain phrase
   const narrativeMatch =
