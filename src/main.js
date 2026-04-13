@@ -14,6 +14,20 @@ let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
+// --- API key cache (localStorage) ---
+// Stored only in the user's own browser so returning visitors don't have to
+// re-enter their key each visit. Cleared on explicit Sign Out.
+const API_KEY_STORAGE = 'happyjump_api_key';
+function loadSavedApiKey() {
+  try { return localStorage.getItem(API_KEY_STORAGE) || ''; } catch { return ''; }
+}
+function saveApiKey(key) {
+  try { localStorage.setItem(API_KEY_STORAGE, key); } catch {}
+}
+function clearSavedApiKey() {
+  try { localStorage.removeItem(API_KEY_STORAGE); } catch {}
+}
+
 function showToast(msg, type) { _showToast(toastEl, msg, type); }
 
 // --- Tier definitions (margins loaded from config) ---
@@ -289,6 +303,17 @@ async function initStorefront() {
 
 initStorefront();
 
+// --- Auto-login for returning visitors with a cached key ---
+(function autoLogin() {
+  const saved = loadSavedApiKey();
+  if (!saved) return;
+  // Pre-fill both inputs so they can edit/retry if auto-login fails silently
+  input.value = saved;
+  topInput.value = saved;
+  // Fire the normal submit flow (shows loading spinner, handles errors, etc.)
+  form.dispatchEvent(new Event('submit', { cancelable: true }));
+})();
+
 // --- Form submit: validate player ---
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -332,9 +357,13 @@ form.addEventListener('submit', async (e) => {
 
     loadingEl.classList.add('hidden');
     currentApiKey = key;
+    saveApiKey(key);
     showPlayerView(player, config, history, key);
   } catch (err) {
     loadingEl.classList.add('hidden');
+    // If the failing key was our cached one, drop it so the user isn't stuck
+    // in an auto-login loop with a revoked / invalid key.
+    if (loadSavedApiKey() === key) clearSavedApiKey();
     showToast(err.message, 'error');
   } finally {
     submitBtn.disabled = false;
@@ -483,8 +512,12 @@ function showPlayerView(player, config, history, apiKey) {
   // Tier ladder with current highlight
   renderTierLadder(cleanCount, config);
 
-  // Back button
+  // Back button — explicit sign-out clears the cached key
   document.getElementById('back-btn').onclick = () => {
+    clearSavedApiKey();
+    currentApiKey = null;
+    input.value = '';
+    topInput.value = '';
     playerViewEl.classList.add('hidden');
     storefrontEl.classList.remove('hidden');
     toastEl.classList.add('hidden');
