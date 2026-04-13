@@ -3,3 +3,27 @@ RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
 DirectoryIndex index.html
+
+# Cache policy
+# Vite emits content-hashed asset filenames (assets/main-ABCDEF.js etc.),
+# so the entry HTML must always revalidate while the hashed assets can cache
+# aggressively. This prevents returning visitors from being stuck on a hybrid
+# old-HTML + new-assets (or vice versa) module graph after a deploy.
+<IfModule mod_headers.c>
+  # HTML entry points — always revalidate so a new deploy propagates immediately
+  <FilesMatch "\.html$">
+    Header set Cache-Control "no-cache, must-revalidate"
+  </FilesMatch>
+
+  # Hashed static assets — safe to cache forever (filename changes every build)
+  <FilesMatch "\.(js|mjs|css|woff2?|ttf|eot|svg|png|jpg|jpeg|gif|webp|ico)$">
+    Header set Cache-Control "public, max-age=31536000, immutable"
+  </FilesMatch>
+</IfModule>
+
+# Compress text responses
+<IfModule mod_deflate.c>
+  AddOutputFilterByType DEFLATE text/html text/css text/plain text/xml
+  AddOutputFilterByType DEFLATE application/javascript application/json application/xml
+  AddOutputFilterByType DEFLATE image/svg+xml
+</IfModule>

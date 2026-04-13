@@ -211,6 +211,7 @@ Cache market prices (refresh every 15 min max).
 - The browser stores only `{ player_id, session_token }` under `localStorage['happyjump_session']` — the raw Torn API key never persists client-side.
 - On return visits, the client calls `auto-login`. The gateway looks up the row, constant-time-compares the token hash, decrypts the key, and re-validates it against Torn. If Torn rejects it (revoked key), the row is deleted and the client falls back to the manual form.
 - 5 consecutive bad session tokens self-destructs the row (brute-force protection). Legitimate users can just re-login with their Torn key.
+- All pre-verify auth failures (`not_found`, bad token, lockout, revoked key, player_id mismatch) return an identical opaque `{ error: 'session_invalid' }` 401 and compute the SHA-256 hash even on miss so response timing is indistinguishable — the endpoint can't be used as a membership oracle for player_ids.
 - Sign Out calls `revoke-session`, which verifies the token and deletes the row — so signing out genuinely removes the server-side key, not just `localStorage`.
 - Legacy `happyjump_api_key` (plaintext cache from PR #150) is silently migrated to a session on first page load, then removed.
 
@@ -256,6 +257,7 @@ Push to main → GitHub Actions → Vite build → FTP to InMotion cPanel subdom
 - FTP deploys `dist/` to document root at `/home/nopape6/happyjump.girovagabondo.com/` (FTP_SERVER_DIR=/)
 - Supabase Edge Functions: single `gateway` function deployed via `supabase functions deploy gateway --no-verify-jwt`
 - **Hosting:** InMotion cPanel, subdomain document root is `/home/nopape6/happyjump.girovagabondo.com/` (NOT inside `public_html/`)
+- **Cache policy:** `public/.htaccess` ships HTTPS redirect, directory index, and a split cache policy: `Cache-Control: no-cache, must-revalidate` on `*.html` (always revalidate so deploys propagate immediately) and `public, max-age=31536000, immutable` on hashed assets (`*.js`, `*.css`, fonts, images). Prevents the hybrid-old-HTML / new-assets module graph that can strand returning visitors after a deploy.
 
 ## Important Gotchas
 
