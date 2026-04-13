@@ -1073,8 +1073,12 @@ async function handleReportOd(body: any) {
   const xanaxUsedCount = xanaxResult.count;
   const ecstasyUsed = !!ecstasyUsage;
 
-  // If all drugs used (4 Xanax + 1 Ecstasy), auto-close — the jump is complete.
-  if (xanaxUsedCount >= 4 && ecstasyUsed) {
+  // If all drugs used (4 Xanax + 1 Ecstasy) AND no OD was detected, auto-close — the jump is complete.
+  // IMPORTANT: do NOT clean-close if an OD event exists. An Ecstasy OD also produces an Ecstasy "use"
+  // log entry (the OD is recorded separately in the events endpoint, and the use-log narrative does
+  // not always contain "overdose"), so `ecstasyUsed` can be true precisely when the covered Ecstasy OD
+  // happened. Falling through to the OD verification path below is what pays that claim out.
+  if (!odDrug && xanaxUsedCount >= 4 && ecstasyUsed) {
     const nowIso = new Date().toISOString();
     await supabase
       .from('transactions')
@@ -1113,8 +1117,12 @@ async function handleReportOd(body: any) {
     });
   }
 
-  // If Ecstasy was used and they're claiming an Ecstasy OD — reject (covered use consumed)
-  if (ecstasyUsed) {
+  // If Ecstasy was used successfully and the claimed OD is on something other than Ecstasy — reject
+  // (the covered Ecstasy tab is spent).
+  // When odDrug === 'ecstasy' we must NOT reject: Torn logs the Ecstasy as "used" even when that use
+  // caused the OD (the OD itself lives in the events endpoint, not the log entry), so `ecstasyUsed`
+  // is the companion signal for the covered Ecstasy OD — pay it out.
+  if (ecstasyUsed && odDrug !== 'ecstasy') {
     return json({
       verified: false,
       torn_id: tornId,
