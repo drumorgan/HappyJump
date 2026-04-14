@@ -677,6 +677,29 @@ async function handleTornProxy(body: any) {
   return json(data);
 }
 
+/**
+ * Fetch live Torn item market prices for the three Happy Jump items.
+ * Returns { xanax, edvd, ecstasy } as numbers, or null if the call fails or
+ * any item is missing. Caller should treat null as "use stored config prices".
+ */
+async function fetchLiveItemPrices(apiKey: string): Promise<{ xanax: number; edvd: number; ecstasy: number } | null> {
+  try {
+    const url = `${TORN_API}/torn/?selections=items&key=${apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.error || !data?.items) return null;
+    // Xanax 206, EDVD 366, Ecstasy 197
+    const xanax = Number(data.items?.[206]?.market_value);
+    const edvd = Number(data.items?.[366]?.market_value);
+    const ecstasy = Number(data.items?.[197]?.market_value);
+    if (!xanax || !edvd || !ecstasy) return null;
+    return { xanax, edvd, ecstasy };
+  } catch (_err) {
+    return null;
+  }
+}
+
 // ── Encrypted auto-login actions ────────────────────────────────────
 // set-api-key: called once per key (after a successful manual validation) to
 // encrypt+store the key and issue an opaque session token. The browser stores
@@ -859,10 +882,25 @@ async function handleCreateTransaction(body: any) {
     return json({ error: 'You already have an active deal. Wait for it to close before purchasing again.' }, 400);
   }
 
+  // Snapshot prices should match what the client was shown on screen, which
+  // uses live Torn market values — not the stored config, which only updates
+  // when the operator hits "Refresh prices" in admin. Pull live prices here
+  // via the user's own key/session; fall back to config if the lookup fails
+  // so a Torn API blip can't block a purchase.
+  let livePrices: { xanax: number; edvd: number; ecstasy: number } | null = null;
+  if (body.key || body.api_key || (body.player_id && body.session_token)) {
+    const resolved = await resolveApiKey(body);
+    // If auth was supplied but invalid (e.g. expired session), resolveApiKey
+    // returns a Response — don't fail the purchase over it, just fall back.
+    if (!(resolved instanceof Response)) {
+      livePrices = await fetchLiveItemPrices(resolved.key);
+    }
+  }
+
   // Calculate costs (bigint columns come back as strings from Supabase)
-  const xanaxPrice = Number(config.xanax_price);
-  const edvdPrice = Number(config.edvd_price);
-  const ecstasyPrice = Number(config.ecstasy_price);
+  const xanaxPrice = livePrices ? livePrices.xanax : Number(config.xanax_price);
+  const edvdPrice = livePrices ? livePrices.edvd : Number(config.edvd_price);
+  const ecstasyPrice = livePrices ? livePrices.ecstasy : Number(config.ecstasy_price);
   const rehabBonus = Number(config.rehab_bonus);
   const reserve = Number(config.current_reserve);
 
