@@ -562,7 +562,7 @@ function showPlayerView(player, config, history, apiKey) {
             torn_faction: player.torn_faction,
             torn_level: player.torn_level,
             product_type: selectedProduct,
-          });
+          }, currentAuth());
           const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio" };
           const productLabel = productLabels[selectedProduct] || 'package';
           showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');

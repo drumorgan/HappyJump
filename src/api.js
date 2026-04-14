@@ -126,10 +126,12 @@ export async function fetchMarketPrices(auth) {
 
 /**
  * Create a new transaction (request a Happy Jump package or insurance).
- * playerData should include product_type: 'package' | 'insurance'
+ * playerData should include product_type: 'package' | 'insurance'.
+ * `auth` (session object or raw key) lets the gateway fetch live Torn market
+ * prices so the locked-in snapshot matches what the user saw on screen.
  */
-export async function createTransaction(playerData) {
-  return gateway('create-transaction', playerData);
+export async function createTransaction(playerData, auth) {
+  return gateway('create-transaction', { ...playerData, ...authPayload(auth) });
 }
 
 /**
