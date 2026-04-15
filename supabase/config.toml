@@ -6,3 +6,13 @@ id = ""
 # and admin actions (update-config) verify auth internally.
 [functions.gateway]
 verify_jwt = false
+
+# auto-login verifies the caller itself via session_token_hash in the
+# player_secrets row, so Supabase's built-in JWT check is redundant.
+# Leaving verify_jwt on the default (true) was rejecting requests with
+# UNAUTHORIZED_UNSUPPORTED_TOKEN_ALGORITHM when the browser's supabase-js
+# client happened to send an ES256-signed Auth session JWT — the function
+# runtime only verifies HS256 tokens. Skipping JWT check entirely matches
+# the gateway's pattern and is safe here (session auth is custom).
+[functions.auto-login]
+verify_jwt = false
