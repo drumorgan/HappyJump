@@ -595,36 +595,29 @@ body {
   font-size: 0.75rem;
 }
 
-.create-key-btn {
+.find-key-btn {
   display: block;
   width: 100%;
-  padding: 0.9rem 1.25rem;
-  margin: 0.75rem 0 0.5rem;
-  background: #f0c040;
-  color: #1a1a2e;
-  font-weight: 700;
-  font-size: 1rem;
+  padding: 0.7rem 1rem;
+  margin: 0.75rem 0;
+  background: transparent;
+  color: #e94560;
+  font-size: 0.9rem;
   text-align: center;
   text-decoration: none;
+  border: 1px dashed #e94560;
   border-radius: 6px;
   box-sizing: border-box;
-  transition: background 0.15s;
+  transition: background 0.15s, color 0.15s;
 }
 
-.create-key-btn:hover,
-.create-key-btn:visited {
-  color: #1a1a2e;
+.find-key-btn:visited {
+  color: #e94560;
 }
 
-.create-key-btn:hover {
-  background: #ffd25a;
-}
-
-.key-hint {
-  color: #888;
-  font-size: 0.8rem;
-  text-align: center;
-  margin: 0 0 0.75rem;
+.find-key-btn:hover {
+  background: rgba(233, 69, 96, 0.1);
+  color: #ff6680;
 }
 
 .key-note a,
