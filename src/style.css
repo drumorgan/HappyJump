@@ -595,6 +595,38 @@ body {
   font-size: 0.75rem;
 }
 
+.create-key-btn {
+  display: block;
+  width: 100%;
+  padding: 0.9rem 1.25rem;
+  margin: 0.75rem 0 0.5rem;
+  background: #f0c040;
+  color: #1a1a2e;
+  font-weight: 700;
+  font-size: 1rem;
+  text-align: center;
+  text-decoration: none;
+  border-radius: 6px;
+  box-sizing: border-box;
+  transition: background 0.15s;
+}
+
+.create-key-btn:hover,
+.create-key-btn:visited {
+  color: #1a1a2e;
+}
+
+.create-key-btn:hover {
+  background: #ffd25a;
+}
+
+.key-hint {
+  color: #888;
+  font-size: 0.8rem;
+  text-align: center;
+  margin: 0 0 0.75rem;
+}
+
 .key-note a,
 .key-note a:visited {
   color: #e94560;
