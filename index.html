@@ -44,6 +44,7 @@
             <input type="text" id="api-key-top" placeholder="Your Torn API key" autocomplete="off" />
             <button type="submit" class="submit-btn-alt">Look Up</button>
           </form>
+          <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" class="find-key-btn">Already have a Happy Jump key? Find it on Torn &rarr;</a>
           <p class="key-note">Need a key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only shares your name, level, faction, event log, and item market prices. Your key is sent to our server once, encrypted with AES-256-GCM, and stored so you can auto-login. Your browser only holds an opaque session token — not the key itself. Sign Out wipes the server-side copy. See our <a href="#api-tos">API Terms of Service</a> below.</p>
         </div>
       </div>
@@ -95,14 +96,13 @@
           <span>Get Started</span>
         </div>
         <div class="card-body">
-          <p class="form-intro">Your key is validated, then <strong>encrypted with AES-256</strong> and stored server-side. It is never saved in your browser.</p>
-          <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener" class="create-key-btn">Create a Custom Key on Torn</a>
-          <p class="key-hint">Only shares your name, level, faction, event log, and item market prices. Nothing else.</p>
+          <p class="form-intro">Enter a Torn API key to verify your identity and see your personal rate.</p>
           <form id="api-form">
             <input type="text" id="api-key" placeholder="Your Torn API key" autocomplete="off" />
-            <button type="submit" id="submit-btn">Connect</button>
+            <button type="submit" id="submit-btn">Look Up</button>
           </form>
-          <p class="key-note">Your key is sent to our server once, encrypted with AES-256-GCM, and stored so you can auto-login on return visits. Your browser only holds an opaque session token — never the key itself. Sign Out wipes the server-side copy.</p>
+          <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" class="find-key-btn">Already have a Happy Jump key? Find it on Torn &rarr;</a>
+          <p class="key-note">Your key is sent to our server once, encrypted with AES-256-GCM, and stored so you can auto-login on return visits. Your browser only holds an opaque session token — never the key itself. Sign Out wipes the server-side copy. <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log&torn=items&title=HappyJump" target="_blank" rel="noopener">Create a Custom Key</a> that only shares your name, level, faction, event log, and item market prices — nothing else.</p>
         </div>
       </div>
 
