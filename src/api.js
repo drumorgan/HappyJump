@@ -61,12 +61,37 @@ export async function setApiKey(apiKey) {
 }
 
 /**
- * Auto-login using a stored session. Re-validates the key against Torn; on
- * any failure the server deletes the encrypted row and returns an error so
- * the client can fall back to the manual login form.
+ * Auto-login using a stored session. Hits the dedicated `auto-login` edge
+ * function (extracted from the gateway) so transient Torn failures can
+ * surface as a clean 503 `torn_unavailable` without going through the
+ * generic gateway error layer. Re-validates the key against Torn; only
+ * permanent key failures (codes 2, 16) delete the server-side row, so a
+ * Torn rate-limit or 5xx no longer logs the user out.
  */
 export async function autoLogin(playerId, sessionToken) {
-  return gateway('auto-login', { player_id: String(playerId), session_token: sessionToken });
+  const { data, error } = await supabase.functions.invoke('auto-login', {
+    body: { player_id: String(playerId), session_token: sessionToken },
+  });
+
+  if (error) {
+    // Extract the structured error body — we want the server's `error`
+    // string (e.g. 'torn_unavailable', 'session_invalid') to surface as
+    // err.message so main.js can branch on it and preserve localStorage
+    // on transient failures.
+    if (error.context?.body instanceof ReadableStream) {
+      const text = await new Response(error.context.body).text();
+      try {
+        const parsed = JSON.parse(text);
+        throw new Error(parsed.error || parsed.message || text);
+      } catch (e) {
+        if (e instanceof SyntaxError) throw new Error(text);
+        throw e;
+      }
+    }
+    throw new Error(error.message);
+  }
+  if (data?.error) throw new Error(data.error);
+  return data;
 }
 
 /**
