@@ -39,6 +39,8 @@ async function checkSession() {
   const { data: { session } } = await supabase.auth.getSession();
   if (session) {
     showDashboard();
+  } else {
+    loginSection.classList.remove('hidden');
   }
 }
 
