@@ -169,7 +169,7 @@ function buildCoverageHTML(product, pricing, config) {
       </tr>
       <tr>
         <td class="cov-clean">No OD (clean jump)</td>
-        <td class="cov-clean">Insurance expires after 7 days</td>
+        <td class="cov-clean">Insurance expires after 3 days (72 hours)</td>
       </tr>`;
   } else {
     // ecstasy_only
@@ -184,7 +184,7 @@ function buildCoverageHTML(product, pricing, config) {
       </tr>
       <tr>
         <td class="cov-clean">No OD (clean jump)</td>
-        <td class="cov-clean">Insurance expires after 7 days</td>
+        <td class="cov-clean">Insurance expires after 3 days (72 hours)</td>
       </tr>`;
   }
 
@@ -193,7 +193,7 @@ function buildCoverageHTML(product, pricing, config) {
     <tbody>${rows}</tbody>
   </table>`;
 
-  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 3 days from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 3 days (72 hours) from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
 
   return html;
 }
