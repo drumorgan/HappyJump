@@ -2,6 +2,12 @@ RewriteEngine On
 RewriteCond %{HTTPS} off
 RewriteRule ^(.*)$ https://%{HTTP_HOST}%{REQUEST_URI} [L,R=301]
 
+# Case-insensitive redirect to the canonical factionEvent path.
+# The directory on disk is factionEvent (camelCase) and Linux is case-sensitive,
+# so /factionevent, /FactionEvent, etc. would otherwise 404.
+RewriteCond %{REQUEST_URI} !^/factionEvent($|/)
+RewriteRule ^factionevent/?(.*)$ /factionEvent/$1 [NC,R=301,L]
+
 DirectoryIndex index.html
 
 # Cache policy
