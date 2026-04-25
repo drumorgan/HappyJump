@@ -2,7 +2,7 @@
 
 > **Working spec for the in-flight feature.** Source-of-truth document so a crash doesn't cost us context. Update as we go — strike out finished steps, add notes inline.
 
-Branch: `claude/save-work-prevent-loss-U8vjc` (created after previous session crashed mid-implementation; no recoverable state existed).
+Branch: `claude/save-work-prevent-loss-U8vjc` (created after a previous session crashed mid-implementation; no recoverable state existed).
 
 ## 0. Why we're doing this
 
@@ -44,7 +44,19 @@ We also want **self-healing leaderboards** — when a viewer loads the event pag
 - Sign-out button (revokes FE session only).
 - After every `getFactionEvent()`, fire `refresh-stale-participants` in the background, then re-fetch + re-render so the leaderboard self-heals.
 
-### 2.4 `src/api.js` additions
+### 2.4 Slot picker generator
+```
+generateSlots(startISO, endISO):
+  slots = []
+  cursor = ceil(start to next 15-min boundary)
+  while cursor <= end:
+    slots.push({ value: cursor.toISOString(), label: viewerLocal(cursor, "MMM d, h:mm a") })
+    cursor += 15min
+  return slots
+```
+Default selection = the slot at-or-before `Date.now()` (clamped to `[start, end]`).
+
+### 2.5 `src/api.js` additions
 - `feSetApiKey(key)` → `fe-set-api-key`
 - `feAutoLogin()` → `fe-auto-login`
 - `feRevokeSession()` → `fe-revoke-session`
@@ -99,21 +111,39 @@ We also want **self-healing leaderboards** — when a viewer loads the event pag
 
 Each step is a separate commit + `git push -u origin <branch>`. Tick as we go.
 
-- [x] **0. Plan file** — `FactionEventClaude.md` (this doc) committed first so a crash leaves us with at least the spec.
-- [ ] **1. Migration 012** — `supabase/migrations/012_faction_event_secrets.sql` only.
-- [ ] **2. Gateway helpers** — `resolveSessionFromTable`, `resolveFactionEventApiKey`, `cascadeDeleteFactionEventSecret`, `isPermanentTornKeyError` (no behavior change yet — `resolveApiKey` becomes wrapper).
-- [ ] **3. Gateway: `fe-set-api-key` / `fe-auto-login` / `fe-revoke-session`** + router wiring.
-- [ ] **4. Gateway: `update-faction-event`** + router wiring + cache invalidation logic.
-- [ ] **5. Gateway: `refresh-stale-participants`** + router wiring.
-- [ ] **6. Gateway: switch `join` / `refresh` / `fetch-start` to FE resolver** + add cascade-delete on permanent Torn errors.
-- [ ] **7. Gateway: `create-faction-event` requires FE auth + auto-inserts creator participant.**
-- [ ] **8. `src/api.js` wrappers** for all five new actions.
-- [ ] **9. `factionEvent/index.html`** — sign-in card, slot picker, edit pencils, sign-out button.
-- [ ] **10. `src/factionEvent.js`** — full rewrite for FE session + slot picker + creator edit + background sweep.
+- [x] **0. Plan file** — `FactionEventClaude.md` (this doc) committed first so a crash leaves us with at least the spec. (commit `65e75a2`)
+- [x] **1. Migration 012** — `supabase/migrations/012_faction_event_secrets.sql`. (commit `37f1a40`)
+- [x] **2. Gateway helpers** — `resolveSessionFromTable`, `resolveFactionEventApiKey`, `cascadeDeleteFactionEventSecret`, `isPermanentTornKeyError`. (commit `e01b1af`)
+- [x] **3. Gateway: `fe-set-api-key` / `fe-auto-login` / `fe-revoke-session`** + router wiring. (commit `7781377`)
+- [x] **4. Gateway: `update-faction-event`** + router wiring + cache invalidation logic. (commit `1a05172`)
+- [x] **5. Gateway: `refresh-stale-participants`** + router wiring. (commit `54f3fd8`)
+- [x] **6. Gateway: switch `join` / `refresh` / `fetch-start` to FE resolver** + cascade-delete on permanent Torn errors. (commit `92e4cd2`)
+- [x] **7. Gateway: `create-faction-event` requires FE auth + auto-inserts creator participant.** (commit `2013871`)
+- [x] **8. `src/api.js` wrappers** for all five new actions. (commit `6c55e91`)
+- [x] **9. `factionEvent/index.html`** — sign-in card, slot picker, edit pencils, sign-out button. (commit `037723d`)
+- [ ] **10. `src/factionEvent.js`** — full rewrite for FE session + slot picker + creator edit + background sweep. **← NEXT**
 - [ ] **11. `src/factionEvent.css`** — pencil buttons, slot select, sign-in card.
 - [ ] **12. `CLAUDE.md`** — document FE secrets table, new actions, gateway change reminder.
 - [ ] **13. PR + squash-merge** per standing order at top of `CLAUDE.md`.
 
-## 6. Open questions / decisions (none currently)
+## 6. Recovery notes
+
+If a session crashes mid-implementation:
+
+1. Read this file first.
+2. `git log --oneline` on `claude/save-work-prevent-loss-U8vjc` to see what's committed.
+3. `git status` — if dirty, `git stash` and inspect; the previous session may have written things that weren't committed.
+4. Resume at the next unchecked step above.
+5. **Do not merge PR #166 until step 10 is done** — the `index.html` changes from step 9 reference selectors and behaviors that only the rewritten `factionEvent.js` provides. Merging early breaks the live page.
+
+## 7. Out of scope (do not build now)
+
+- Multiple drugs per event.
+- Faction-restricted events (private to a faction ID).
+- Email/Discord notifications.
+- Editing participants list (kicking, etc.).
+- Anything that touches the Happy Jump transactions/clients pipeline.
+
+## 8. Open questions / decisions (none currently)
 
 If we hit a fork in the road, log it here before deciding.
