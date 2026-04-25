@@ -157,11 +157,14 @@ created_at          timestamptz default now()
 
 Side-feature, fully decoupled from the Happy Jump transactions / clients pipeline. Lets a faction run a "who drank the most beer / used the most Cannabis" leaderboard inside a bounded time window.
 
-- **Storage:** new tables `faction_events` and `faction_event_participants` (migration `011_faction_events.sql`). Anon role has SELECT only; all writes go through the gateway with the service role.
+- **Storage:** tables `faction_events` and `faction_event_participants` (migration `011_faction_events.sql`), plus `faction_event_player_secrets` for the FE session table (migration `012_faction_event_secrets.sql`). `faction_events` carries a `creator_torn_id` column (added in migration 012) used for edit authorization. Anon role has SELECT only on the public tables; secrets are service-role-only; all writes go through the gateway.
 - **Counting:** generic `countItemUseInLog(apiKey, itemId, drugName, sinceTs, untilTs)` helper in the gateway, paginated against the Torn user log endpoint, reusing `entryMatchesDrugUse` so buys/trades/ODs aren't counted as uses.
-- **Personal start time:** each participant supplies their own start; the count window is `[max(personal_start, event.start), min(now, event.end)]`. Best-effort autofill via the `fetch-torn-event-start` action which probes the user's `selections=calendar` payload — the picker is the source of truth, autofill is a hint.
-- **Gateway actions:** `create-faction-event`, `get-faction-event`, `list-faction-events`, `join-faction-event`, `refresh-faction-event`, `fetch-torn-event-start`. All public (no admin auth) — events are identified by UUID v4, ~122 bits of entropy in the share link.
-- **Frontend:** `factionEvent/index.html` + `src/factionEvent.js` + `src/factionEvent.css`. Vite multi-page entry. URL `?id=<uuid>` switches between picker view (create + recent events) and event view (header / join form / leaderboard). API keys are NOT stored server-side for this page — the user's key is held in the joining browser's `localStorage` only so they can press "Refresh my count" later.
+- **Personal start time:** each participant supplies their own start via a 15-minute slot picker generated client-side from `[event.starts_at, event.ends_at]` in the viewer's local time. Default selection is the slot at-or-before now (clamped into the window). The count window is `[max(personal_start, event.start), min(now, event.end)]`. Best-effort autofill via the `fetch-torn-event-start` action probes `selections=calendar` and snaps the picker to the closest slot — picker is source of truth.
+- **FE session (Faction Event auth):** independent from the Happy Jump session — its own table (`faction_event_player_secrets`), its own localStorage entry (`faction_event_session`), its own gateway actions (`fe-set-api-key`, `fe-auto-login`, `fe-revoke-session`). FE keys only need `basic,profile,log` (calendar is best-effort) and grant only the right to count drug uses + edit your own events. Cascade-delete on permanent Torn errors (codes 2/16) drops the secret row AND every participant row anchored on that torn_id; transient errors (5/8/9) leave the row alone. Signing out of FE does NOT sign you out of Happy Jump and vice-versa.
+- **Creator edits:** the user whose `torn_id` matches `event.creator_torn_id` sees pencil buttons next to title / drug / window in the event header. Edits route through `update-faction-event` (FE-creator-authorized). Drug or window changes invalidate every participant row (`last_checked_at = NULL`) so the next sweep recounts; window changes also clamp personal-start times back inside the new window.
+- **Self-healing leaderboard:** every event-view load fires `refresh-stale-participants` in the background. Public action (no caller auth — uses each participant's own server-stored key), picks up to 15 stale rows (`last_checked_at IS NULL` first, then `< now() - 60s`), processes sequentially. Lets viewers see fresh counts without each viewer needing every participant's API key.
+- **Gateway actions:** `fe-set-api-key`, `fe-auto-login`, `fe-revoke-session`, `create-faction-event` (now requires FE auth + auto-seeds creator participant row), `get-faction-event`, `list-faction-events`, `update-faction-event` (FE creator only), `join-faction-event`, `refresh-faction-event`, `refresh-stale-participants`, `fetch-torn-event-start`. Events identified by UUID v4, ~122 bits of entropy in the share link.
+- **Frontend:** `factionEvent/index.html` + `src/factionEvent.js` + `src/factionEvent.css`. Vite multi-page entry. URL `?id=<uuid>` switches between picker view (sign-in card + create + recent events) and event view (header with creator pencils / join form / leaderboard). The "Sign out (forget my key)" button on the me-card is equivalent to the identity-bar Sign Out — both call `fe-revoke-session`. A per-event `faction_event_joined:<id>` localStorage hint records the torn_id you joined as so the leaderboard can highlight your row even after you sign out (your row stays on the leaderboard until the sweep can no longer refresh it).
 
 ### Public Page (`happyjump.girovagabondo.com`)
 
@@ -201,6 +204,17 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 | `get-availability`       | None     | Check package availability               |
 | `admin-update-status`    | Admin    | Update transaction status, manage reserves, sync client stats |
 | `update-config`          | Admin    | Update operator config (requires Supabase Auth session) |
+| `fe-set-api-key`         | None     | Mint a Faction Event session (encrypts key, returns opaque token) |
+| `fe-auto-login`          | FE session | Re-validate stored FE session against Torn |
+| `fe-revoke-session`      | FE session | Sign out — deletes the FE secret row server-side |
+| `create-faction-event`   | FE session | Create event + auto-seed creator participant row |
+| `update-faction-event`   | FE creator | Patch title / drug / window — invalidates participant counts on drug or window change |
+| `join-faction-event`     | Key or FE session | Join an event with a personal start time |
+| `refresh-faction-event`  | Key or FE session | Re-run the count for the calling user |
+| `refresh-stale-participants` | None | Background sweep — refreshes up to 15 stale rows using each participant's stored key |
+| `get-faction-event`      | None     | Fetch event + leaderboard |
+| `list-faction-events`    | None     | Recent events for the picker view |
+| `fetch-torn-event-start` | Key or FE session | Best-effort autofill of personal start from Torn calendar |
 
 ## Torn API Integration
 

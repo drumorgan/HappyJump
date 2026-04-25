@@ -121,10 +121,10 @@ Each step is a separate commit + `git push -u origin <branch>`. Tick as we go.
 - [x] **7. Gateway: `create-faction-event` requires FE auth + auto-inserts creator participant.** (commit `2013871`)
 - [x] **8. `src/api.js` wrappers** for all five new actions. (commit `6c55e91`)
 - [x] **9. `factionEvent/index.html`** — sign-in card, slot picker, edit pencils, sign-out button. (commit `037723d`)
-- [ ] **10. `src/factionEvent.js`** — full rewrite for FE session + slot picker + creator edit + background sweep. **← NEXT**
-- [ ] **11. `src/factionEvent.css`** — pencil buttons, slot select, sign-in card.
-- [ ] **12. `CLAUDE.md`** — document FE secrets table, new actions, gateway change reminder.
-- [ ] **13. PR + squash-merge** per standing order at top of `CLAUDE.md`.
+- [x] **10. `src/factionEvent.js`** — full rewrite for FE session + slot picker + creator edit + background sweep.
+- [x] **11. `src/factionEvent.css`** — pencil buttons, slot select, sign-in card.
+- [x] **12. `CLAUDE.md`** — document FE secrets table, new actions, gateway change reminder.
+- [ ] **13. PR + squash-merge** per standing order at top of `CLAUDE.md`. **← NEXT**
 
 ## 6. Recovery notes
 

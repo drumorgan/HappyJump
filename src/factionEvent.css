@@ -134,3 +134,129 @@
   color: #e8c84a;
   font-weight: 600;
 }
+
+/* ── Identity bar (signed-in indicator above all views) ── */
+.fe-identity-bar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.55rem 0.85rem;
+  margin: 0.5rem 0 1rem;
+  background: rgba(233, 69, 96, 0.08);
+  border: 1px solid rgba(233, 69, 96, 0.25);
+  border-radius: 6px;
+  color: #ccc;
+  font-size: 0.9rem;
+}
+
+.fe-identity-bar.hidden {
+  display: none;
+}
+
+.fe-identity-label strong {
+  color: #fff;
+}
+
+.fe-identity-faction {
+  color: #888;
+  margin-left: 0.35rem;
+}
+
+.fe-sign-out-btn {
+  padding: 0.35rem 0.75rem;
+  font-size: 0.85rem;
+}
+
+/* ── Pencil-edit buttons (creator only) ── */
+.fe-pencil-btn {
+  display: inline-block;
+  margin-left: 0.5rem;
+  padding: 0.15rem 0.55rem;
+  background: transparent;
+  color: #888;
+  border: 1px solid #2c2c3a;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.8rem;
+}
+
+.fe-pencil-btn:hover {
+  color: #e94560;
+  border-color: #e94560;
+}
+
+.fe-pencil-btn.hidden {
+  display: none;
+}
+
+/* The "✎ change drug" / "✎ change start / duration" buttons live on their
+   own line under the value they edit, so they don't bump against the big
+   centered .big-price / .price-note. */
+#ev-edit-drug-btn,
+#ev-edit-window-btn {
+  display: block;
+  margin: 0.35rem auto 0.75rem;
+}
+
+#ev-edit-drug-btn.hidden,
+#ev-edit-window-btn.hidden {
+  display: none;
+}
+
+/* ── Inline edit forms ── */
+.fe-edit-form {
+  margin-top: 0.5rem;
+  padding: 0.85rem;
+  background: #15151c;
+  border: 1px solid #2c2c3a;
+  border-radius: 6px;
+  text-align: left;
+}
+
+.fe-edit-form.hidden {
+  display: none;
+}
+
+.fe-edit-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.85rem;
+}
+
+.fe-edit-actions button {
+  padding: 0.5rem 1rem;
+  font-size: 0.9rem;
+}
+
+/* ── Join-card key row (hidden when FE-signed-in) ── */
+.fe-join-key-row {
+  margin-bottom: 0.75rem;
+}
+
+.fe-join-key-row.hidden {
+  display: none;
+}
+
+.fe-join-key-row input {
+  display: block;
+  width: 100%;
+  padding: 0.6rem 0.8rem;
+  background: #1a1a24;
+  color: #eee;
+  border: 1px solid #2c2c3a;
+  border-radius: 6px;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+
+.fe-join-key-row input:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+/* ── Disabled refresh button (when not signed in) ── */
+#me-refresh:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
