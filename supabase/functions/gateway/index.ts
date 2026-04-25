@@ -120,13 +120,16 @@ function sessionInvalid(): Response {
   return json({ error: 'session_invalid' }, 401);
 }
 
-// Resolve a Torn API key from either a direct body field (`key` / `api_key`)
-// or from session credentials (`player_id` + `session_token`). Returns either
-// `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
-async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
-  const direct = body.key || body.api_key;
-  if (direct) return { key: direct, torn_id: '' };
-
+// Generic session resolver — shared by Happy Jump (player_secrets) and
+// Faction Events (faction_event_player_secrets). Each context has its own
+// table so signing out of one does not affect the other; the schema is
+// identical across both tables (see migrations 010 and 012). Handles the
+// constant-time-compare + 5-strike self-destruct + opaque-401 logic in one
+// place.
+async function resolveSessionFromTable(
+  body: any,
+  table: 'player_secrets' | 'faction_event_player_secrets',
+): Promise<{ key: string; torn_id: string } | Response> {
   const { player_id, session_token } = body;
   if (!player_id || !session_token) {
     return json({ error: 'Missing api_key or session credentials' }, 400);
@@ -139,7 +142,7 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
 
   const supabase = serviceClient();
   const { data: row } = await supabase
-    .from('player_secrets')
+    .from(table)
     .select('torn_player_id, api_key_enc, api_key_iv, session_token_hash, failed_attempts')
     .eq('torn_player_id', Number(player_id))
     .maybeSingle();
@@ -156,10 +159,10 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
     if (next >= 5) {
       // Self-destruct after 5 bad attempts. Response is the same opaque 401
       // so an attacker can't tell they just burned the last strike.
-      await supabase.from('player_secrets').delete().eq('torn_player_id', row.torn_player_id);
+      await supabase.from(table).delete().eq('torn_player_id', row.torn_player_id);
     } else {
       await supabase
-        .from('player_secrets')
+        .from(table)
         .update({ failed_attempts: next })
         .eq('torn_player_id', row.torn_player_id);
     }
@@ -169,6 +172,48 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
   const key = await decryptApiKey(row.api_key_enc, row.api_key_iv);
   if (!key) return sessionInvalid();
   return { key, torn_id: String(row.torn_player_id) };
+}
+
+// Resolve a Torn API key from either a direct body field (`key` / `api_key`)
+// or from Happy Jump session credentials (`player_id` + `session_token`).
+// Returns either `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
+async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
+  const direct = body.key || body.api_key;
+  if (direct) return { key: direct, torn_id: '' };
+  return resolveSessionFromTable(body, 'player_secrets');
+}
+
+// Same shape as resolveApiKey, but backed by the Faction Events secrets
+// table. A session minted via fe-set-api-key cannot authorize Happy Jump
+// actions and vice versa.
+async function resolveFactionEventApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
+  const direct = body.key || body.api_key;
+  if (direct) return { key: direct, torn_id: '' };
+  return resolveSessionFromTable(body, 'faction_event_player_secrets');
+}
+
+// Torn API error codes that mean "this key will never work again":
+//   2  = Incorrect key (revoked / never valid)
+//   16 = Access level too low (key downgraded below required permissions)
+// Codes 5/8/9 (limit reached / IP banned / API offline) are transient and
+// must NOT trigger destructive cleanup — the key is fine, the network isn't.
+function isPermanentTornKeyError(code: number | null | undefined): boolean {
+  return code === 2 || code === 16;
+}
+
+// When a Faction Event participant's key is permanently revoked, drop the
+// secret row AND every participant row anchored on that torn_id across all
+// events. The participant rows can no longer be refreshed (no key), so
+// leaving them creates a misleading frozen leaderboard. Re-joining after a
+// fresh sign-in recreates the rows from scratch.
+async function cascadeDeleteFactionEventSecret(
+  supabase: any,
+  tornId: number | string,
+): Promise<void> {
+  const idNum = Number(tornId);
+  if (!Number.isFinite(idNum)) return;
+  await supabase.from('faction_event_player_secrets').delete().eq('torn_player_id', idNum);
+  await supabase.from('faction_event_participants').delete().eq('torn_id', String(idNum));
 }
 
 async function requireAuth(req: Request) {
@@ -899,6 +944,150 @@ async function handleRevokeSession(body: any) {
   }
 
   await supabase.from('player_secrets').delete().eq('torn_player_id', Number(player_id));
+  return json({ success: true });
+}
+
+// ── Faction Event session actions (fe-*) ─────────────────────────────
+// Scope-isolated session for the Faction Events page. Tokens minted here
+// only authorize fe-* actions (count drug uses, edit your own events).
+// They cannot authorize Happy Jump payouts, transactions, or admin work.
+// Storage table: faction_event_player_secrets (migration 012).
+
+// Validate the supplied Torn key, ensure it has Log access (needed to count
+// drug-use entries), encrypt it, and mint an opaque session token.
+async function handleFeSetApiKey(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const enc = await getEncryptionKey();
+  if (!enc) {
+    return json({ error: 'Encryption not configured on server (missing API_KEY_ENCRYPTION_KEY)' }, 500);
+  }
+
+  // FE only needs Log access for counting. (Calendar is best-effort, used
+  // by fetch-torn-event-start; we don't gate sign-in on it.) We deliberately
+  // do NOT require Events access — FE is narrower in scope than Happy Jump.
+  const [basicRes, logRes] = await Promise.all([
+    fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=log&limit=1&key=${api_key}`),
+  ]);
+  const [basic, logCheck] = await Promise.all([basicRes.json(), logRes.json()]);
+  if (basic.error) return json({ error: `Torn API: ${basic.error.error}` }, 400);
+  if (logCheck.error) {
+    return json({
+      error: 'Your API key is missing required permissions. Please create or update a key with "Log" access enabled.',
+    }, 400);
+  }
+
+  const tornPlayerId = Number(basic.player_id);
+  const session_token = randomTokenBase64(32);
+  const session_token_hash = await sha256Base64(session_token);
+  const encrypted = await encryptApiKey(api_key);
+  if (!encrypted) return json({ error: 'Encryption failed' }, 500);
+
+  const nowIso = new Date().toISOString();
+  const supabase = serviceClient();
+  const { error: upErr } = await supabase
+    .from('faction_event_player_secrets')
+    .upsert(
+      {
+        torn_player_id: tornPlayerId,
+        api_key_enc: encrypted.ciphertext,
+        api_key_iv: encrypted.iv,
+        session_token_hash,
+        failed_attempts: 0,
+        updated_at: nowIso,
+        last_login_at: nowIso,
+      },
+      { onConflict: 'torn_player_id' },
+    );
+
+  if (upErr) return json({ error: `Failed to store session: ${upErr.message}` }, 500);
+
+  return json({
+    success: true,
+    player_id: String(tornPlayerId),
+    session_token,
+    torn_id: String(tornPlayerId),
+    torn_name: basic.name,
+    torn_faction: basic.faction?.faction_name || null,
+    torn_level: basic.level,
+  });
+}
+
+// Re-validates the stored key against Torn. On permanent Torn errors
+// (codes 2/16) the session row is cascade-deleted along with every
+// participant row anchored on this torn_id. Transient errors (5/8/9 etc.)
+// leave the row alone — the key is fine, the network isn't.
+async function handleFeAutoLogin(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${resolved.key}`);
+  const identData = await identRes.json();
+
+  const supabase = serviceClient();
+
+  if (identData.error) {
+    if (isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, player_id);
+      return sessionInvalid();
+    }
+    // Transient — keep the row, surface the error so the client can retry.
+    return json({ error: `Torn API: ${identData.error.error}`, transient: true }, 503);
+  }
+
+  // Defence-in-depth: stored player_id must still match what Torn reports.
+  if (String(identData.player_id) !== String(player_id)) {
+    await cascadeDeleteFactionEventSecret(supabase, player_id);
+    return sessionInvalid();
+  }
+
+  await supabase
+    .from('faction_event_player_secrets')
+    .update({ failed_attempts: 0, last_login_at: new Date().toISOString() })
+    .eq('torn_player_id', Number(player_id));
+
+  return json({
+    success: true,
+    torn_id: String(identData.player_id),
+    torn_name: identData.name,
+    torn_faction: identData.faction?.faction_name || null,
+    torn_level: identData.level,
+  });
+}
+
+// Sign Out — verifies the token and deletes the FE secret row. Idempotent:
+// unknown / invalid creds still return success so this endpoint can't be
+// used as an oracle for valid player_ids. Does NOT cascade-delete the
+// participant rows — your existing leaderboard entries stay; you just lose
+// the ability to refresh them until you sign in again.
+async function handleFeRevokeSession(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const supabase = serviceClient();
+  const { data: row } = await supabase
+    .from('faction_event_player_secrets')
+    .select('session_token_hash')
+    .eq('torn_player_id', Number(player_id))
+    .maybeSingle();
+
+  if (!row) return json({ success: true });
+
+  const providedHash = await sha256Base64(String(session_token));
+  if (!constantTimeEqual(providedHash, row.session_token_hash)) {
+    return json({ success: true });
+  }
+
+  await supabase.from('faction_event_player_secrets').delete().eq('torn_player_id', Number(player_id));
   return json({ success: true });
 }
 
@@ -2435,8 +2624,66 @@ async function handleCreateFactionEvent(body: any) {
     return json({ error: 'Event window cannot exceed 30 days' }, 400);
   }
 
+  const personalParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
+  if (personalParsed.err) return json({ error: personalParsed.err }, 400);
+  const personalStart = personalParsed.ts!;
+
+  // Creating an event requires a Faction Event session — we need a stable
+  // creator_torn_id for later edit authorization, and we need the creator's
+  // own API key to seed their initial participant row. Direct `{ key: ... }`
+  // bodies are NOT honored here: there is no session row to anchor the
+  // creator on, so creator-only edits would never work afterward.
+  if (!body.player_id || !body.session_token) {
+    return json({ error: 'Sign in required to create an event' }, 401);
+  }
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
+  const creatorTornId = String(resolved.torn_id || '');
+  if (!creatorTornId) return json({ error: 'Sign in required to create an event' }, 401);
+
   const supabase = serviceClient();
-  const { data, error } = await supabase
+
+  // Re-validate the key + grab creator identity (name / faction) for the
+  // initial participant row. This also doubles as a freshness check —
+  // a key revoked since auto-login is detected and cleaned up here.
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    if (isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, creatorTornId);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  // Defence-in-depth: identity from Torn must match the session torn_id.
+  if (String(identData.player_id) !== creatorTornId) {
+    return json({ error: 'Session identity mismatch' }, 401);
+  }
+
+  const creatorTornName = String(identData.name || '');
+  const creatorTornFaction = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
+
+  // Clamp the creator's personal start to the event window.
+  const clampedStartMs = Math.min(
+    Math.max(personalStart.getTime(), starts_at.getTime()),
+    ends_at.getTime(),
+  );
+  const clampedStartIso = new Date(clampedStartMs).toISOString();
+
+  // Initial count for the creator. If the personal start is in the future
+  // (shouldn't happen post-clamp, but defensively) we just record 0.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const fromSec = Math.floor(clampedStartMs / 1000);
+  const untilSec = Math.min(nowSec, Math.floor(ends_at.getTime() / 1000));
+  let creatorCount = 0;
+  if (untilSec > fromSec) {
+    const result = await countItemUseInLog(api_key, drug_item_id, drug_name, fromSec, untilSec);
+    creatorCount = result.count;
+  }
+
+  // Insert event first.
+  const { data: eventRow, error: evtErr } = await supabase
     .from('faction_events')
     .insert({
       title,
@@ -2444,12 +2691,36 @@ async function handleCreateFactionEvent(body: any) {
       drug_name,
       starts_at: starts_at.toISOString(),
       ends_at: ends_at.toISOString(),
+      creator_torn_id: creatorTornId,
     })
     .select()
     .single();
 
-  if (error) return json({ error: error.message }, 500);
-  return json({ event: data });
+  if (evtErr) return json({ error: evtErr.message }, 500);
+
+  // Then insert the creator's participant row. If this fails, roll back the
+  // event so we never end up with an orphan event the creator can't edit.
+  const checkedAt = new Date().toISOString();
+  const { data: participantRow, error: partErr } = await supabase
+    .from('faction_event_participants')
+    .insert({
+      event_id: eventRow.id,
+      torn_id: creatorTornId,
+      torn_name: creatorTornName,
+      torn_faction: creatorTornFaction,
+      personal_start_at: clampedStartIso,
+      last_count: creatorCount,
+      last_checked_at: checkedAt,
+    })
+    .select()
+    .single();
+
+  if (partErr) {
+    await supabase.from('faction_events').delete().eq('id', eventRow.id);
+    return json({ error: `Failed to seed creator participant: ${partErr.message}` }, 500);
+  }
+
+  return json({ event: eventRow, participant: participantRow });
 }
 
 async function handleGetFactionEvent(body: any) {
@@ -2489,6 +2760,137 @@ async function handleListFactionEvents(_body: any) {
   return json({ events: data || [] });
 }
 
+// Creator-only patch of an event's title / drug / window. Authorized via
+// a Faction Event session (resolveFactionEventApiKey) that resolves to the
+// same torn_id stored in event.creator_torn_id. If the drug or window
+// changes, every participant row is invalidated (last_checked_at = NULL)
+// so the next sweep recounts. Personal-start times that now fall outside
+// the new window are clamped back inside it.
+async function handleUpdateFactionEvent(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const callerTornId = String(resolved.torn_id || '');
+  if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+    return json({ error: 'Only the event creator can edit this event' }, 403);
+  }
+
+  // Build the patch — only fields the caller actually supplied are touched.
+  const patch: Record<string, unknown> = {};
+  let drugChanged = false;
+  let windowChanged = false;
+
+  if (typeof body.title === 'string') {
+    const title = body.title.trim();
+    if (!title) return json({ error: 'Title cannot be empty' }, 400);
+    if (title.length > 120) return json({ error: 'Title too long' }, 400);
+    if (title !== event.title) patch.title = title;
+  }
+
+  if (body.drug_item_id !== undefined || typeof body.drug_name === 'string') {
+    const drug_item_id = Number(body.drug_item_id ?? event.drug_item_id);
+    const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : event.drug_name;
+    if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
+      return json({ error: 'drug_item_id must be a positive integer' }, 400);
+    }
+    if (!drug_name) return json({ error: 'drug_name is required' }, 400);
+    if (drug_name.length > 60) return json({ error: 'drug_name too long' }, 400);
+    if (drug_item_id !== Number(event.drug_item_id) || drug_name !== event.drug_name) {
+      patch.drug_item_id = drug_item_id;
+      patch.drug_name = drug_name;
+      drugChanged = true;
+    }
+  }
+
+  let newStartsAt = new Date(event.starts_at);
+  let newEndsAt = new Date(event.ends_at);
+  if (typeof body.starts_at === 'string') {
+    const p = parseFactionEventTimestamp(body.starts_at, 'starts_at');
+    if (p.err) return json({ error: p.err }, 400);
+    newStartsAt = p.ts!;
+  }
+  if (typeof body.ends_at === 'string') {
+    const p = parseFactionEventTimestamp(body.ends_at, 'ends_at');
+    if (p.err) return json({ error: p.err }, 400);
+    newEndsAt = p.ts!;
+  }
+  if (newEndsAt.getTime() <= newStartsAt.getTime()) {
+    return json({ error: 'ends_at must be after starts_at' }, 400);
+  }
+  const MAX_MS = 30 * 24 * 60 * 60 * 1000;
+  if (newEndsAt.getTime() - newStartsAt.getTime() > MAX_MS) {
+    return json({ error: 'Event window cannot exceed 30 days' }, 400);
+  }
+  if (newStartsAt.toISOString() !== new Date(event.starts_at).toISOString()) {
+    patch.starts_at = newStartsAt.toISOString();
+    windowChanged = true;
+  }
+  if (newEndsAt.toISOString() !== new Date(event.ends_at).toISOString()) {
+    patch.ends_at = newEndsAt.toISOString();
+    windowChanged = true;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return json({ event });
+  }
+
+  const { data: updatedEvent, error: updErr } = await supabase
+    .from('faction_events')
+    .update(patch)
+    .eq('id', event_id)
+    .select()
+    .single();
+  if (updErr) return json({ error: updErr.message }, 500);
+
+  // If the count parameters changed, invalidate every participant's count so
+  // the next refresh-stale-participants sweep recounts. Also clamp
+  // personal_start_at into the new window for any rows that fell outside.
+  if (drugChanged || windowChanged) {
+    const startMs = newStartsAt.getTime();
+    const endMs = newEndsAt.getTime();
+    const { data: parts } = await supabase
+      .from('faction_event_participants')
+      .select('id, personal_start_at')
+      .eq('event_id', event_id);
+
+    if (parts && parts.length > 0) {
+      // First, blanket-invalidate counts.
+      await supabase
+        .from('faction_event_participants')
+        .update({ last_checked_at: null, last_count: 0 })
+        .eq('event_id', event_id);
+
+      // Then clamp any out-of-window personal-start times. Sequential rather
+      // than batched because per-row clamp values differ.
+      for (const p of parts) {
+        const psMs = new Date(p.personal_start_at).getTime();
+        const clamped = Math.min(Math.max(psMs, startMs), endMs);
+        if (clamped !== psMs) {
+          await supabase
+            .from('faction_event_participants')
+            .update({ personal_start_at: new Date(clamped).toISOString() })
+            .eq('id', p.id);
+        }
+      }
+    }
+  }
+
+  return json({ event: updatedEvent, drug_changed: drugChanged, window_changed: windowChanged });
+}
+
 // Validate the caller's API key, look up the event, run a bounded log scan,
 // and either insert or update the participant row. Returns the updated row +
 // fresh count so the client can render the leaderboard immediately.
@@ -2500,7 +2902,7 @@ async function handleJoinFactionEvent(body: any) {
   if (personalStartParsed.err) return json({ error: personalStartParsed.err }, 400);
   const personalStart = personalStartParsed.ts!;
 
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
@@ -2523,7 +2925,12 @@ async function handleJoinFactionEvent(body: any) {
   // Validate the key + grab identity (name / faction)
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
   const identData = await identRes.json();
-  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  if (identData.error) {
+    if (resolved.torn_id && isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
 
   const tornId = String(identData.player_id);
   const tornName = String(identData.name || '');
@@ -2575,7 +2982,7 @@ async function handleRefreshFactionEventParticipant(body: any) {
   const event_id = typeof body.event_id === 'string' ? body.event_id : '';
   if (!event_id) return json({ error: 'Missing event_id' }, 400);
 
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
@@ -2590,7 +2997,12 @@ async function handleRefreshFactionEventParticipant(body: any) {
 
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
   const identData = await identRes.json();
-  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  if (identData.error) {
+    if (resolved.torn_id && isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
   const tornId = String(identData.player_id);
 
   const { data: existing, error: existErr } = await supabase
@@ -2630,6 +3042,150 @@ async function handleRefreshFactionEventParticipant(body: any) {
   return json({ participant: updated, count, event });
 }
 
+// Public sweep called in the background by every viewer of an event page so
+// the leaderboard self-heals without each viewer needing each participant's
+// API key. No caller auth required (the keys we use are the participants'
+// own stored keys from faction_event_player_secrets).
+//
+// Pick up to MAX_BATCH stale rows for this event — NULL last_checked_at
+// first (newly-invalidated by an event edit, or never refreshed since join),
+// then any row older than STALE_AFTER_SEC. Process sequentially so we can
+// react to revoked keys row-by-row without burning rate limit on already-dead
+// keys, and so cascade-deletes don't race with their own follow-up updates.
+//
+// Per-row outcomes:
+//   - No stored key for this torn_id (signed out / never saved): touch
+//     last_checked_at = now() so the row drops out of the stale queue and
+//     stops getting re-picked every sweep. Count is left unchanged.
+//   - Permanent Torn error (codes 2 / 16): cascadeDeleteFactionEventSecret
+//     drops the secret row + every participant row for this torn_id, then
+//     we move on. The participant rows vanish from every event leaderboard.
+//   - Transient Torn error (5 / 8 / 9): leave the row alone (don't touch
+//     last_checked_at) so the next sweep retries it as soon as it qualifies.
+//   - Success: re-run countItemUseInLog over [personal_start_at, min(now,
+//     ends_at)] and write the fresh count + last_checked_at.
+async function handleRefreshStaleParticipants(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const MAX_BATCH = 15;
+  const STALE_AFTER_SEC = 60;
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const cutoffIso = new Date(Date.now() - STALE_AFTER_SEC * 1000).toISOString();
+
+  // NULL-first: rows that were invalidated (by event edit) or never refreshed
+  // since the initial join. Order by created_at to stay deterministic.
+  const { data: nullRows = [] } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, personal_start_at, last_count, last_checked_at')
+    .eq('event_id', event_id)
+    .is('last_checked_at', null)
+    .order('created_at', { ascending: true })
+    .limit(MAX_BATCH);
+
+  let stale = nullRows || [];
+  if (stale.length < MAX_BATCH) {
+    const remaining = MAX_BATCH - stale.length;
+    const { data: oldRows = [] } = await supabase
+      .from('faction_event_participants')
+      .select('id, torn_id, personal_start_at, last_count, last_checked_at')
+      .eq('event_id', event_id)
+      .not('last_checked_at', 'is', null)
+      .lt('last_checked_at', cutoffIso)
+      .order('last_checked_at', { ascending: true })
+      .limit(remaining);
+    stale = stale.concat(oldRows || []);
+  }
+
+  if (stale.length === 0) {
+    return json({ refreshed: 0, deleted: 0, skipped: 0 });
+  }
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
+
+  let refreshed = 0;
+  let deleted = 0;
+  let skipped = 0;
+
+  for (const row of stale) {
+    const tornIdNum = Number(row.torn_id);
+    if (!Number.isFinite(tornIdNum)) {
+      skipped++;
+      continue;
+    }
+
+    const { data: secret } = await supabase
+      .from('faction_event_player_secrets')
+      .select('api_key_enc, api_key_iv')
+      .eq('torn_player_id', tornIdNum)
+      .maybeSingle();
+
+    if (!secret) {
+      // No key on file — touch last_checked_at so this row stops dominating
+      // the stale queue. The participant can re-join after signing in again.
+      await supabase
+        .from('faction_event_participants')
+        .update({ last_checked_at: new Date().toISOString() })
+        .eq('id', row.id);
+      skipped++;
+      continue;
+    }
+
+    const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+    if (!apiKey) {
+      // Decrypt failure means the row is corrupt or the master key changed.
+      // Cascade-delete so we don't keep failing on it forever.
+      await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+      deleted++;
+      continue;
+    }
+
+    // Cheap probe — basic alone is enough to learn whether the key is alive.
+    const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+    const probe = await probeRes.json().catch(() => ({}));
+
+    if (probe?.error) {
+      if (isPermanentTornKeyError(probe.error.code)) {
+        await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+        deleted++;
+      } else {
+        // Transient — leave row alone so we retry next sweep.
+        skipped++;
+      }
+      continue;
+    }
+
+    const startMs = new Date(row.personal_start_at).getTime();
+    const fromSec = Math.floor(startMs / 1000);
+    const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+
+    let count = 0;
+    if (untilSec > fromSec) {
+      const result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+      count = result.count;
+    }
+
+    await supabase
+      .from('faction_event_participants')
+      .update({ last_count: count, last_checked_at: new Date().toISOString() })
+      .eq('id', row.id);
+    refreshed++;
+  }
+
+  return json({ refreshed, deleted, skipped, picked: stale.length });
+}
+
 // Best-effort: read the caller's in-game "Event start time" from Torn so the
 // Faction Events page can pre-fill the personal-start-time picker. Torn's
 // public docs are vague on which exact selection surfaces this preference,
@@ -2637,12 +3193,20 @@ async function handleRefreshFactionEventParticipant(body: any) {
 // the raw payloads and a parsed guess at the start time. The frontend uses
 // it as a hint only — manual override always wins.
 async function handleFetchTornEventStart(body: any) {
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
   const calRes = await fetch(`${TORN_API}/user/?selections=calendar&key=${api_key}`);
   const calData = await calRes.json().catch(() => ({}));
+
+  // If Torn permanently rejected the key here too, cascade-delete the
+  // session row before returning. Calendar is a soft feature — we don't
+  // surface the error to the frontend, but we do clean up.
+  if (calData?.error && resolved.torn_id && isPermanentTornKeyError(calData.error.code)) {
+    const supabase = serviceClient();
+    await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+  }
 
   // Heuristic parse: look for any field whose key contains "start" and whose
   // value is a unix timestamp or HH:MM string.
@@ -2697,6 +3261,12 @@ serve(async (req) => {
         return await handleAutoLogin(body);
       case 'revoke-session':
         return await handleRevokeSession(body);
+      case 'fe-set-api-key':
+        return await handleFeSetApiKey(body);
+      case 'fe-auto-login':
+        return await handleFeAutoLogin(body);
+      case 'fe-revoke-session':
+        return await handleFeRevokeSession(body);
       case 'torn-proxy':
         return await handleTornProxy(body);
       case 'create-transaction':
@@ -2740,10 +3310,14 @@ serve(async (req) => {
         return await handleGetFactionEvent(body);
       case 'list-faction-events':
         return await handleListFactionEvents(body);
+      case 'update-faction-event':
+        return await handleUpdateFactionEvent(body);
       case 'join-faction-event':
         return await handleJoinFactionEvent(body);
       case 'refresh-faction-event':
         return await handleRefreshFactionEventParticipant(body);
+      case 'refresh-stale-participants':
+        return await handleRefreshStaleParticipants(body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
       default:
