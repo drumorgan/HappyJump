@@ -947,6 +947,150 @@ async function handleRevokeSession(body: any) {
   return json({ success: true });
 }
 
+// ── Faction Event session actions (fe-*) ─────────────────────────────
+// Scope-isolated session for the Faction Events page. Tokens minted here
+// only authorize fe-* actions (count drug uses, edit your own events).
+// They cannot authorize Happy Jump payouts, transactions, or admin work.
+// Storage table: faction_event_player_secrets (migration 012).
+
+// Validate the supplied Torn key, ensure it has Log access (needed to count
+// drug-use entries), encrypt it, and mint an opaque session token.
+async function handleFeSetApiKey(body: any) {
+  const { api_key } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const enc = await getEncryptionKey();
+  if (!enc) {
+    return json({ error: 'Encryption not configured on server (missing API_KEY_ENCRYPTION_KEY)' }, 500);
+  }
+
+  // FE only needs Log access for counting. (Calendar is best-effort, used
+  // by fetch-torn-event-start; we don't gate sign-in on it.) We deliberately
+  // do NOT require Events access — FE is narrower in scope than Happy Jump.
+  const [basicRes, logRes] = await Promise.all([
+    fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`),
+    fetch(`${TORN_API}/user/?selections=log&limit=1&key=${api_key}`),
+  ]);
+  const [basic, logCheck] = await Promise.all([basicRes.json(), logRes.json()]);
+  if (basic.error) return json({ error: `Torn API: ${basic.error.error}` }, 400);
+  if (logCheck.error) {
+    return json({
+      error: 'Your API key is missing required permissions. Please create or update a key with "Log" access enabled.',
+    }, 400);
+  }
+
+  const tornPlayerId = Number(basic.player_id);
+  const session_token = randomTokenBase64(32);
+  const session_token_hash = await sha256Base64(session_token);
+  const encrypted = await encryptApiKey(api_key);
+  if (!encrypted) return json({ error: 'Encryption failed' }, 500);
+
+  const nowIso = new Date().toISOString();
+  const supabase = serviceClient();
+  const { error: upErr } = await supabase
+    .from('faction_event_player_secrets')
+    .upsert(
+      {
+        torn_player_id: tornPlayerId,
+        api_key_enc: encrypted.ciphertext,
+        api_key_iv: encrypted.iv,
+        session_token_hash,
+        failed_attempts: 0,
+        updated_at: nowIso,
+        last_login_at: nowIso,
+      },
+      { onConflict: 'torn_player_id' },
+    );
+
+  if (upErr) return json({ error: `Failed to store session: ${upErr.message}` }, 500);
+
+  return json({
+    success: true,
+    player_id: String(tornPlayerId),
+    session_token,
+    torn_id: String(tornPlayerId),
+    torn_name: basic.name,
+    torn_faction: basic.faction?.faction_name || null,
+    torn_level: basic.level,
+  });
+}
+
+// Re-validates the stored key against Torn. On permanent Torn errors
+// (codes 2/16) the session row is cascade-deleted along with every
+// participant row anchored on this torn_id. Transient errors (5/8/9 etc.)
+// leave the row alone — the key is fine, the network isn't.
+async function handleFeAutoLogin(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${resolved.key}`);
+  const identData = await identRes.json();
+
+  const supabase = serviceClient();
+
+  if (identData.error) {
+    if (isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, player_id);
+      return sessionInvalid();
+    }
+    // Transient — keep the row, surface the error so the client can retry.
+    return json({ error: `Torn API: ${identData.error.error}`, transient: true }, 503);
+  }
+
+  // Defence-in-depth: stored player_id must still match what Torn reports.
+  if (String(identData.player_id) !== String(player_id)) {
+    await cascadeDeleteFactionEventSecret(supabase, player_id);
+    return sessionInvalid();
+  }
+
+  await supabase
+    .from('faction_event_player_secrets')
+    .update({ failed_attempts: 0, last_login_at: new Date().toISOString() })
+    .eq('torn_player_id', Number(player_id));
+
+  return json({
+    success: true,
+    torn_id: String(identData.player_id),
+    torn_name: identData.name,
+    torn_faction: identData.faction?.faction_name || null,
+    torn_level: identData.level,
+  });
+}
+
+// Sign Out — verifies the token and deletes the FE secret row. Idempotent:
+// unknown / invalid creds still return success so this endpoint can't be
+// used as an oracle for valid player_ids. Does NOT cascade-delete the
+// participant rows — your existing leaderboard entries stay; you just lose
+// the ability to refresh them until you sign in again.
+async function handleFeRevokeSession(body: any) {
+  const { player_id, session_token } = body;
+  if (!player_id || !session_token) {
+    return json({ error: 'Missing player_id or session_token' }, 400);
+  }
+
+  const supabase = serviceClient();
+  const { data: row } = await supabase
+    .from('faction_event_player_secrets')
+    .select('session_token_hash')
+    .eq('torn_player_id', Number(player_id))
+    .maybeSingle();
+
+  if (!row) return json({ success: true });
+
+  const providedHash = await sha256Base64(String(session_token));
+  if (!constantTimeEqual(providedHash, row.session_token_hash)) {
+    return json({ success: true });
+  }
+
+  await supabase.from('faction_event_player_secrets').delete().eq('torn_player_id', Number(player_id));
+  return json({ success: true });
+}
+
 async function handleCreateTransaction(body: any) {
   console.log('[create-transaction] Handler called for', body.torn_name, body.torn_id);
   const { torn_id, torn_name, torn_faction, torn_level } = body;
@@ -2742,6 +2886,12 @@ serve(async (req) => {
         return await handleAutoLogin(body);
       case 'revoke-session':
         return await handleRevokeSession(body);
+      case 'fe-set-api-key':
+        return await handleFeSetApiKey(body);
+      case 'fe-auto-login':
+        return await handleFeAutoLogin(body);
+      case 'fe-revoke-session':
+        return await handleFeRevokeSession(body);
       case 'torn-proxy':
         return await handleTornProxy(body);
       case 'create-transaction':
