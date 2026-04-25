@@ -2678,6 +2678,137 @@ async function handleListFactionEvents(_body: any) {
   return json({ events: data || [] });
 }
 
+// Creator-only patch of an event's title / drug / window. Authorized via
+// a Faction Event session (resolveFactionEventApiKey) that resolves to the
+// same torn_id stored in event.creator_torn_id. If the drug or window
+// changes, every participant row is invalidated (last_checked_at = NULL)
+// so the next sweep recounts. Personal-start times that now fall outside
+// the new window are clamped back inside it.
+async function handleUpdateFactionEvent(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const callerTornId = String(resolved.torn_id || '');
+  if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+    return json({ error: 'Only the event creator can edit this event' }, 403);
+  }
+
+  // Build the patch — only fields the caller actually supplied are touched.
+  const patch: Record<string, unknown> = {};
+  let drugChanged = false;
+  let windowChanged = false;
+
+  if (typeof body.title === 'string') {
+    const title = body.title.trim();
+    if (!title) return json({ error: 'Title cannot be empty' }, 400);
+    if (title.length > 120) return json({ error: 'Title too long' }, 400);
+    if (title !== event.title) patch.title = title;
+  }
+
+  if (body.drug_item_id !== undefined || typeof body.drug_name === 'string') {
+    const drug_item_id = Number(body.drug_item_id ?? event.drug_item_id);
+    const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : event.drug_name;
+    if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
+      return json({ error: 'drug_item_id must be a positive integer' }, 400);
+    }
+    if (!drug_name) return json({ error: 'drug_name is required' }, 400);
+    if (drug_name.length > 60) return json({ error: 'drug_name too long' }, 400);
+    if (drug_item_id !== Number(event.drug_item_id) || drug_name !== event.drug_name) {
+      patch.drug_item_id = drug_item_id;
+      patch.drug_name = drug_name;
+      drugChanged = true;
+    }
+  }
+
+  let newStartsAt = new Date(event.starts_at);
+  let newEndsAt = new Date(event.ends_at);
+  if (typeof body.starts_at === 'string') {
+    const p = parseFactionEventTimestamp(body.starts_at, 'starts_at');
+    if (p.err) return json({ error: p.err }, 400);
+    newStartsAt = p.ts!;
+  }
+  if (typeof body.ends_at === 'string') {
+    const p = parseFactionEventTimestamp(body.ends_at, 'ends_at');
+    if (p.err) return json({ error: p.err }, 400);
+    newEndsAt = p.ts!;
+  }
+  if (newEndsAt.getTime() <= newStartsAt.getTime()) {
+    return json({ error: 'ends_at must be after starts_at' }, 400);
+  }
+  const MAX_MS = 30 * 24 * 60 * 60 * 1000;
+  if (newEndsAt.getTime() - newStartsAt.getTime() > MAX_MS) {
+    return json({ error: 'Event window cannot exceed 30 days' }, 400);
+  }
+  if (newStartsAt.toISOString() !== new Date(event.starts_at).toISOString()) {
+    patch.starts_at = newStartsAt.toISOString();
+    windowChanged = true;
+  }
+  if (newEndsAt.toISOString() !== new Date(event.ends_at).toISOString()) {
+    patch.ends_at = newEndsAt.toISOString();
+    windowChanged = true;
+  }
+
+  if (Object.keys(patch).length === 0) {
+    return json({ event });
+  }
+
+  const { data: updatedEvent, error: updErr } = await supabase
+    .from('faction_events')
+    .update(patch)
+    .eq('id', event_id)
+    .select()
+    .single();
+  if (updErr) return json({ error: updErr.message }, 500);
+
+  // If the count parameters changed, invalidate every participant's count so
+  // the next refresh-stale-participants sweep recounts. Also clamp
+  // personal_start_at into the new window for any rows that fell outside.
+  if (drugChanged || windowChanged) {
+    const startMs = newStartsAt.getTime();
+    const endMs = newEndsAt.getTime();
+    const { data: parts } = await supabase
+      .from('faction_event_participants')
+      .select('id, personal_start_at')
+      .eq('event_id', event_id);
+
+    if (parts && parts.length > 0) {
+      // First, blanket-invalidate counts.
+      await supabase
+        .from('faction_event_participants')
+        .update({ last_checked_at: null, last_count: 0 })
+        .eq('event_id', event_id);
+
+      // Then clamp any out-of-window personal-start times. Sequential rather
+      // than batched because per-row clamp values differ.
+      for (const p of parts) {
+        const psMs = new Date(p.personal_start_at).getTime();
+        const clamped = Math.min(Math.max(psMs, startMs), endMs);
+        if (clamped !== psMs) {
+          await supabase
+            .from('faction_event_participants')
+            .update({ personal_start_at: new Date(clamped).toISOString() })
+            .eq('id', p.id);
+        }
+      }
+    }
+  }
+
+  return json({ event: updatedEvent, drug_changed: drugChanged, window_changed: windowChanged });
+}
+
 // Validate the caller's API key, look up the event, run a bounded log scan,
 // and either insert or update the participant row. Returns the updated row +
 // fresh count so the client can render the leaderboard immediately.
@@ -2935,6 +3066,8 @@ serve(async (req) => {
         return await handleGetFactionEvent(body);
       case 'list-faction-events':
         return await handleListFactionEvents(body);
+      case 'update-faction-event':
+        return await handleUpdateFactionEvent(body);
       case 'join-faction-event':
         return await handleJoinFactionEvent(body);
       case 'refresh-faction-event':
