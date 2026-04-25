@@ -2820,7 +2820,7 @@ async function handleJoinFactionEvent(body: any) {
   if (personalStartParsed.err) return json({ error: personalStartParsed.err }, 400);
   const personalStart = personalStartParsed.ts!;
 
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
@@ -2843,7 +2843,12 @@ async function handleJoinFactionEvent(body: any) {
   // Validate the key + grab identity (name / faction)
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
   const identData = await identRes.json();
-  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  if (identData.error) {
+    if (resolved.torn_id && isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
 
   const tornId = String(identData.player_id);
   const tornName = String(identData.name || '');
@@ -2895,7 +2900,7 @@ async function handleRefreshFactionEventParticipant(body: any) {
   const event_id = typeof body.event_id === 'string' ? body.event_id : '';
   if (!event_id) return json({ error: 'Missing event_id' }, 400);
 
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
@@ -2910,7 +2915,12 @@ async function handleRefreshFactionEventParticipant(body: any) {
 
   const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
   const identData = await identRes.json();
-  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  if (identData.error) {
+    if (resolved.torn_id && isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
   const tornId = String(identData.player_id);
 
   const { data: existing, error: existErr } = await supabase
@@ -3101,12 +3111,20 @@ async function handleRefreshStaleParticipants(body: any) {
 // the raw payloads and a parsed guess at the start time. The frontend uses
 // it as a hint only — manual override always wins.
 async function handleFetchTornEventStart(body: any) {
-  const resolved = await resolveApiKey(body);
+  const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
 
   const calRes = await fetch(`${TORN_API}/user/?selections=calendar&key=${api_key}`);
   const calData = await calRes.json().catch(() => ({}));
+
+  // If Torn permanently rejected the key here too, cascade-delete the
+  // session row before returning. Calendar is a soft feature — we don't
+  // surface the error to the frontend, but we do clean up.
+  if (calData?.error && resolved.torn_id && isPermanentTornKeyError(calData.error.code)) {
+    const supabase = serviceClient();
+    await cascadeDeleteFactionEventSecret(supabase, resolved.torn_id);
+  }
 
   // Heuristic parse: look for any field whose key contains "start" and whose
   // value is a unix timestamp or HH:MM string.
