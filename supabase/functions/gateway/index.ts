@@ -120,13 +120,16 @@ function sessionInvalid(): Response {
   return json({ error: 'session_invalid' }, 401);
 }
 
-// Resolve a Torn API key from either a direct body field (`key` / `api_key`)
-// or from session credentials (`player_id` + `session_token`). Returns either
-// `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
-async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
-  const direct = body.key || body.api_key;
-  if (direct) return { key: direct, torn_id: '' };
-
+// Generic session resolver — shared by Happy Jump (player_secrets) and
+// Faction Events (faction_event_player_secrets). Each context has its own
+// table so signing out of one does not affect the other; the schema is
+// identical across both tables (see migrations 010 and 012). Handles the
+// constant-time-compare + 5-strike self-destruct + opaque-401 logic in one
+// place.
+async function resolveSessionFromTable(
+  body: any,
+  table: 'player_secrets' | 'faction_event_player_secrets',
+): Promise<{ key: string; torn_id: string } | Response> {
   const { player_id, session_token } = body;
   if (!player_id || !session_token) {
     return json({ error: 'Missing api_key or session credentials' }, 400);
@@ -139,7 +142,7 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
 
   const supabase = serviceClient();
   const { data: row } = await supabase
-    .from('player_secrets')
+    .from(table)
     .select('torn_player_id, api_key_enc, api_key_iv, session_token_hash, failed_attempts')
     .eq('torn_player_id', Number(player_id))
     .maybeSingle();
@@ -156,10 +159,10 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
     if (next >= 5) {
       // Self-destruct after 5 bad attempts. Response is the same opaque 401
       // so an attacker can't tell they just burned the last strike.
-      await supabase.from('player_secrets').delete().eq('torn_player_id', row.torn_player_id);
+      await supabase.from(table).delete().eq('torn_player_id', row.torn_player_id);
     } else {
       await supabase
-        .from('player_secrets')
+        .from(table)
         .update({ failed_attempts: next })
         .eq('torn_player_id', row.torn_player_id);
     }
@@ -169,6 +172,48 @@ async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string 
   const key = await decryptApiKey(row.api_key_enc, row.api_key_iv);
   if (!key) return sessionInvalid();
   return { key, torn_id: String(row.torn_player_id) };
+}
+
+// Resolve a Torn API key from either a direct body field (`key` / `api_key`)
+// or from Happy Jump session credentials (`player_id` + `session_token`).
+// Returns either `{ key, torn_id }` or a Response with a clear 4xx/5xx error.
+async function resolveApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
+  const direct = body.key || body.api_key;
+  if (direct) return { key: direct, torn_id: '' };
+  return resolveSessionFromTable(body, 'player_secrets');
+}
+
+// Same shape as resolveApiKey, but backed by the Faction Events secrets
+// table. A session minted via fe-set-api-key cannot authorize Happy Jump
+// actions and vice versa.
+async function resolveFactionEventApiKey(body: any): Promise<{ key: string; torn_id: string } | Response> {
+  const direct = body.key || body.api_key;
+  if (direct) return { key: direct, torn_id: '' };
+  return resolveSessionFromTable(body, 'faction_event_player_secrets');
+}
+
+// Torn API error codes that mean "this key will never work again":
+//   2  = Incorrect key (revoked / never valid)
+//   16 = Access level too low (key downgraded below required permissions)
+// Codes 5/8/9 (limit reached / IP banned / API offline) are transient and
+// must NOT trigger destructive cleanup — the key is fine, the network isn't.
+function isPermanentTornKeyError(code: number | null | undefined): boolean {
+  return code === 2 || code === 16;
+}
+
+// When a Faction Event participant's key is permanently revoked, drop the
+// secret row AND every participant row anchored on that torn_id across all
+// events. The participant rows can no longer be refreshed (no key), so
+// leaving them creates a misleading frozen leaderboard. Re-joining after a
+// fresh sign-in recreates the rows from scratch.
+async function cascadeDeleteFactionEventSecret(
+  supabase: any,
+  tornId: number | string,
+): Promise<void> {
+  const idNum = Number(tornId);
+  if (!Number.isFinite(idNum)) return;
+  await supabase.from('faction_event_player_secrets').delete().eq('torn_player_id', idNum);
+  await supabase.from('faction_event_participants').delete().eq('torn_id', String(idNum));
 }
 
 async function requireAuth(req: Request) {
