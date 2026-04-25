@@ -2624,8 +2624,66 @@ async function handleCreateFactionEvent(body: any) {
     return json({ error: 'Event window cannot exceed 30 days' }, 400);
   }
 
+  const personalParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
+  if (personalParsed.err) return json({ error: personalParsed.err }, 400);
+  const personalStart = personalParsed.ts!;
+
+  // Creating an event requires a Faction Event session — we need a stable
+  // creator_torn_id for later edit authorization, and we need the creator's
+  // own API key to seed their initial participant row. Direct `{ key: ... }`
+  // bodies are NOT honored here: there is no session row to anchor the
+  // creator on, so creator-only edits would never work afterward.
+  if (!body.player_id || !body.session_token) {
+    return json({ error: 'Sign in required to create an event' }, 401);
+  }
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
+  const creatorTornId = String(resolved.torn_id || '');
+  if (!creatorTornId) return json({ error: 'Sign in required to create an event' }, 401);
+
   const supabase = serviceClient();
-  const { data, error } = await supabase
+
+  // Re-validate the key + grab creator identity (name / faction) for the
+  // initial participant row. This also doubles as a freshness check —
+  // a key revoked since auto-login is detected and cleaned up here.
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) {
+    if (isPermanentTornKeyError(identData.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, creatorTornId);
+    }
+    return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  }
+
+  // Defence-in-depth: identity from Torn must match the session torn_id.
+  if (String(identData.player_id) !== creatorTornId) {
+    return json({ error: 'Session identity mismatch' }, 401);
+  }
+
+  const creatorTornName = String(identData.name || '');
+  const creatorTornFaction = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
+
+  // Clamp the creator's personal start to the event window.
+  const clampedStartMs = Math.min(
+    Math.max(personalStart.getTime(), starts_at.getTime()),
+    ends_at.getTime(),
+  );
+  const clampedStartIso = new Date(clampedStartMs).toISOString();
+
+  // Initial count for the creator. If the personal start is in the future
+  // (shouldn't happen post-clamp, but defensively) we just record 0.
+  const nowSec = Math.floor(Date.now() / 1000);
+  const fromSec = Math.floor(clampedStartMs / 1000);
+  const untilSec = Math.min(nowSec, Math.floor(ends_at.getTime() / 1000));
+  let creatorCount = 0;
+  if (untilSec > fromSec) {
+    const result = await countItemUseInLog(api_key, drug_item_id, drug_name, fromSec, untilSec);
+    creatorCount = result.count;
+  }
+
+  // Insert event first.
+  const { data: eventRow, error: evtErr } = await supabase
     .from('faction_events')
     .insert({
       title,
@@ -2633,12 +2691,36 @@ async function handleCreateFactionEvent(body: any) {
       drug_name,
       starts_at: starts_at.toISOString(),
       ends_at: ends_at.toISOString(),
+      creator_torn_id: creatorTornId,
     })
     .select()
     .single();
 
-  if (error) return json({ error: error.message }, 500);
-  return json({ event: data });
+  if (evtErr) return json({ error: evtErr.message }, 500);
+
+  // Then insert the creator's participant row. If this fails, roll back the
+  // event so we never end up with an orphan event the creator can't edit.
+  const checkedAt = new Date().toISOString();
+  const { data: participantRow, error: partErr } = await supabase
+    .from('faction_event_participants')
+    .insert({
+      event_id: eventRow.id,
+      torn_id: creatorTornId,
+      torn_name: creatorTornName,
+      torn_faction: creatorTornFaction,
+      personal_start_at: clampedStartIso,
+      last_count: creatorCount,
+      last_checked_at: checkedAt,
+    })
+    .select()
+    .single();
+
+  if (partErr) {
+    await supabase.from('faction_events').delete().eq('id', eventRow.id);
+    return json({ error: `Failed to seed creator participant: ${partErr.message}` }, 500);
+  }
+
+  return json({ event: eventRow, participant: participantRow });
 }
 
 async function handleGetFactionEvent(body: any) {
