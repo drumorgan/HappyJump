@@ -2950,6 +2950,150 @@ async function handleRefreshFactionEventParticipant(body: any) {
   return json({ participant: updated, count, event });
 }
 
+// Public sweep called in the background by every viewer of an event page so
+// the leaderboard self-heals without each viewer needing each participant's
+// API key. No caller auth required (the keys we use are the participants'
+// own stored keys from faction_event_player_secrets).
+//
+// Pick up to MAX_BATCH stale rows for this event — NULL last_checked_at
+// first (newly-invalidated by an event edit, or never refreshed since join),
+// then any row older than STALE_AFTER_SEC. Process sequentially so we can
+// react to revoked keys row-by-row without burning rate limit on already-dead
+// keys, and so cascade-deletes don't race with their own follow-up updates.
+//
+// Per-row outcomes:
+//   - No stored key for this torn_id (signed out / never saved): touch
+//     last_checked_at = now() so the row drops out of the stale queue and
+//     stops getting re-picked every sweep. Count is left unchanged.
+//   - Permanent Torn error (codes 2 / 16): cascadeDeleteFactionEventSecret
+//     drops the secret row + every participant row for this torn_id, then
+//     we move on. The participant rows vanish from every event leaderboard.
+//   - Transient Torn error (5 / 8 / 9): leave the row alone (don't touch
+//     last_checked_at) so the next sweep retries it as soon as it qualifies.
+//   - Success: re-run countItemUseInLog over [personal_start_at, min(now,
+//     ends_at)] and write the fresh count + last_checked_at.
+async function handleRefreshStaleParticipants(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const MAX_BATCH = 15;
+  const STALE_AFTER_SEC = 60;
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const cutoffIso = new Date(Date.now() - STALE_AFTER_SEC * 1000).toISOString();
+
+  // NULL-first: rows that were invalidated (by event edit) or never refreshed
+  // since the initial join. Order by created_at to stay deterministic.
+  const { data: nullRows = [] } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, personal_start_at, last_count, last_checked_at')
+    .eq('event_id', event_id)
+    .is('last_checked_at', null)
+    .order('created_at', { ascending: true })
+    .limit(MAX_BATCH);
+
+  let stale = nullRows || [];
+  if (stale.length < MAX_BATCH) {
+    const remaining = MAX_BATCH - stale.length;
+    const { data: oldRows = [] } = await supabase
+      .from('faction_event_participants')
+      .select('id, torn_id, personal_start_at, last_count, last_checked_at')
+      .eq('event_id', event_id)
+      .not('last_checked_at', 'is', null)
+      .lt('last_checked_at', cutoffIso)
+      .order('last_checked_at', { ascending: true })
+      .limit(remaining);
+    stale = stale.concat(oldRows || []);
+  }
+
+  if (stale.length === 0) {
+    return json({ refreshed: 0, deleted: 0, skipped: 0 });
+  }
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
+
+  let refreshed = 0;
+  let deleted = 0;
+  let skipped = 0;
+
+  for (const row of stale) {
+    const tornIdNum = Number(row.torn_id);
+    if (!Number.isFinite(tornIdNum)) {
+      skipped++;
+      continue;
+    }
+
+    const { data: secret } = await supabase
+      .from('faction_event_player_secrets')
+      .select('api_key_enc, api_key_iv')
+      .eq('torn_player_id', tornIdNum)
+      .maybeSingle();
+
+    if (!secret) {
+      // No key on file — touch last_checked_at so this row stops dominating
+      // the stale queue. The participant can re-join after signing in again.
+      await supabase
+        .from('faction_event_participants')
+        .update({ last_checked_at: new Date().toISOString() })
+        .eq('id', row.id);
+      skipped++;
+      continue;
+    }
+
+    const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+    if (!apiKey) {
+      // Decrypt failure means the row is corrupt or the master key changed.
+      // Cascade-delete so we don't keep failing on it forever.
+      await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+      deleted++;
+      continue;
+    }
+
+    // Cheap probe — basic alone is enough to learn whether the key is alive.
+    const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+    const probe = await probeRes.json().catch(() => ({}));
+
+    if (probe?.error) {
+      if (isPermanentTornKeyError(probe.error.code)) {
+        await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+        deleted++;
+      } else {
+        // Transient — leave row alone so we retry next sweep.
+        skipped++;
+      }
+      continue;
+    }
+
+    const startMs = new Date(row.personal_start_at).getTime();
+    const fromSec = Math.floor(startMs / 1000);
+    const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+
+    let count = 0;
+    if (untilSec > fromSec) {
+      const result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+      count = result.count;
+    }
+
+    await supabase
+      .from('faction_event_participants')
+      .update({ last_count: count, last_checked_at: new Date().toISOString() })
+      .eq('id', row.id);
+    refreshed++;
+  }
+
+  return json({ refreshed, deleted, skipped, picked: stale.length });
+}
+
 // Best-effort: read the caller's in-game "Event start time" from Torn so the
 // Faction Events page can pre-fill the personal-start-time picker. Torn's
 // public docs are vague on which exact selection surfaces this preference,
@@ -3072,6 +3216,8 @@ serve(async (req) => {
         return await handleJoinFactionEvent(body);
       case 'refresh-faction-event':
         return await handleRefreshFactionEventParticipant(body);
+      case 'refresh-stale-participants':
+        return await handleRefreshStaleParticipants(body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
       default:
