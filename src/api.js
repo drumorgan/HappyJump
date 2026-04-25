@@ -262,9 +262,75 @@ export async function adminSyncAllClients() {
 // ── Faction Events ───────────────────────────────────────────────────
 // Self-contained leaderboard feature; does NOT touch the Happy Jump
 // transactions / clients pipeline. See supabase/migrations/011_faction_events.sql.
+//
+// Faction Events have their OWN session table (faction_event_player_secrets,
+// migration 012) and their own session token format. The fe* helpers below
+// mint / refresh / revoke that session — completely independent from the
+// Happy Jump session managed by setApiKey / autoLogin / revokeSession.
+// Signing out of one does not affect the other.
 
-export async function createFactionEvent({ title, drug_item_id, drug_name, starts_at, ends_at }) {
-  return gateway('create-faction-event', { title, drug_item_id, drug_name, starts_at, ends_at });
+/**
+ * Mint a Faction Event session. Validates the Torn key (must have Log
+ * permission), encrypts it server-side, and returns
+ * { player_id, session_token, torn_id, torn_name, torn_faction }.
+ * The raw key is never stored client-side.
+ */
+export async function feSetApiKey(apiKey) {
+  return gateway('fe-set-api-key', { api_key: apiKey });
+}
+
+/**
+ * Re-validate a stored Faction Event session against Torn. Returns the
+ * caller's identity { torn_id, torn_name, torn_faction, ... } on success.
+ * Permanent Torn errors (codes 2 / 16) cascade-delete the row server-side
+ * and return `session_invalid`. Transient errors return a 503 with
+ * `transient: true` — callers should keep the session and retry later.
+ */
+export async function feAutoLogin(playerId, sessionToken) {
+  return gateway('fe-auto-login', {
+    player_id: String(playerId),
+    session_token: sessionToken,
+  });
+}
+
+/**
+ * Sign out — deletes the FE session row server-side. Idempotent: unknown
+ * creds also return success so this can't be used as a membership oracle.
+ * Does NOT delete the user's leaderboard rows; those stay until the next
+ * sweep can no longer refresh them.
+ */
+export async function feRevokeSession(playerId, sessionToken) {
+  return gateway('fe-revoke-session', {
+    player_id: String(playerId),
+    session_token: sessionToken,
+  });
+}
+
+/**
+ * Create a Faction Event. Now requires FE auth (a session minted via
+ * feSetApiKey) — direct keys are no longer accepted because we need a
+ * stable creator_torn_id for later edit authorization. Atomically inserts
+ * the event AND the creator's participant row anchored at personalStartAt.
+ * Response: { event, participant }.
+ */
+export async function createFactionEvent({
+  title,
+  drug_item_id,
+  drug_name,
+  starts_at,
+  ends_at,
+  personalStartAt,
+  auth,
+}) {
+  return gateway('create-faction-event', {
+    title,
+    drug_item_id,
+    drug_name,
+    starts_at,
+    ends_at,
+    personal_start_at: personalStartAt,
+    ...authPayload(auth),
+  });
 }
 
 export async function getFactionEvent(eventId) {
@@ -273,6 +339,30 @@ export async function getFactionEvent(eventId) {
 
 export async function listFactionEvents() {
   return gateway('list-faction-events');
+}
+
+/**
+ * Creator-only patch of an event. Pass any subset of { title, drug_item_id,
+ * drug_name, starts_at, ends_at } — fields you don't supply are not touched.
+ * If drug or window changes, every participant row is invalidated server-
+ * side so the next sweep recounts.
+ */
+export async function updateFactionEvent({
+  eventId,
+  auth,
+  title,
+  drug_item_id,
+  drug_name,
+  starts_at,
+  ends_at,
+}) {
+  const payload = { event_id: eventId, ...authPayload(auth) };
+  if (title !== undefined) payload.title = title;
+  if (drug_item_id !== undefined) payload.drug_item_id = drug_item_id;
+  if (drug_name !== undefined) payload.drug_name = drug_name;
+  if (starts_at !== undefined) payload.starts_at = starts_at;
+  if (ends_at !== undefined) payload.ends_at = ends_at;
+  return gateway('update-faction-event', payload);
 }
 
 export async function joinFactionEvent({ eventId, auth, personalStartAt }) {
@@ -288,6 +378,17 @@ export async function refreshFactionEvent({ eventId, auth }) {
     event_id: eventId,
     ...authPayload(auth),
   });
+}
+
+/**
+ * Public sweep — refreshes up to 15 stale participant rows for the given
+ * event using each participant's own server-stored key. No caller auth
+ * needed; intended to be fired in the background after every event view
+ * so the leaderboard self-heals without each viewer holding everyone
+ * else's API key. Returns { refreshed, deleted, skipped, picked }.
+ */
+export async function refreshStaleParticipants(eventId) {
+  return gateway('refresh-stale-participants', { event_id: eventId });
 }
 
 /**
