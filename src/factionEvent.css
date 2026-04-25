@@ -1,0 +1,136 @@
+/* Faction Events — page-specific tweaks layered on top of style.css */
+
+.fe-label {
+  display: block;
+  margin: 0.75rem 0;
+  color: #ccc;
+  font-size: 0.95rem;
+}
+
+.fe-label input,
+.fe-label select {
+  display: block;
+  width: 100%;
+  margin-top: 0.35rem;
+  padding: 0.6rem 0.8rem;
+  background: #1a1a24;
+  color: #eee;
+  border: 1px solid #2c2c3a;
+  border-radius: 6px;
+  font-size: 1rem;
+  box-sizing: border-box;
+}
+
+.fe-label input:focus,
+.fe-label select:focus {
+  outline: none;
+  border-color: #e94560;
+}
+
+.fe-row {
+  display: flex;
+  gap: 0.75rem;
+  align-items: flex-end;
+  flex-wrap: wrap;
+}
+
+.fe-secondary {
+  background: #2c2c3a;
+  color: #ccc;
+}
+
+.fe-secondary:hover {
+  background: #3a3a4a;
+}
+
+.fe-share {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 1rem;
+}
+
+.fe-share input {
+  flex: 1;
+  padding: 0.5rem 0.75rem;
+  background: #15151c;
+  color: #888;
+  border: 1px solid #2c2c3a;
+  border-radius: 6px;
+  font-size: 0.85rem;
+  font-family: monospace;
+}
+
+.lb-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.lb-table th,
+.lb-table td {
+  padding: 0.55rem 0.5rem;
+  text-align: left;
+  border-bottom: 1px solid #2a2a36;
+}
+
+.lb-table th {
+  color: #888;
+  font-weight: 500;
+  font-size: 0.85rem;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.lb-table td.lb-rank {
+  width: 2.5rem;
+  color: #888;
+  text-align: center;
+}
+
+.lb-table td.lb-count {
+  width: 4rem;
+  text-align: right;
+  font-weight: 600;
+  font-size: 1.1rem;
+  color: #e8c84a;
+}
+
+.lb-table tr.me-row {
+  background: rgba(233, 69, 96, 0.08);
+}
+
+.lb-table tr.me-row td.lb-rank {
+  color: #e94560;
+  font-weight: 700;
+}
+
+.recent-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.55rem 0;
+  border-bottom: 1px solid #2a2a36;
+}
+
+.recent-row:last-child {
+  border-bottom: none;
+}
+
+.recent-row a {
+  color: #e94560;
+  text-decoration: none;
+  font-weight: 500;
+}
+
+.recent-row a:hover {
+  text-decoration: underline;
+}
+
+.recent-row .recent-meta {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.ev-drug-inline {
+  color: #e8c84a;
+  font-weight: 600;
+}

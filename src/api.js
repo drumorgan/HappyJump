@@ -259,3 +259,43 @@ export async function adminSyncAllClients() {
   return gateway('admin-sync-all-clients');
 }
 
+// ── Faction Events ───────────────────────────────────────────────────
+// Self-contained leaderboard feature; does NOT touch the Happy Jump
+// transactions / clients pipeline. See supabase/migrations/011_faction_events.sql.
+
+export async function createFactionEvent({ title, drug_item_id, drug_name, starts_at, ends_at }) {
+  return gateway('create-faction-event', { title, drug_item_id, drug_name, starts_at, ends_at });
+}
+
+export async function getFactionEvent(eventId) {
+  return gateway('get-faction-event', { event_id: eventId });
+}
+
+export async function listFactionEvents() {
+  return gateway('list-faction-events');
+}
+
+export async function joinFactionEvent({ eventId, auth, personalStartAt }) {
+  return gateway('join-faction-event', {
+    event_id: eventId,
+    personal_start_at: personalStartAt,
+    ...authPayload(auth),
+  });
+}
+
+export async function refreshFactionEvent({ eventId, auth }) {
+  return gateway('refresh-faction-event', {
+    event_id: eventId,
+    ...authPayload(auth),
+  });
+}
+
+/**
+ * Best-effort fetch of the user's in-game "Event start time" preference from
+ * the Torn calendar API. Returns a guess + raw payload — frontend treats it
+ * as a pre-fill hint, not a source of truth.
+ */
+export async function fetchTornEventStart(auth) {
+  return gateway('fetch-torn-event-start', { ...authPayload(auth) });
+}
+

@@ -153,6 +153,16 @@ created_at          timestamptz default now()
 
 ## Pages
 
+### Faction Events (`happyjump.girovagabondo.com/factionEvent/`)
+
+Side-feature, fully decoupled from the Happy Jump transactions / clients pipeline. Lets a faction run a "who drank the most beer / used the most Cannabis" leaderboard inside a bounded time window.
+
+- **Storage:** new tables `faction_events` and `faction_event_participants` (migration `011_faction_events.sql`). Anon role has SELECT only; all writes go through the gateway with the service role.
+- **Counting:** generic `countItemUseInLog(apiKey, itemId, drugName, sinceTs, untilTs)` helper in the gateway, paginated against the Torn user log endpoint, reusing `entryMatchesDrugUse` so buys/trades/ODs aren't counted as uses.
+- **Personal start time:** each participant supplies their own start; the count window is `[max(personal_start, event.start), min(now, event.end)]`. Best-effort autofill via the `fetch-torn-event-start` action which probes the user's `selections=calendar` payload — the picker is the source of truth, autofill is a hint.
+- **Gateway actions:** `create-faction-event`, `get-faction-event`, `list-faction-events`, `join-faction-event`, `refresh-faction-event`, `fetch-torn-event-start`. All public (no admin auth) — events are identified by UUID v4, ~122 bits of entropy in the share link.
+- **Frontend:** `factionEvent/index.html` + `src/factionEvent.js` + `src/factionEvent.css`. Vite multi-page entry. URL `?id=<uuid>` switches between picker view (create + recent events) and event view (header / join form / leaderboard). API keys are NOT stored server-side for this page — the user's key is held in the joining browser's `localStorage` only so they can press "Refresh my count" later.
+
 ### Public Page (`happyjump.girovagabondo.com`)
 
 Displays: current package price, package contents, Xanax/Ecstasy OD payout amounts, rehab bonus, packages available counter (disables buy button at 0).

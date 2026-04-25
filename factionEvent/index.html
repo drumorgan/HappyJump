@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Faction Events — Torn Drinking / Drug Leaderboards</title>
+  <link rel="stylesheet" href="/src/style.css" />
+  <link rel="stylesheet" href="/src/factionEvent.css" />
+</head>
+<body>
+  <div class="container">
+    <header class="site-header">
+      <h1>Faction Events</h1>
+      <p class="site-subtitle">Drinking / drug leaderboards for your faction</p>
+      <p class="site-credit">by <a href="https://www.torn.com/profiles.php?XID=3667375" target="_blank" rel="noopener" class="giro-link">Giro Vagabondo</a></p>
+    </header>
+
+    <div id="toast" class="toast hidden"></div>
+
+    <!-- Create / pick mode -->
+    <section id="picker-view" class="hidden">
+      <div class="card">
+        <div class="card-header">
+          <span>Create a New Event</span>
+        </div>
+        <div class="card-body">
+          <p class="form-intro">Set the drug, the start date and how long the event runs. You'll get a shareable link to send to your faction.</p>
+          <form id="create-event-form">
+            <label class="fe-label">Event title
+              <input type="text" id="ce-title" placeholder="e.g. Spring Beer Bash" required maxlength="120" />
+            </label>
+
+            <label class="fe-label">What are we counting?
+              <select id="ce-drug-preset" required>
+                <option value="">— pick one —</option>
+                <option value="206|Xanax">Xanax (item 206)</option>
+                <option value="197|Ecstasy">Ecstasy (item 197)</option>
+                <option value="211|Cannabis">Cannabis (item 211)</option>
+                <option value="207|Vicodin">Vicodin (item 207)</option>
+                <option value="180|Bottle of Beer">Bottle of Beer (item 180)</option>
+                <option value="custom">Custom — enter item ID</option>
+              </select>
+            </label>
+
+            <div id="ce-custom-row" class="hidden">
+              <label class="fe-label">Item name
+                <input type="text" id="ce-drug-name" placeholder="e.g. Bottle of Sake" maxlength="60" />
+              </label>
+              <label class="fe-label">Item ID
+                <input type="number" id="ce-drug-item-id" placeholder="e.g. 180" min="1" />
+              </label>
+              <p class="key-note">Find item IDs on the <a href="https://www.torn.com/api.html#" target="_blank" rel="noopener">Torn API explorer</a> (selection: <code>items</code>) or browse <a href="https://www.tornstats.com/" target="_blank" rel="noopener">Torn Stats</a>. The counter only matches "use" log entries — make sure the item is something players actually consume.</p>
+            </div>
+
+            <label class="fe-label">Start date / time (your local time)
+              <input type="datetime-local" id="ce-starts-at" required />
+            </label>
+
+            <label class="fe-label">Duration (hours)
+              <input type="number" id="ce-duration-hours" min="1" max="720" value="24" required />
+            </label>
+
+            <button type="submit" class="submit-btn-alt">Create Event</button>
+          </form>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <span>Recent Events</span>
+        </div>
+        <div class="card-body" id="recent-events-body">
+          <p class="form-intro" style="color:#888">Loading recent events…</p>
+        </div>
+      </div>
+    </section>
+
+    <!-- Event view mode -->
+    <section id="event-view" class="hidden">
+      <div class="card highlight-card" id="event-header-card">
+        <div class="card-header">
+          <span id="ev-title">Event</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price" id="ev-drug">—</div>
+          <div class="price-note" id="ev-window">—</div>
+          <div class="availability" id="ev-status">—</div>
+          <div class="fe-share">
+            <input type="text" id="ev-share-link" readonly />
+            <button type="button" id="ev-copy-link" class="submit-btn-alt">Copy link</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Join form (visible until the user joins) -->
+      <div class="card" id="join-card">
+        <div class="card-header">
+          <span>Join This Event</span>
+        </div>
+        <div class="card-body">
+          <p class="form-intro">Enter your Torn API key so we can count your <span class="ev-drug-inline">drug</span> uses. We'll only read your basic profile and event log.</p>
+          <form id="join-form">
+            <input type="text" id="join-api-key" placeholder="Your Torn API key" autocomplete="off" />
+
+            <div class="fe-row">
+              <label class="fe-label" style="flex:1">Your personal start time
+                <input type="datetime-local" id="join-personal-start" required />
+              </label>
+              <button type="button" id="join-fetch-calendar" class="submit-btn-alt fe-secondary">Pull from Torn calendar</button>
+            </div>
+            <p class="key-note">Each player picks their own start time — you only get credit for uses logged at or after this moment, capped at the event window. The "Pull from Torn calendar" button asks Torn for your current Event start time preference and pre-fills the picker; manual edits always win.</p>
+
+            <button type="submit" class="submit-btn-alt">Join &amp; Count</button>
+          </form>
+          <p class="key-note">No key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,events,log,calendar&torn=items&title=FactionEvents" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only shares your name, level, faction, log, and calendar. Your key is sent to our server once, used for the count, and discarded — Faction Events does NOT persist your API key.</p>
+        </div>
+      </div>
+
+      <!-- Your status (after joining) -->
+      <div class="card hidden" id="me-card">
+        <div class="card-header">
+          <span>Your Count</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price" id="me-count">0</div>
+          <div class="price-note" id="me-meta">—</div>
+          <button type="button" id="me-refresh" class="submit-btn-alt">Refresh my count</button>
+          <button type="button" id="me-leave" class="submit-btn-alt fe-secondary">Sign out (forget my key)</button>
+        </div>
+      </div>
+
+      <!-- Leaderboard -->
+      <div class="card">
+        <div class="card-header">
+          <span>Leaderboard</span>
+          <span class="toggle" id="lb-refreshed">—</span>
+        </div>
+        <div class="card-body" id="leaderboard-body">
+          <p class="form-intro" style="color:#888">No participants yet.</p>
+        </div>
+      </div>
+
+      <button id="back-to-picker" class="back-button">← Back to all events</button>
+    </section>
+
+    <div id="loading" class="loading hidden">Loading...</div>
+
+    <div class="crosslink-box">
+      <div class="crosslink-label">More Torn tools by Giro Vagabondo</div>
+      <div class="crosslink-list">
+        <div><a href="/" class="crosslink-link crosslink-happyjump">Happy Jump</a> &mdash; Insured drug packages</div>
+        <div><a href="https://valigia.girovagabondo.com" target="_blank" rel="noopener" class="crosslink-link crosslink-valigia">Valigia</a> &mdash; Torn City Travel Arbitrage</div>
+        <div><a href="https://tornder.girovagabondo.com" target="_blank" rel="noopener" class="crosslink-link crosslink-tornder">Tornder</a> &mdash; Swipe your way through Torn City</div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="/src/factionEvent.js"></script>
+</body>
+</html>
