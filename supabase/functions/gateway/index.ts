@@ -544,6 +544,69 @@ async function countXanaxUsageInLog(
   };
 }
 
+// Generic Torn-log item-use counter used by Faction Events. Same paging
+// shape as countXanaxUsageInLog but parameterised by item id + display
+// name, with both a `since` and an optional `until` cutoff so we can scope
+// counts to an event window. Honours the same dedupe-by-log-key rule.
+async function countItemUseInLog(
+  apiKey: string,
+  itemId: number,
+  drugName: string,
+  sinceTimestamp?: number,
+  untilTimestamp?: number,
+  maxPages = 30,
+): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
+  let toParam = untilTimestamp ? `&to=${untilTimestamp}` : '';
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  const cutoff = sinceTimestamp || 0;
+  const upper = untilTimestamp || Number.POSITIVE_INFINITY;
+  const seenKeys = new Set<string>();
+  const uses: { timestamp: number; detail: string; key: string }[] = [];
+  let pagesFetched = 0;
+  let totalEntries = 0;
+  let lastOldestTs = Infinity;
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) break;
+
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) break;
+    pagesFetched++;
+    totalEntries += entriesKv.length;
+
+    for (const [key, entry] of entriesKv) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff || ts > upper) continue;
+      if (!entryMatchesDrugUse(entry, drugName, itemId)) continue;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+      uses.push({
+        timestamp: ts,
+        detail: `${drugName} @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
+        key,
+      });
+    }
+
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) break;
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) break;
+    lastOldestTs = oldestTs;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  uses.sort((a, b) => a.timestamp - b.timestamp);
+  return {
+    count: uses.length,
+    details: uses.map((u) => u.detail),
+    pages: pagesFetched,
+    totalEntries,
+  };
+}
+
 // ── Auto-close expired transactions ──────────────────────────────────
 
 let lastAutoCloseRun = 0;
@@ -2331,6 +2394,289 @@ async function handleAdminCheckEcstasy(body: any) {
   });
 }
 
+// ── Faction Events ───────────────────────────────────────────────────
+// Self-contained leaderboard feature: count item-use log entries (e.g.
+// Beer / Cannabis) per participant inside a bounded window. Lives next
+// to the Happy Jump pipeline but does NOT touch transactions/clients.
+
+function parseFactionEventTimestamp(s: any, label: string): { ts: Date | null; err: string | null } {
+  if (typeof s !== 'string' || !s) return { ts: null, err: `Missing ${label}` };
+  const d = new Date(s);
+  if (isNaN(d.getTime())) return { ts: null, err: `Invalid ${label}` };
+  return { ts: d, err: null };
+}
+
+async function handleCreateFactionEvent(body: any) {
+  const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const drug_item_id = Number(body.drug_item_id);
+  const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : '';
+
+  if (!title) return json({ error: 'Title is required' }, 400);
+  if (title.length > 120) return json({ error: 'Title too long' }, 400);
+  if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
+    return json({ error: 'drug_item_id must be a positive integer' }, 400);
+  }
+  if (!drug_name) return json({ error: 'drug_name is required' }, 400);
+  if (drug_name.length > 60) return json({ error: 'drug_name too long' }, 400);
+
+  const startsParsed = parseFactionEventTimestamp(body.starts_at, 'starts_at');
+  if (startsParsed.err) return json({ error: startsParsed.err }, 400);
+  const endsParsed = parseFactionEventTimestamp(body.ends_at, 'ends_at');
+  if (endsParsed.err) return json({ error: endsParsed.err }, 400);
+
+  const starts_at = startsParsed.ts!;
+  const ends_at = endsParsed.ts!;
+  if (ends_at.getTime() <= starts_at.getTime()) {
+    return json({ error: 'ends_at must be after starts_at' }, 400);
+  }
+  // Cap duration at 30 days to keep log scans bounded.
+  const MAX_MS = 30 * 24 * 60 * 60 * 1000;
+  if (ends_at.getTime() - starts_at.getTime() > MAX_MS) {
+    return json({ error: 'Event window cannot exceed 30 days' }, 400);
+  }
+
+  const supabase = serviceClient();
+  const { data, error } = await supabase
+    .from('faction_events')
+    .insert({
+      title,
+      drug_item_id,
+      drug_name,
+      starts_at: starts_at.toISOString(),
+      ends_at: ends_at.toISOString(),
+    })
+    .select()
+    .single();
+
+  if (error) return json({ error: error.message }, 500);
+  return json({ event: data });
+}
+
+async function handleGetFactionEvent(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const { data: participants, error: partErr } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, created_at')
+    .eq('event_id', event_id)
+    .order('last_count', { ascending: false });
+
+  if (partErr) return json({ error: partErr.message }, 500);
+
+  return json({ event, participants: participants || [] });
+}
+
+async function handleListFactionEvents(_body: any) {
+  const supabase = serviceClient();
+  const { data, error } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, created_at')
+    .order('created_at', { ascending: false })
+    .limit(20);
+
+  if (error) return json({ error: error.message }, 500);
+  return json({ events: data || [] });
+}
+
+// Validate the caller's API key, look up the event, run a bounded log scan,
+// and either insert or update the participant row. Returns the updated row +
+// fresh count so the client can render the leaderboard immediately.
+async function handleJoinFactionEvent(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const personalStartParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
+  if (personalStartParsed.err) return json({ error: personalStartParsed.err }, 400);
+  const personalStart = personalStartParsed.ts!;
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const eventStartMs = new Date(event.starts_at).getTime();
+  const eventEndMs = new Date(event.ends_at).getTime();
+  // Clamp the personal start time to the event window: never earlier than the
+  // event start, never later than the event end.
+  const clampedStartMs = Math.min(Math.max(personalStart.getTime(), eventStartMs), eventEndMs);
+  const clampedStartIso = new Date(clampedStartMs).toISOString();
+
+  // Validate the key + grab identity (name / faction)
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  const tornId = String(identData.player_id);
+  const tornName = String(identData.name || '');
+  const tornFaction = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
+
+  // Run the count for this user's window: [clampedStart, min(now, eventEnd)].
+  const nowSec = Math.floor(Date.now() / 1000);
+  const fromSec = Math.floor(clampedStartMs / 1000);
+  const untilSec = Math.min(nowSec, Math.floor(eventEndMs / 1000));
+
+  let count = 0;
+  if (untilSec > fromSec) {
+    const result = await countItemUseInLog(api_key, Number(event.drug_item_id), String(event.drug_name), fromSec, untilSec);
+    count = result.count;
+  }
+
+  const checkedAt = new Date().toISOString();
+
+  // Upsert participant row (unique on event_id + torn_id)
+  const { data: upserted, error: upsertErr } = await supabase
+    .from('faction_event_participants')
+    .upsert(
+      {
+        event_id,
+        torn_id: tornId,
+        torn_name: tornName,
+        torn_faction: tornFaction,
+        personal_start_at: clampedStartIso,
+        last_count: count,
+        last_checked_at: checkedAt,
+      },
+      { onConflict: 'event_id,torn_id' },
+    )
+    .select()
+    .single();
+
+  if (upsertErr) return json({ error: upsertErr.message }, 500);
+
+  return json({
+    participant: upserted,
+    count,
+    event,
+  });
+}
+
+// Re-run the count for the calling user against the same event. Identical
+// scan to `join`, but does NOT change personal_start_at or identity fields.
+async function handleRefreshFactionEventParticipant(body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('*')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+  const tornId = String(identData.player_id);
+
+  const { data: existing, error: existErr } = await supabase
+    .from('faction_event_participants')
+    .select('*')
+    .eq('event_id', event_id)
+    .eq('torn_id', tornId)
+    .maybeSingle();
+  if (existErr) return json({ error: existErr.message }, 500);
+  if (!existing) return json({ error: 'You have not joined this event yet' }, 404);
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const startMs = new Date(existing.personal_start_at).getTime();
+  const fromSec = Math.floor(startMs / 1000);
+  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+
+  let count = 0;
+  if (untilSec > fromSec) {
+    const result = await countItemUseInLog(api_key, Number(event.drug_item_id), String(event.drug_name), fromSec, untilSec);
+    count = result.count;
+  }
+
+  const checkedAt = new Date().toISOString();
+  const { data: updated, error: updErr } = await supabase
+    .from('faction_event_participants')
+    .update({
+      last_count: count,
+      last_checked_at: checkedAt,
+      torn_name: String(identData.name || existing.torn_name),
+      torn_faction: identData.faction?.faction_name ?? existing.torn_faction,
+    })
+    .eq('id', existing.id)
+    .select()
+    .single();
+
+  if (updErr) return json({ error: updErr.message }, 500);
+  return json({ participant: updated, count, event });
+}
+
+// Best-effort: read the caller's in-game "Event start time" from Torn so the
+// Faction Events page can pre-fill the personal-start-time picker. Torn's
+// public docs are vague on which exact selection surfaces this preference,
+// so we try the likely candidates (`calendar` + `events`) and return both
+// the raw payloads and a parsed guess at the start time. The frontend uses
+// it as a hint only — manual override always wins.
+async function handleFetchTornEventStart(body: any) {
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const api_key = resolved.key;
+
+  const calRes = await fetch(`${TORN_API}/user/?selections=calendar&key=${api_key}`);
+  const calData = await calRes.json().catch(() => ({}));
+
+  // Heuristic parse: look for any field whose key contains "start" and whose
+  // value is a unix timestamp or HH:MM string.
+  let guess_start_unix: number | null = null;
+  let guess_start_label: string | null = null;
+  function walk(obj: any, depth = 0) {
+    if (!obj || depth > 4) return;
+    if (Array.isArray(obj)) {
+      for (const v of obj) walk(v, depth + 1);
+      return;
+    }
+    if (typeof obj === 'object') {
+      for (const [k, v] of Object.entries(obj)) {
+        const kl = k.toLowerCase();
+        if (kl.includes('start') && (typeof v === 'number' || typeof v === 'string')) {
+          if (typeof v === 'number' && v > 1_000_000_000) {
+            if (!guess_start_unix) guess_start_unix = v;
+          } else if (typeof v === 'string' && /^\d{1,2}:\d{2}/.test(v)) {
+            if (!guess_start_label) guess_start_label = v;
+          }
+        }
+        if (v && typeof v === 'object') walk(v, depth + 1);
+      }
+    }
+  }
+  walk(calData);
+
+  return json({
+    calendar_raw: calData,
+    guess_start_unix,
+    guess_start_label,
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -2388,6 +2734,18 @@ serve(async (req) => {
         return await handleAdminCheckPayment(body);
       case 'admin-test-drug-check':
         return await handleAdminTestDrugCheck(req, body);
+      case 'create-faction-event':
+        return await handleCreateFactionEvent(body);
+      case 'get-faction-event':
+        return await handleGetFactionEvent(body);
+      case 'list-faction-events':
+        return await handleListFactionEvents(body);
+      case 'join-faction-event':
+        return await handleJoinFactionEvent(body);
+      case 'refresh-faction-event':
+        return await handleRefreshFactionEventParticipant(body);
+      case 'fetch-torn-event-start':
+        return await handleFetchTornEventStart(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }
