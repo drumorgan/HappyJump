@@ -593,16 +593,34 @@ function renderMeDebug(diag, opts) {
     lines.push('SKIPPED: ' + diag.skipped_reason);
   } else {
     lines.push(
-      `pages=${diag.pages ?? '?'} totalEntries=${diag.total_entries ?? '?'} reachedCutoff=${diag.reached_cutoff ?? '?'}`,
+      `pages=${diag.pages ?? '?'} totalEntries=${diag.total_entries ?? '?'} inWindowTotal=${diag.in_window_total ?? '?'} reachedCutoff=${diag.reached_cutoff ?? '?'}`,
     );
     if (Array.isArray(diag.matched) && diag.matched.length > 0) {
       lines.push('');
       lines.push(`MATCHED (${diag.matched.length}):`);
       for (const m of diag.matched) lines.push('  ' + m);
     }
+    if (Array.isArray(diag.log_type_histogram) && diag.log_type_histogram.length > 0) {
+      lines.push('');
+      lines.push(`IN-WINDOW LOG TYPES (top ${diag.log_type_histogram.length}):`);
+      for (const e of diag.log_type_histogram) lines.push(`  ${e.count}x ${e.key}`);
+    }
+    if (Array.isArray(diag.data_item_histogram) && diag.data_item_histogram.length > 0) {
+      lines.push('');
+      lines.push(`IN-WINDOW data.item VALUES (top ${diag.data_item_histogram.length}):`);
+      for (const e of diag.data_item_histogram) lines.push(`  ${e.count}x item=${e.key}`);
+    } else if (Array.isArray(diag.data_item_histogram)) {
+      lines.push('');
+      lines.push('IN-WINDOW data.item VALUES: (none — no item-use-shaped entries at all)');
+    }
+    if (Array.isArray(diag.interesting_rejections) && diag.interesting_rejections.length > 0) {
+      lines.push('');
+      lines.push(`INTERESTING REJECTIONS (have data.item or mention drug name, up to 15):`);
+      for (const r of diag.interesting_rejections) lines.push('  ' + r);
+    }
     if (Array.isArray(diag.rejected_samples) && diag.rejected_samples.length > 0) {
       lines.push('');
-      lines.push(`REJECTED in window (sample of up to 5):`);
+      lines.push(`FIRST REJECTIONS (sample of up to 5):`);
       for (const r of diag.rejected_samples) lines.push('  ' + r);
     }
     if (Array.isArray(diag.debug)) {
