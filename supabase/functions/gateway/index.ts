@@ -589,23 +589,20 @@ async function countXanaxUsageInLog(
   };
 }
 
-// Generic Torn-log item-use counter used by Faction Events. Walks Torn's
-// log endpoint BACKWARDS from `untilTimestamp` using only the `to=`
-// parameter — this is the same pagination shape that handleVerifyPayment
-// (line ~2195) uses successfully against historical windows.
+// Generic Torn-log item-use counter used by Faction Events. Deliberately a
+// LITERAL parameterised copy of countXanaxUsageInLog — the production-proven
+// drug-verification scanner Happy Jump has used reliably for months. Same
+// URL shape (`from=` only — never `to=` on the initial request, only as a
+// pagination cursor), same dedupe-by-log-key, same termination logic.
 //
-// Why not match the Xanax counter (which uses `from=` only)? Because the
-// Xanax counter's window is always anchored at "now" (purchased_at < 3
-// days back). Faction Events can have a window that ENDED days ago — for
-// an active player, walking back from NOW with `from=event_start` exhausts
-// `maxPages` worth of post-event entries before ever reaching the window.
-//
-// Walking from `untilTimestamp` lands us inside the window on page 0, so
-// pagination terminates as soon as we cross `cutoff` (sinceTimestamp). We
-// intentionally do NOT pass `from=` to Torn — combining `from` + `to` on
-// the initial request was the original bug (silently returned an empty
-// response). We filter `cutoff` client-side instead. Honours the same
-// dedupe-by-log-key rule.
+// The only addition for Faction Events: an optional `untilTimestamp` upper
+// bound. We do NOT pass it to Torn — passing both `from` and `to` to Torn's
+// log endpoint silently returns an empty response for windows that don't
+// touch the most recent entries (was producing 0 counts). Instead we filter
+// `ts > upper` client-side per entry, exactly the same way `ts < cutoff`
+// is filtered in the Xanax scanner. Pagination still terminates on
+// `oldestTs <= cutoff`, which guarantees we walk the log all the way back
+// to the start of the event window even for past events.
 async function countItemUseInLog(
   apiKey: string,
   itemId: number,
@@ -614,25 +611,23 @@ async function countItemUseInLog(
   untilTimestamp?: number,
   maxPages = 200,
 ): Promise<{ count: number; details: string[]; pages: number; totalEntries: number; reachedCutoff: boolean }> {
-  // Anchor pagination at the upper bound. If no upper bound was passed we
-  // start with no `to=` (Torn defaults to "now") which mirrors the legacy
-  // behaviour for unbounded scans.
-  let toParam = untilTimestamp ? `&to=${untilTimestamp}` : '';
+  let toParam = '';
+  const uses: { timestamp: number; detail: string; key: string }[] = [];
   const cutoff = sinceTimestamp || 0;
   const upper = untilTimestamp || Number.POSITIVE_INFINITY;
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
   const seenKeys = new Set<string>();
-  const uses: { timestamp: number; detail: string; key: string }[] = [];
   let pagesFetched = 0;
   let totalEntries = 0;
   let lastOldestTs = Infinity;
   let reachedCutoff = false;
 
   for (let page = 0; page < maxPages; page++) {
-    const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.error || !data.log) {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} url=${url.replace(apiKey, 'KEY')} error=${JSON.stringify(data.error || 'no log')}`);
+      console.log(`[countItemUseInLog ${drugName}] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
       break;
     }
 
@@ -647,13 +642,16 @@ async function countItemUseInLog(
     if (page === 0) {
       const sample = entriesKv[0][1];
       console.log(`[countItemUseInLog ${drugName}] page=0 entries=${entriesKv.length} cutoff=${cutoff} upper=${upper} sampleEntry=${JSON.stringify(sample).slice(0, 400)}`);
+    } else {
+      console.log(`[countItemUseInLog ${drugName}] page=${page} entries=${entriesKv.length}`);
     }
 
     let pageMatches = 0;
     let pageInWindow = 0;
     for (const [key, entry] of entriesKv) {
       const ts = entry.timestamp || 0;
-      if (ts < cutoff || ts > upper) continue;
+      if (ts < cutoff) continue;
+      if (ts > upper) continue;
       pageInWindow++;
       if (!entryMatchesDrugUse(entry, drugName, itemId)) continue;
       if (seenKeys.has(key)) continue;
@@ -666,7 +664,7 @@ async function countItemUseInLog(
       });
       pageMatches++;
     }
-    console.log(`[countItemUseInLog ${drugName}] page=${page} entries=${entriesKv.length} inWindow=${pageInWindow} matches=${pageMatches} runningTotal=${uses.length}`);
+    console.log(`[countItemUseInLog ${drugName}] page=${page} inWindow=${pageInWindow} matches=${pageMatches} runningTotal=${uses.length}`);
 
     const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
     if (oldestTs <= cutoff) {
