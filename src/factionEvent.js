@@ -56,20 +56,44 @@ function setEventIdInUrl(id) {
 }
 
 // ── Time helpers ─────────────────────────────────────────────────────
+// TCT (Torn City Time) = UTC. Events always run 10:00–16:00 TCT on a
+// chosen calendar date. Personal start slots are 15-min increments in
+// that fixed [10:00, 16:00] TCT range.
 
-function localInputToIso(localValue) {
-  if (!localValue) return null;
-  const d = new Date(localValue);
-  if (isNaN(d.getTime())) return null;
-  return d.toISOString();
+const EVENT_START_HOUR_TCT = 10;
+const EVENT_END_HOUR_TCT = 16;
+const SLOT_MS = 15 * 60 * 1000;
+
+function pad2(n) { return String(n).padStart(2, '0'); }
+
+// "YYYY-MM-DD" (UTC) → ISO at 10:00:00 TCT that day.
+function dateInputToStartIso(dateStr) {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return null;
+  return `${dateStr}T${pad2(EVENT_START_HOUR_TCT)}:00:00.000Z`;
 }
 
-function isoToLocalInput(iso) {
+// "YYYY-MM-DD" (UTC) → ISO at 16:00:00 TCT that day.
+function dateInputToEndIso(dateStr) {
+  if (!dateStr) return null;
+  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  if (!m) return null;
+  return `${dateStr}T${pad2(EVENT_END_HOUR_TCT)}:00:00.000Z`;
+}
+
+// ISO → "YYYY-MM-DD" in UTC (TCT). Used to seed the date inputs.
+function isoToDateInput(iso) {
   if (!iso) return '';
   const d = new Date(iso);
   if (isNaN(d.getTime())) return '';
-  const pad = (n) => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  return `${d.getUTCFullYear()}-${pad2(d.getUTCMonth() + 1)}-${pad2(d.getUTCDate())}`;
+}
+
+// Today's date in TCT (UTC), formatted YYYY-MM-DD.
+function todayTctDateInput() {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${pad2(now.getUTCMonth() + 1)}-${pad2(now.getUTCDate())}`;
 }
 
 function fmtRelative(ms) {
@@ -87,48 +111,38 @@ function fmtDateTime(iso) {
 }
 
 function fmtSlotLabel(d) {
-  // "Sat, Apr 25, 9:15 AM"
-  return d.toLocaleString(undefined, {
-    weekday: 'short', month: 'short', day: 'numeric',
-    hour: 'numeric', minute: '2-digit',
-  });
+  // Time-only label in TCT, e.g. "10:15 TCT".
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
 }
 
 // ── Slot picker ──────────────────────────────────────────────────────
-// 15-minute slots between event start and end, in viewer-local time.
-// Returns [{ value: ISO string, label: viewer-local label }].
-function generateSlots(startIso, endIso) {
-  const startMs = new Date(startIso).getTime();
-  const endMs = new Date(endIso).getTime();
-  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs <= startMs) return [];
-
-  const SLOT_MS = 15 * 60 * 1000;
-  // First slot = ceil(start to next 15-min boundary in local time).
-  const startD = new Date(startMs);
-  const startMin = startD.getMinutes();
-  const ceilMin = Math.ceil(startMin / 15) * 15;
-  startD.setMinutes(ceilMin, 0, 0);
-  let cursor = startD.getTime();
-  // If ceiling pushed us before the actual start (rare edge), bump forward.
-  while (cursor < startMs) cursor += SLOT_MS;
+// Fixed 15-min TCT slots from 10:00 to 16:00 inclusive (25 slots) on the
+// event's calendar date. Returns [{ value: ISO string, label: "HH:MM TCT" }].
+function generateSlots(startIso /* event starts_at */, _endIso) {
+  if (!startIso) return [];
+  const dateStr = isoToDateInput(startIso);
+  if (!dateStr) return [];
+  const baseStart = new Date(`${dateStr}T${pad2(EVENT_START_HOUR_TCT)}:00:00.000Z`).getTime();
+  const baseEnd = new Date(`${dateStr}T${pad2(EVENT_END_HOUR_TCT)}:00:00.000Z`).getTime();
+  if (!Number.isFinite(baseStart) || !Number.isFinite(baseEnd) || baseEnd <= baseStart) return [];
 
   const slots = [];
-  while (cursor <= endMs && slots.length < 4 * 24 * 31) { // safety cap
+  for (let cursor = baseStart; cursor <= baseEnd; cursor += SLOT_MS) {
     const d = new Date(cursor);
     slots.push({ value: d.toISOString(), label: fmtSlotLabel(d) });
-    cursor += SLOT_MS;
   }
   return slots;
 }
 
-// Default selection = the slot at-or-before now, clamped into [start, end].
-function defaultSlotIso(startIso, endIso, slots) {
+// Default selection: the slot at-or-before now (in TCT), clamped into
+// [10:00, 16:00] on the event's date. If today isn't the event date, falls
+// back to the first slot.
+function defaultSlotIso(startIso, _endIso, slots) {
   if (slots.length === 0) return '';
   const nowMs = Date.now();
-  const startMs = new Date(startIso).getTime();
-  const endMs = new Date(endIso).getTime();
+  const startMs = new Date(slots[0].value).getTime();
+  const endMs = new Date(slots[slots.length - 1].value).getTime();
   const target = Math.min(Math.max(nowMs, startMs), endMs);
-  // Find the latest slot <= target, else the first slot.
   let best = slots[0].value;
   for (const s of slots) {
     if (new Date(s.value).getTime() <= target) best = s.value;
@@ -140,7 +154,7 @@ function defaultSlotIso(startIso, endIso, slots) {
 function fillSlotPicker(selectEl, startIso, endIso, preferredIso) {
   const slots = generateSlots(startIso, endIso);
   if (slots.length === 0) {
-    selectEl.innerHTML = '<option value="">— event window invalid —</option>';
+    selectEl.innerHTML = '<option value="">— invalid event date —</option>';
     return;
   }
   selectEl.innerHTML = slots
@@ -148,12 +162,17 @@ function fillSlotPicker(selectEl, startIso, endIso, preferredIso) {
     .join('');
   let pick = '';
   if (preferredIso) {
-    // Snap to nearest slot
-    const tMs = new Date(preferredIso).getTime();
-    if (Number.isFinite(tMs)) {
+    // Snap to nearest slot by time-of-day in TCT (ignore date — slot list is
+    // anchored to the event's date, but `preferredIso` may carry today's date
+    // from the calendar autofill on a different day).
+    const pref = new Date(preferredIso);
+    if (!isNaN(pref.getTime())) {
+      const prefMinutes = pref.getUTCHours() * 60 + pref.getUTCMinutes();
       let bestDiff = Infinity;
       for (const s of slots) {
-        const diff = Math.abs(new Date(s.value).getTime() - tMs);
+        const sd = new Date(s.value);
+        const sMinutes = sd.getUTCHours() * 60 + sd.getUTCMinutes();
+        const diff = Math.abs(sMinutes - prefMinutes);
         if (diff < bestDiff) { bestDiff = diff; pick = s.value; }
       }
     }
@@ -291,18 +310,16 @@ function showPickerView() {
 }
 
 // Recompute the personal-start slot picker on the create form whenever the
-// start date or duration changes. Preserves the current selection if it is
-// still valid; otherwise falls back to the default (slot at-or-before now).
+// event date changes. Preserves the time-of-day selection across date changes.
 function refreshCreateSlotPicker() {
-  const startsLocal = document.getElementById('ce-starts-at').value;
-  const durHours = Number(document.getElementById('ce-duration-hours').value);
+  const dateStr = document.getElementById('ce-starts-at').value;
   const personalSel = document.getElementById('ce-personal-start');
-  if (!startsLocal || !Number.isFinite(durHours) || durHours <= 0) {
-    personalSel.innerHTML = '<option value="">— set start date and duration first —</option>';
+  if (!dateStr) {
+    personalSel.innerHTML = '<option value="">— pick a date first —</option>';
     return;
   }
-  const startsIso = localInputToIso(startsLocal);
-  const endsIso = new Date(new Date(startsIso).getTime() + durHours * 3600 * 1000).toISOString();
+  const startsIso = dateInputToStartIso(dateStr);
+  const endsIso = dateInputToEndIso(dateStr);
   const previous = personalSel.value;
   fillSlotPicker(personalSel, startsIso, endsIso, previous || null);
 }
@@ -325,17 +342,10 @@ function wireCreateForm() {
     }
   };
 
-  // Default start = the next round 15-min boundary.
+  // Default date = today in TCT.
   const startsInput = document.getElementById('ce-starts-at');
-  if (!startsInput.value) {
-    const now = new Date();
-    now.setMinutes(Math.ceil(now.getMinutes() / 15) * 15, 0, 0);
-    startsInput.value = isoToLocalInput(now.toISOString());
-  }
+  if (!startsInput.value) startsInput.value = todayTctDateInput();
   startsInput.oninput = refreshCreateSlotPicker;
-
-  const durInput = document.getElementById('ce-duration-hours');
-  durInput.oninput = refreshCreateSlotPicker;
 
   refreshCreateSlotPicker();
 
@@ -370,16 +380,12 @@ function wireCreateForm() {
       return;
     }
 
-    const startsLocal = document.getElementById('ce-starts-at').value;
-    const durationHours = Number(document.getElementById('ce-duration-hours').value);
-    if (!startsLocal) { toast('Pick a start time'); return; }
-    if (!Number.isFinite(durationHours) || durationHours <= 0) {
-      toast('Duration must be a positive number of hours');
-      return;
-    }
+    const dateStr = document.getElementById('ce-starts-at').value;
+    if (!dateStr) { toast('Pick an event date'); return; }
 
-    const startsAtIso = localInputToIso(startsLocal);
-    const endsAtIso = new Date(new Date(startsAtIso).getTime() + durationHours * 3600 * 1000).toISOString();
+    const startsAtIso = dateInputToStartIso(dateStr);
+    const endsAtIso = dateInputToEndIso(dateStr);
+    if (!startsAtIso || !endsAtIso) { toast('Invalid event date'); return; }
 
     const personalIso = document.getElementById('ce-personal-start').value;
     if (!personalIso) { toast('Pick your personal start time'); return; }
@@ -655,11 +661,7 @@ function wireEditPencils(eventId) {
 
   document.getElementById('ev-edit-window-btn').onclick = () => {
     if (currentEvent) {
-      document.getElementById('ev-edit-starts-at').value = isoToLocalInput(currentEvent.starts_at);
-      const startMs = new Date(currentEvent.starts_at).getTime();
-      const endMs = new Date(currentEvent.ends_at).getTime();
-      const hours = Math.max(1, Math.round((endMs - startMs) / 3600000));
-      document.getElementById('ev-edit-duration-hours').value = hours;
+      document.getElementById('ev-edit-starts-at').value = isoToDateInput(currentEvent.starts_at);
     }
     openEditForm('window');
   };
@@ -717,14 +719,11 @@ function wireEditPencils(eventId) {
   };
 
   document.getElementById('ev-edit-window-save').onclick = async () => {
-    const startsLocal = document.getElementById('ev-edit-starts-at').value;
-    const durationHours = Number(document.getElementById('ev-edit-duration-hours').value);
-    if (!startsLocal) { toast('Pick a start time'); return; }
-    if (!Number.isFinite(durationHours) || durationHours <= 0) {
-      toast('Duration must be a positive number of hours'); return;
-    }
-    const starts_at = localInputToIso(startsLocal);
-    const ends_at = new Date(new Date(starts_at).getTime() + durationHours * 3600 * 1000).toISOString();
+    const dateStr = document.getElementById('ev-edit-starts-at').value;
+    if (!dateStr) { toast('Pick an event date'); return; }
+    const starts_at = dateInputToStartIso(dateStr);
+    const ends_at = dateInputToEndIso(dateStr);
+    if (!starts_at || !ends_at) { toast('Invalid event date'); return; }
 
     setLoading(true);
     try {
@@ -732,7 +731,7 @@ function wireEditPencils(eventId) {
       closeEditForms();
       await refreshEventView(eventId);
       scheduleSweep(eventId);
-      toast('Window updated — counts will refresh', 'success');
+      toast('Date updated — counts will refresh', 'success');
     } catch (err) {
       toast(err.message || 'Update failed');
     } finally {
@@ -783,10 +782,12 @@ function wireEventControls(eventId) {
       if (res.guess_start_unix) {
         preferredIso = new Date(res.guess_start_unix * 1000).toISOString();
       } else if (res.guess_start_label) {
+        // "HH:MM" from Torn calendar — interpret as TCT (UTC) so the picker
+        // snaps to the matching TCT slot.
         const [h, m] = res.guess_start_label.split(':').map(Number);
         if (Number.isFinite(h) && Number.isFinite(m)) {
           const d = new Date();
-          d.setHours(h, m, 0, 0);
+          d.setUTCHours(h, m, 0, 0);
           preferredIso = d.toISOString();
         }
       }
