@@ -64,24 +64,12 @@
             <label class="fe-label">What are we counting?
               <select id="ce-drug-preset" required>
                 <option value="">— pick one —</option>
-                <option value="206|Xanax">Xanax (item 206)</option>
-                <option value="197|Ecstasy">Ecstasy (item 197)</option>
-                <option value="196|Cannabis">Cannabis (item 196)</option>
-                <option value="207|Vicodin">Vicodin (item 207)</option>
-                <option value="180|Bottle of Beer">Bottle of Beer (item 180)</option>
-                <option value="custom">Custom — enter item ID</option>
+                <option value="196|Cannabis">Cannabis</option>
+                <option value="197|Ecstasy">Ecstasy</option>
+                <option value="206|Xanax">Xanax</option>
+                <option value="180|Bottle of Beer">Bottle of Beer</option>
               </select>
             </label>
-
-            <div id="ce-custom-row" class="hidden">
-              <label class="fe-label">Item name
-                <input type="text" id="ce-drug-name" placeholder="e.g. Bottle of Sake" maxlength="60" />
-              </label>
-              <label class="fe-label">Item ID
-                <input type="number" id="ce-drug-item-id" placeholder="e.g. 180" min="1" />
-              </label>
-              <p class="key-note">Find item IDs on the <a href="https://www.torn.com/api.html#" target="_blank" rel="noopener">Torn API explorer</a> (selection: <code>items</code>) or browse <a href="https://www.tornstats.com/" target="_blank" rel="noopener">Torn Stats</a>. The counter only matches "use" log entries — make sure the item is something players actually consume.</p>
-            </div>
 
             <label class="fe-label">Event date
               <input type="date" id="ce-starts-at" required />
@@ -138,22 +126,12 @@
             <label class="fe-label">New drug
               <select id="ev-edit-drug-preset">
                 <option value="">— pick one —</option>
-                <option value="206|Xanax">Xanax (item 206)</option>
-                <option value="197|Ecstasy">Ecstasy (item 197)</option>
-                <option value="196|Cannabis">Cannabis (item 196)</option>
-                <option value="207|Vicodin">Vicodin (item 207)</option>
-                <option value="180|Bottle of Beer">Bottle of Beer (item 180)</option>
-                <option value="custom">Custom — enter item ID</option>
+                <option value="196|Cannabis">Cannabis</option>
+                <option value="197|Ecstasy">Ecstasy</option>
+                <option value="206|Xanax">Xanax</option>
+                <option value="180|Bottle of Beer">Bottle of Beer</option>
               </select>
             </label>
-            <div id="ev-edit-drug-custom" class="hidden">
-              <label class="fe-label">Item name
-                <input type="text" id="ev-edit-drug-name" maxlength="60" />
-              </label>
-              <label class="fe-label">Item ID
-                <input type="number" id="ev-edit-drug-item-id" min="1" />
-              </label>
-            </div>
             <p class="key-note">Changing the drug invalidates everyone's count — the next refresh recounts against the new drug.</p>
             <div class="fe-edit-actions">
               <button type="button" id="ev-edit-drug-save" class="submit-btn-alt">Save</button>

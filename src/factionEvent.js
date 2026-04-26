@@ -330,21 +330,6 @@ function showPickerView() {
 
 function wireCreateForm() {
   const presetSel = document.getElementById('ce-drug-preset');
-  const customRow = document.getElementById('ce-custom-row');
-  const customName = document.getElementById('ce-drug-name');
-  const customId = document.getElementById('ce-drug-item-id');
-
-  presetSel.onchange = () => {
-    if (presetSel.value === 'custom') {
-      customRow.classList.remove('hidden');
-      customName.required = true;
-      customId.required = true;
-    } else {
-      customRow.classList.add('hidden');
-      customName.required = false;
-      customId.required = false;
-    }
-  };
 
   // Default date = today in TCT.
   const startsInput = document.getElementById('ce-starts-at');
@@ -361,10 +346,7 @@ function wireCreateForm() {
     const title = document.getElementById('ce-title').value.trim();
     const presetVal = presetSel.value;
     let drug_item_id, drug_name;
-    if (presetVal === 'custom') {
-      drug_item_id = Number(customId.value);
-      drug_name = customName.value.trim();
-    } else if (presetVal && presetVal.includes('|')) {
+    if (presetVal && presetVal.includes('|')) {
       const [idStr, name] = presetVal.split('|');
       drug_item_id = Number(idStr);
       drug_name = name;
@@ -703,32 +685,18 @@ function wireEditPencils(eventId) {
 
   document.getElementById('ev-edit-drug-btn').onclick = () => {
     const presetSel = document.getElementById('ev-edit-drug-preset');
-    const customWrap = document.getElementById('ev-edit-drug-custom');
     const id = String(currentEvent?.drug_item_id || '');
-    const name = currentEvent?.drug_name || '';
-    // Try matching against the presets.
-    let matched = false;
+    // Pre-select whichever preset matches the event's current drug_item_id;
+    // if none match (legacy event with an item ID not in the dropdown),
+    // leave the placeholder selected so the user must explicitly pick.
+    presetSel.value = '';
     for (const opt of presetSel.options) {
       if (opt.value && opt.value.includes('|')) {
         const [optId] = opt.value.split('|');
-        if (optId === id) { presetSel.value = opt.value; matched = true; break; }
+        if (optId === id) { presetSel.value = opt.value; break; }
       }
     }
-    if (!matched) {
-      presetSel.value = 'custom';
-      customWrap.classList.remove('hidden');
-      document.getElementById('ev-edit-drug-name').value = name;
-      document.getElementById('ev-edit-drug-item-id').value = id;
-    } else {
-      customWrap.classList.add('hidden');
-    }
     openEditForm('drug');
-  };
-
-  document.getElementById('ev-edit-drug-preset').onchange = (e) => {
-    const customWrap = document.getElementById('ev-edit-drug-custom');
-    if (e.target.value === 'custom') customWrap.classList.remove('hidden');
-    else customWrap.classList.add('hidden');
   };
 
   document.getElementById('ev-edit-window-btn').onclick = () => {
@@ -764,10 +732,7 @@ function wireEditPencils(eventId) {
   document.getElementById('ev-edit-drug-save').onclick = async () => {
     const presetSel = document.getElementById('ev-edit-drug-preset');
     let drug_item_id, drug_name;
-    if (presetSel.value === 'custom') {
-      drug_item_id = Number(document.getElementById('ev-edit-drug-item-id').value);
-      drug_name = document.getElementById('ev-edit-drug-name').value.trim();
-    } else if (presetSel.value && presetSel.value.includes('|')) {
+    if (presetSel.value && presetSel.value.includes('|')) {
       const [idStr, name] = presetSel.value.split('|');
       drug_item_id = Number(idStr);
       drug_name = name;
