@@ -86,7 +86,11 @@
             <label class="fe-label">Event date
               <input type="date" id="ce-starts-at" required />
             </label>
-            <p class="key-note">Events run from 10:00 TCT to 16:00 TCT (game time) on the date you pick. After creating, you (and every joiner) pick your own personal start time from the leaderboard page.</p>
+
+            <label class="fe-label">Duration (hours)
+              <input type="number" id="ce-duration-hours" min="1" max="720" step="1" value="6" required />
+            </label>
+            <p class="key-note">Events start at 10:00 TCT (game time) on the date you pick and run for the duration in hours. Default 6h; cap 720h (30 days). After creating, you (and every joiner) pick your own personal start time from the leaderboard page.</p>
 
             <button type="submit" class="submit-btn-alt">Create Event</button>
           </form>
@@ -161,7 +165,10 @@
             <label class="fe-label">Event date
               <input type="date" id="ev-edit-starts-at" />
             </label>
-            <p class="key-note">Events always run 10:00 TCT to 16:00 TCT. Changing the date invalidates everyone's count and re-anchors each participant's personal start time to the new date (their slot stays the same, just on the new day).</p>
+            <label class="fe-label">Duration (hours)
+              <input type="number" id="ev-edit-duration-hours" min="1" max="720" step="1" />
+            </label>
+            <p class="key-note">Events start at 10:00 TCT on the chosen date and run for the duration in hours (cap 720h / 30 days). Saving invalidates everyone's count and re-anchors each participant's personal start time to the new window — their TIME-OF-DAY is preserved, so a date shift moves their start by the same amount.</p>
             <div class="fe-edit-actions">
               <button type="button" id="ev-edit-window-save" class="submit-btn-alt">Save</button>
               <button type="button" data-cancel="window" class="submit-btn-alt fe-secondary fe-edit-cancel">Cancel</button>
