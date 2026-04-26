@@ -11,11 +11,13 @@ import {
   getFactionEvent,
   listFactionEvents,
   updateFactionEvent,
+  deleteFactionEvent,
   joinFactionEvent,
   refreshFactionEvent,
   refreshStaleParticipants,
   fetchTornEventStart,
 } from './api.js';
+import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
 
 const toastEl = document.getElementById('toast');
@@ -33,6 +35,11 @@ const FE_SESSION_STORAGE = 'faction_event_session';
 let feSession = null;       // { player_id, session_token, torn_id, torn_name, torn_faction } or null
 let currentEvent = null;    // { id, title, drug_*, starts_at, ends_at, creator_torn_id }
 let sweepInFlight = false;
+// Operator backdoor — populated on boot if the visitor is signed in to
+// Happy Jump admin (Supabase Auth). When true, the Delete event button
+// is shown on every event regardless of creator_torn_id; the gateway
+// checks the same Supabase Auth header to authorize.
+let isHjAdmin = false;
 
 function toast(msg, type = 'error') {
   _showToast(toastEl, msg, type);
@@ -51,7 +58,8 @@ function getEventIdFromUrl() {
 
 function setEventIdInUrl(id) {
   const url = new URL(window.location.href);
-  url.searchParams.set('id', id);
+  if (id) url.searchParams.set('id', id);
+  else url.searchParams.delete('id');
   window.history.replaceState({}, '', url.toString());
 }
 
@@ -492,6 +500,12 @@ function renderEventHeader(event) {
     }
   }
 
+  // Delete event — visible to creator OR HJ admin (operator backdoor).
+  // Confirm sub-form is collapsed by default; reset whenever we re-render.
+  const showDelete = showPencils || isHjAdmin;
+  document.getElementById('ev-delete-block').classList.toggle('hidden', !showDelete);
+  document.getElementById('ev-delete-confirm').classList.add('hidden');
+
   const shareUrl = `${window.location.origin}${window.location.pathname}?id=${event.id}`;
   document.getElementById('ev-share-link').value = shareUrl;
 }
@@ -783,6 +797,41 @@ function wireEditPencils(eventId) {
       setLoading(false);
     }
   };
+
+  // ── Delete event (creator OR HJ admin) ────────────────────────────
+  // Two-step inline confirm: first click reveals the confirm panel,
+  // second click ("Yes, delete it") actually fires the request.
+  const deleteBtn = document.getElementById('ev-delete-btn');
+  const deleteConfirm = document.getElementById('ev-delete-confirm');
+  const deleteYes = document.getElementById('ev-delete-confirm-yes');
+  const deleteNo = document.getElementById('ev-delete-confirm-no');
+
+  deleteBtn.onclick = () => {
+    deleteConfirm.classList.toggle('hidden');
+  };
+  deleteNo.onclick = () => {
+    deleteConfirm.classList.add('hidden');
+  };
+  deleteYes.onclick = async () => {
+    setLoading(true);
+    try {
+      // Pass FE auth when available; gateway also accepts HJ admin
+      // Supabase Auth which supabase-js attaches automatically.
+      await deleteFactionEvent({ eventId, auth: feAuth() });
+      toast('Event deleted', 'success');
+      // Drop the per-event "I joined this" hint and route back to picker.
+      try { localStorage.removeItem(PER_EVENT_PREFIX + eventId); } catch {}
+      setEventIdInUrl(null);
+      currentEvent = null;
+      lastParticipants = [];
+      showPickerView();
+    } catch (err) {
+      toast(err.message || 'Delete failed');
+      deleteConfirm.classList.add('hidden');
+    } finally {
+      setLoading(false);
+    }
+  };
 }
 
 // ── Join / refresh / leave ───────────────────────────────────────────
@@ -1031,6 +1080,15 @@ function scheduleSweep(eventId) {
 window.addEventListener('popstate', () => boot());
 
 async function boot() {
+  // Operator backdoor probe — am I signed in to Happy Jump admin? If
+  // the supabase-js client has a session, the gateway will see the
+  // Authorization header and treat any request from us as admin.
+  // Used to show the Delete event button on every event.
+  try {
+    const { data } = await supabase.auth.getUser();
+    isHjAdmin = !!data?.user;
+  } catch { isHjAdmin = false; }
+
   // Try auto-login first so the rest of the boot can branch on auth state.
   const stored = loadFeSession();
   if (stored) {
