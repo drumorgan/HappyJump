@@ -43,6 +43,7 @@
             <button type="submit" class="submit-btn-alt">Sign in</button>
           </form>
           <p class="key-note">No key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,log,calendar&title=FactionEvents" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only needs your name, level, faction, log, and calendar. Your key is encrypted server-side and tied only to Faction Events; signing out deletes it.</p>
+          <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" class="find-key-btn">Already made a Faction Events key? Find it on Torn &rarr;</a>
         </div>
       </div>
     </section>
@@ -82,20 +83,17 @@
               <p class="key-note">Find item IDs on the <a href="https://www.torn.com/api.html#" target="_blank" rel="noopener">Torn API explorer</a> (selection: <code>items</code>) or browse <a href="https://www.tornstats.com/" target="_blank" rel="noopener">Torn Stats</a>. The counter only matches "use" log entries — make sure the item is something players actually consume.</p>
             </div>
 
-            <label class="fe-label">Start date / time (your local time)
-              <input type="datetime-local" id="ce-starts-at" required />
+            <label class="fe-label">Event date
+              <input type="date" id="ce-starts-at" required />
             </label>
+            <p class="key-note">Events run from 10:00 TCT to 16:00 TCT (game time) on the date you pick.</p>
 
-            <label class="fe-label">Duration (hours)
-              <input type="number" id="ce-duration-hours" min="1" max="720" value="24" required />
-            </label>
-
-            <label class="fe-label">Your personal start time
+            <label class="fe-label">Your personal start time (TCT)
               <select id="ce-personal-start" required>
-                <option value="">— set start date and duration first —</option>
+                <option value="">— pick a date first —</option>
               </select>
             </label>
-            <p class="key-note">Pick when YOUR count starts inside the event window. Defaults to the 15-minute slot at-or-before now (so right when you create the event, the latest pre-event slot is selected). 15-minute slots from event start to event end, in your local time.</p>
+            <p class="key-note">Pick when YOUR count starts. 15-minute slots from 10:00 TCT to 16:00 TCT (Torn game time). Defaults to the slot at-or-before now if today is the event date.</p>
 
             <button type="submit" class="submit-btn-alt">Create Event</button>
           </form>
@@ -123,7 +121,7 @@
           <div class="big-price" id="ev-drug">—</div>
           <button type="button" id="ev-edit-drug-btn" class="fe-pencil-btn hidden" title="Edit drug" aria-label="Edit drug">✎ change drug</button>
           <div class="price-note" id="ev-window">—</div>
-          <button type="button" id="ev-edit-window-btn" class="fe-pencil-btn hidden" title="Edit start / duration" aria-label="Edit start / duration">✎ change start / duration</button>
+          <button type="button" id="ev-edit-window-btn" class="fe-pencil-btn hidden" title="Edit event date" aria-label="Edit event date">✎ change date</button>
           <div class="availability" id="ev-status">—</div>
 
           <!-- Inline edit forms for the creator. All hidden by default; the
@@ -167,13 +165,10 @@
           </div>
 
           <div id="ev-edit-window-form" class="fe-edit-form hidden">
-            <label class="fe-label">Start date / time (your local time)
-              <input type="datetime-local" id="ev-edit-starts-at" />
+            <label class="fe-label">Event date
+              <input type="date" id="ev-edit-starts-at" />
             </label>
-            <label class="fe-label">Duration (hours)
-              <input type="number" id="ev-edit-duration-hours" min="1" max="720" />
-            </label>
-            <p class="key-note">Changing the window invalidates everyone's count and clamps any personal start times back inside the new window.</p>
+            <p class="key-note">Events always run 10:00 TCT to 16:00 TCT. Changing the date invalidates everyone's count and clamps any personal start times back inside the new window.</p>
             <div class="fe-edit-actions">
               <button type="button" id="ev-edit-window-save" class="submit-btn-alt">Save</button>
               <button type="button" data-cancel="window" class="submit-btn-alt fe-secondary fe-edit-cancel">Cancel</button>
