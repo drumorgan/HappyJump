@@ -2667,9 +2667,21 @@ async function handleCreateFactionEvent(body: any) {
     return json({ error: 'Event window cannot exceed 30 days' }, 400);
   }
 
-  const personalParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
-  if (personalParsed.err) return json({ error: personalParsed.err }, 400);
-  const personalStart = personalParsed.ts!;
+  // personal_start_at is OPTIONAL on create — if the creator doesn't
+  // supply one, default to the event start. Each participant (including
+  // the creator) can change their own start time later via the me-card
+  // "Change my start time" UI; pre-baking it into the create flow makes
+  // the create form longer than it needs to be and conflates two
+  // independent decisions (when does the event run vs. when do I start
+  // counting).
+  let personalStart: Date;
+  if (body.personal_start_at !== undefined && body.personal_start_at !== null && body.personal_start_at !== '') {
+    const personalParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
+    if (personalParsed.err) return json({ error: personalParsed.err }, 400);
+    personalStart = personalParsed.ts!;
+  } else {
+    personalStart = starts_at;
+  }
 
   // Creating an event requires a Faction Event session — we need a stable
   // creator_torn_id for later edit authorization, and we need the creator's
@@ -2899,8 +2911,14 @@ async function handleUpdateFactionEvent(body: any) {
   if (updErr) return json({ error: updErr.message }, 500);
 
   // If the count parameters changed, invalidate every participant's count so
-  // the next refresh-stale-participants sweep recounts. Also clamp
-  // personal_start_at into the new window for any rows that fell outside.
+  // the next refresh-stale-participants sweep recounts. Also re-anchor
+  // personal_start_at to the new event date — preserving each participant's
+  // chosen TIME-OF-DAY so a date edit moves their start by exactly the
+  // amount the event moved.
+  //
+  // Old behaviour clamped psMs against [startMs, endMs] which, when the
+  // window shrunk past the participant's old start, snapped them to the new
+  // event END — leaving a zero-second count window and silently producing 0.
   if (drugChanged || windowChanged) {
     const startMs = newStartsAt.getTime();
     const endMs = newEndsAt.getTime();
@@ -2916,16 +2934,32 @@ async function handleUpdateFactionEvent(body: any) {
         .update({ last_checked_at: null, last_count: 0 })
         .eq('event_id', event_id);
 
-      // Then clamp any out-of-window personal-start times. Sequential rather
-      // than batched because per-row clamp values differ.
-      for (const p of parts) {
-        const psMs = new Date(p.personal_start_at).getTime();
-        const clamped = Math.min(Math.max(psMs, startMs), endMs);
-        if (clamped !== psMs) {
-          await supabase
-            .from('faction_event_participants')
-            .update({ personal_start_at: new Date(clamped).toISOString() })
-            .eq('id', p.id);
+      if (windowChanged) {
+        // Re-anchor each participant's personal-start time to the new event
+        // date, keeping the same UTC time-of-day. If the resulting moment
+        // still falls outside the new window, snap to the event START
+        // (never the event end — that's a zero-length window).
+        const newDateStr = newStartsAt.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+        for (const p of parts) {
+          const oldPs = new Date(p.personal_start_at);
+          const oldTimeStr = oldPs.toISOString().slice(11); // "HH:MM:SS.sssZ"
+          const reAnchoredMs = new Date(`${newDateStr}T${oldTimeStr}`).getTime();
+          let finalMs: number;
+          if (Number.isNaN(reAnchoredMs)) {
+            finalMs = startMs;
+          } else if (reAnchoredMs < startMs || reAnchoredMs >= endMs) {
+            // Outside the new window — snap to the event start so the
+            // participant gets a meaningful (non-zero) count window.
+            finalMs = startMs;
+          } else {
+            finalMs = reAnchoredMs;
+          }
+          if (finalMs !== oldPs.getTime()) {
+            await supabase
+              .from('faction_event_participants')
+              .update({ personal_start_at: new Date(finalMs).toISOString() })
+              .eq('id', p.id);
+          }
         }
       }
     }
