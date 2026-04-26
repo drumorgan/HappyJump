@@ -16,6 +16,8 @@ import {
   refreshFactionEvent,
   refreshStaleParticipants,
   fetchTornEventStart,
+  getParticipantScrapeLog,
+  adminRescrapeParticipant,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
@@ -527,11 +529,19 @@ function renderLeaderboard(event, participants) {
   // we stashed when this browser joined (so the highlight survives sign-out).
   const myTornId = feSession?.torn_id || loadJoinedTornId(event.id) || null;
 
+  // Scrape-log column appears only for authorized viewers (HJ admin or
+  // event creator). Mirrors the gateway authorization for
+  // get-participant-scrape-log so we don't render a button that would 403.
+  const showScrapeLog = canViewScrapeLog(event);
+
   const rows = sorted.map((p, i) => {
     const isMe = String(p.torn_id) === String(myTornId);
     const checked = p.last_checked_at
       ? fmtRelative(Date.now() - new Date(p.last_checked_at).getTime()) + ' ago'
       : 'pending';
+    const scrapeBtn = showScrapeLog
+      ? `<td class="lb-scrape"><button type="button" class="lb-scrape-btn" data-torn-id="${esc(String(p.torn_id))}" title="View scrape log">view</button></td>`
+      : '';
     return `
       <tr class="${isMe ? 'me-row' : ''}">
         <td class="lb-rank">${i + 1}</td>
@@ -542,6 +552,7 @@ function renderLeaderboard(event, participants) {
         <td class="recent-meta">since ${fmtDateTime(p.personal_start_at)}</td>
         <td class="recent-meta">${esc(checked)}</td>
         <td class="lb-count">${Number(p.last_count) || 0}</td>
+        ${scrapeBtn}
       </tr>
     `;
   }).join('');
@@ -555,39 +566,46 @@ function renderLeaderboard(event, participants) {
           <th>Started</th>
           <th>Last refresh</th>
           <th style="text-align:right">${esc(event.drug_name)}</th>
+          ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
         </tr>
       </thead>
       <tbody>${rows}</tbody>
     </table>
   `;
   document.getElementById('lb-refreshed').textContent = `updated ${new Date().toLocaleTimeString()}`;
+
+  if (showScrapeLog) {
+    body.querySelectorAll('.lb-scrape-btn').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const tornId = btn.dataset.tornId;
+        if (!tornId) return;
+        openScrapeLogModal({ eventId: event.id, tornId });
+      });
+    });
+  }
 }
 
-// Render the count diagnostic panel on the me-card. Only visible to the
-// HJ admin (operator) — regular players don't need to see Torn API
-// pagination internals. `diag` is the object returned by
-// refresh-faction-event when the count function ran (or short-circuited).
-function renderMeDebug(diag, opts) {
-  const panel = document.getElementById('me-debug');
-  const body = document.getElementById('me-debug-body');
-  if (!panel || !body) return;
-  // Always keep the panel hidden for non-admin users.
-  if (!isHjAdmin) {
-    panel.classList.add('hidden');
-    body.textContent = '';
-    return;
-  }
-  if (opts && opts.clear) {
-    panel.classList.add('hidden');
-    body.textContent = '';
-    return;
-  }
+// Format a diag object into the plain-text block that gets rendered in the
+// admin debug panel and the per-row scrape-log modal. Designed to be
+// copy-pasteable into Discord — no markdown, no ANSI, just lines. `header`
+// is an optional preamble (participant info, scrape timestamp) prepended
+// above the standard diag dump so the same renderer covers both stored
+// scrapes (header includes "stored scrape from X") and fresh scrapes.
+function formatDiagText(diag, header) {
   if (!diag) {
-    body.textContent = 'No diagnostics returned by the gateway. Redeploy supabase/functions/gateway/index.ts (latest on main) — the running version pre-dates the `diag` response field.';
-    panel.classList.remove('hidden');
-    return;
+    return [
+      header || '',
+      '',
+      'No diagnostics available — this row was last refreshed before the scrape-log column existed, or the gateway pre-dates the diag column. Click "Re-scrape now" to populate it.',
+    ].filter(Boolean).join('\n');
   }
   const lines = [];
+  if (header) {
+    lines.push(header);
+    lines.push('');
+  }
+  if (diag.scraped_at) lines.push(`scraped_at: ${diag.scraped_at}`);
+  if (diag.drug_name) lines.push(`drug: ${diag.drug_name} (item ${diag.drug_item_id ?? '?'})`);
   lines.push(`window: from=${diag.from_sec} until=${diag.until_sec} (${diag.window_seconds}s)`);
   if (diag.skipped_reason) {
     lines.push('');
@@ -630,8 +648,200 @@ function renderMeDebug(diag, opts) {
       for (const d of diag.debug) lines.push('  ' + d);
     }
   }
-  body.textContent = lines.join('\n');
+  return lines.join('\n');
+}
+
+// Render the count diagnostic panel on the me-card. Only visible to the
+// HJ admin (operator) — regular players don't need to see Torn API
+// pagination internals. `diag` is the object returned by
+// refresh-faction-event when the count function ran (or short-circuited).
+function renderMeDebug(diag, opts) {
+  const panel = document.getElementById('me-debug');
+  const body = document.getElementById('me-debug-body');
+  if (!panel || !body) return;
+  // Always keep the panel hidden for non-admin users.
+  if (!isHjAdmin) {
+    panel.classList.add('hidden');
+    body.textContent = '';
+    return;
+  }
+  if (opts && opts.clear) {
+    panel.classList.add('hidden');
+    body.textContent = '';
+    return;
+  }
+  if (!diag) {
+    body.textContent = 'No diagnostics returned by the gateway. Redeploy supabase/functions/gateway/index.ts (latest on main) — the running version pre-dates the `diag` response field.';
+    panel.classList.remove('hidden');
+    return;
+  }
+  body.textContent = formatDiagText(diag);
   panel.classList.remove('hidden');
+}
+
+// Anyone authorized to call get-participant-scrape-log on the gateway:
+//   - Happy Jump operator (HJ admin via Supabase Auth — backdoor on every event)
+//   - The event creator (FE session matches event.creator_torn_id)
+// Mirrors the auth check in handleGetParticipantScrapeLog.
+function canViewScrapeLog(event) {
+  return isHjAdmin || isCreator(event);
+}
+
+// ── Scrape-log modal ────────────────────────────────────────────────
+// Lazy-built singleton overlay. One instance reused across all
+// participant rows; opens with a participant + the event currently
+// loaded into `currentEvent`. Closes on backdrop click, Esc key, or
+// Close button. The body is a textarea so the operator can long-press
+// → Select All → Copy on iPad without dev tools, and the Copy button
+// uses the Clipboard API as a one-tap shortcut.
+
+let scrapeLogModal = null;
+
+function buildScrapeLogModal() {
+  if (scrapeLogModal) return scrapeLogModal;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'scrape-log-overlay hidden';
+  overlay.innerHTML = `
+    <div class="scrape-log-modal" role="dialog" aria-modal="true" aria-labelledby="scrape-log-title">
+      <div class="scrape-log-header">
+        <strong id="scrape-log-title">Scrape log</strong>
+        <button type="button" class="scrape-log-close" aria-label="Close">×</button>
+      </div>
+      <div class="scrape-log-meta" id="scrape-log-meta"></div>
+      <textarea class="scrape-log-body" id="scrape-log-body" readonly spellcheck="false"></textarea>
+      <div class="scrape-log-actions">
+        <button type="button" class="fe-secondary" id="scrape-log-copy">Copy</button>
+        <button type="button" class="fe-secondary" id="scrape-log-rescrape">Re-scrape now</button>
+        <button type="button" class="fe-secondary" id="scrape-log-close-btn">Close</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  const close = () => closeScrapeLogModal();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) close(); });
+  overlay.querySelector('.scrape-log-close').addEventListener('click', close);
+  overlay.querySelector('#scrape-log-close-btn').addEventListener('click', close);
+
+  overlay.querySelector('#scrape-log-copy').addEventListener('click', async () => {
+    const ta = overlay.querySelector('#scrape-log-body');
+    try {
+      await navigator.clipboard.writeText(ta.value);
+      toast('Copied to clipboard', 'success');
+    } catch {
+      // Fallback for older browsers / iPad PWA: select the textarea so the
+      // user can long-press → Copy themselves.
+      ta.select();
+      toast('Long-press the text and Copy', 'success');
+    }
+  });
+
+  overlay.querySelector('#scrape-log-rescrape').addEventListener('click', async () => {
+    const tornId = scrapeLogModal.tornId;
+    const eventId = scrapeLogModal.eventId;
+    if (!tornId || !eventId) return;
+    const btn = overlay.querySelector('#scrape-log-rescrape');
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Scraping…';
+    try {
+      const res = await adminRescrapeParticipant({ eventId, tornId, auth: feAuth() });
+      // Refresh the underlying leaderboard so the new count surfaces.
+      try {
+        const fresh = await getFactionEvent(eventId);
+        currentEvent = fresh.event;
+        lastParticipants = fresh.participants || [];
+        renderLeaderboard(currentEvent, lastParticipants);
+      } catch { /* leaderboard refresh is best-effort */ }
+      // Re-render modal with the fresh diag.
+      populateScrapeLogModal({
+        participant: res.participant,
+        event: res.event,
+        diagSourceLabel: 'fresh scrape (just now)',
+      });
+      toast(`Re-scraped — count is now ${res.count}`, 'success');
+    } catch (err) {
+      toast(err.message || 'Re-scrape failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
+
+  scrapeLogModal = {
+    overlay,
+    tornId: null,
+    eventId: null,
+    keydownHandler: (e) => { if (e.key === 'Escape') close(); },
+  };
+  return scrapeLogModal;
+}
+
+function populateScrapeLogModal({ participant, event, diagSourceLabel }) {
+  const m = scrapeLogModal;
+  if (!m) return;
+  const overlay = m.overlay;
+  const title = overlay.querySelector('#scrape-log-title');
+  const meta = overlay.querySelector('#scrape-log-meta');
+  const body = overlay.querySelector('#scrape-log-body');
+
+  title.textContent = `Scrape log — ${participant.torn_name} [${participant.torn_id}]`;
+
+  const checkedAt = participant.last_checked_at
+    ? new Date(participant.last_checked_at).toISOString()
+    : 'never';
+  meta.textContent =
+    `Event: ${event.title} (${event.drug_name})\n` +
+    `Count stored: ${Number(participant.last_count) || 0}\n` +
+    `Last refresh: ${checkedAt}\n` +
+    `Personal start: ${new Date(participant.personal_start_at).toISOString()}\n` +
+    `Source: ${diagSourceLabel}`;
+
+  const header =
+    `Participant: ${participant.torn_name} [${participant.torn_id}]\n` +
+    `Event: ${event.title}\n` +
+    `Count: ${Number(participant.last_count) || 0}\n` +
+    `Source: ${diagSourceLabel}`;
+  body.value = formatDiagText(participant.last_diag_json, header);
+}
+
+function openScrapeLogModal({ eventId, tornId }) {
+  buildScrapeLogModal();
+  const m = scrapeLogModal;
+  m.eventId = eventId;
+  m.tornId = tornId;
+  m.overlay.classList.remove('hidden');
+  document.addEventListener('keydown', m.keydownHandler);
+
+  // Show a loading state while we fetch the stored scrape.
+  m.overlay.querySelector('#scrape-log-title').textContent = 'Scrape log — loading…';
+  m.overlay.querySelector('#scrape-log-meta').textContent = '';
+  m.overlay.querySelector('#scrape-log-body').value = 'Loading…';
+
+  getParticipantScrapeLog({ eventId, tornId, auth: feAuth() })
+    .then((res) => {
+      const diag = res.participant?.last_diag_json;
+      const sourceLabel = diag?.scraped_at
+        ? `stored scrape from ${diag.scraped_at}`
+        : 'no stored diagnostic yet';
+      populateScrapeLogModal({
+        participant: res.participant,
+        event: res.event,
+        diagSourceLabel: sourceLabel,
+      });
+    })
+    .catch((err) => {
+      m.overlay.querySelector('#scrape-log-title').textContent = 'Scrape log — error';
+      m.overlay.querySelector('#scrape-log-body').value =
+        (err && err.message) || 'Failed to load scrape log';
+    });
+}
+
+function closeScrapeLogModal() {
+  if (!scrapeLogModal) return;
+  scrapeLogModal.overlay.classList.add('hidden');
+  document.removeEventListener('keydown', scrapeLogModal.keydownHandler);
 }
 
 function renderJoinOrMe(event, participants) {

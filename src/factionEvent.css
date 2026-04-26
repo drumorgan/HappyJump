@@ -325,3 +325,113 @@
   max-height: 400px;
   overflow-y: auto;
 }
+
+/* ── Leaderboard scrape-log column + button (admin/creator only) ── */
+.lb-table th.lb-scrape,
+.lb-table td.lb-scrape {
+  width: 2.5rem;
+  text-align: center;
+  padding-left: 0.25rem;
+  padding-right: 0.25rem;
+}
+.lb-scrape-btn {
+  background: transparent;
+  border: 1px solid #2a3045;
+  border-radius: 4px;
+  color: #aab;
+  padding: 2px 6px;
+  cursor: pointer;
+  font-size: 0.95rem;
+  line-height: 1;
+}
+.lb-scrape-btn:hover {
+  background: rgba(233, 69, 96, 0.12);
+  border-color: rgba(233, 69, 96, 0.5);
+  color: #fff;
+}
+
+/* ── Scrape-log modal ──
+   Lazy-built singleton overlay (created in JS). Sized to fill most of the
+   viewport on mobile; the body is a textarea so iPad users can long-press
+   → Select All → Copy without dev tools. */
+.scrape-log-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+  padding: 1rem;
+}
+.scrape-log-overlay.hidden {
+  display: none;
+}
+.scrape-log-modal {
+  background: #11151f;
+  border: 1px solid #2a3045;
+  border-radius: 8px;
+  width: 100%;
+  max-width: 760px;
+  max-height: 90vh;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.scrape-log-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 0.75rem 1rem;
+  background: #0e1322;
+  border-bottom: 1px solid #2a3045;
+  color: #fff;
+}
+.scrape-log-close {
+  background: transparent;
+  border: none;
+  color: #aab;
+  font-size: 1.4rem;
+  line-height: 1;
+  cursor: pointer;
+  padding: 0 0.25rem;
+}
+.scrape-log-close:hover {
+  color: #fff;
+}
+.scrape-log-meta {
+  padding: 0.6rem 1rem;
+  background: #0a0e1a;
+  color: #aab;
+  font-size: 0.85rem;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  white-space: pre-wrap;
+  border-bottom: 1px solid #2a3045;
+}
+.scrape-log-body {
+  flex: 1 1 auto;
+  margin: 0;
+  padding: 0.75rem 1rem;
+  border: none;
+  outline: none;
+  resize: none;
+  background: #0a0e1a;
+  color: #cde;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre;
+  min-height: 200px;
+}
+.scrape-log-actions {
+  display: flex;
+  gap: 0.5rem;
+  padding: 0.6rem 1rem;
+  background: #0e1322;
+  border-top: 1px solid #2a3045;
+  flex-wrap: wrap;
+}
+.scrape-log-actions button {
+  flex: 1 1 auto;
+  min-width: 0;
+}
