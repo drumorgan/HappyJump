@@ -589,19 +589,23 @@ async function countXanaxUsageInLog(
   };
 }
 
-// Generic Torn-log item-use counter used by Faction Events. Same paging
-// shape as countXanaxUsageInLog but parameterised by item id + display
-// name, with both a `since` and an optional `until` cutoff so we can scope
-// counts to an event window. Honours the same dedupe-by-log-key rule.
+// Generic Torn-log item-use counter used by Faction Events. Mirrors the
+// production-proven countXanaxUsageInLog pagination — start with no `to`,
+// only set `to` for backward pagination, and filter the upper bound
+// client-side. Combining `from` + `to` in the *initial* request to Torn's
+// log endpoint silently returns an empty response for windows that don't
+// touch the most recent entries (e.g. an event that ended days ago), which
+// was producing 0 counts on the Faction Events leaderboard. Honours the
+// same dedupe-by-log-key rule.
 async function countItemUseInLog(
   apiKey: string,
   itemId: number,
   drugName: string,
   sinceTimestamp?: number,
   untilTimestamp?: number,
-  maxPages = 30,
+  maxPages = 50,
 ): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
-  let toParam = untilTimestamp ? `&to=${untilTimestamp}` : '';
+  let toParam = '';
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
   const cutoff = sinceTimestamp || 0;
   const upper = untilTimestamp || Number.POSITIVE_INFINITY;
@@ -615,13 +619,25 @@ async function countItemUseInLog(
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
-    if (data.error || !data.log) break;
+    if (data.error || !data.log) {
+      console.log(`[countItemUseInLog ${drugName}] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
 
     const entriesKv = Object.entries(data.log) as [string, any][];
-    if (entriesKv.length === 0) break;
+    if (entriesKv.length === 0) {
+      console.log(`[countItemUseInLog ${drugName}] page=${page} empty page, stopping`);
+      break;
+    }
     pagesFetched++;
     totalEntries += entriesKv.length;
 
+    if (page === 0) {
+      const sample = entriesKv[0][1];
+      console.log(`[countItemUseInLog ${drugName}] page=0 entries=${entriesKv.length} sampleEntry=${JSON.stringify(sample).slice(0, 400)}`);
+    }
+
+    let pageMatches = 0;
     for (const [key, entry] of entriesKv) {
       const ts = entry.timestamp || 0;
       if (ts < cutoff || ts > upper) continue;
@@ -634,16 +650,25 @@ async function countItemUseInLog(
         detail: `${drugName} @ ${new Date(ts * 1000).toISOString()} — "${narrative}"`,
         key,
       });
+      pageMatches++;
     }
+    console.log(`[countItemUseInLog ${drugName}] page=${page} entries=${entriesKv.length} matchesThisPage=${pageMatches} runningTotal=${uses.length}`);
 
     const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
-    if (oldestTs <= cutoff) break;
-    if (oldestTs === Infinity || oldestTs >= lastOldestTs) break;
+    if (oldestTs <= cutoff) {
+      console.log(`[countItemUseInLog ${drugName}] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      break;
+    }
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
+      console.log(`[countItemUseInLog ${drugName}] page=${page} no forward progress, stopping`);
+      break;
+    }
     lastOldestTs = oldestTs;
     toParam = `&to=${oldestTs - 1}`;
   }
 
   uses.sort((a, b) => a.timestamp - b.timestamp);
+  console.log(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} cutoff=${cutoff} upper=${upper}`);
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
