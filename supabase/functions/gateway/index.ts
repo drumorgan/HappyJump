@@ -2940,6 +2940,57 @@ async function handleListFactionEvents(_body: any) {
 // changes, every participant row is invalidated (last_checked_at = NULL)
 // so the next sweep recounts. Personal-start times that now fall outside
 // the new window are clamped back inside it.
+// Two paths to authorize a delete:
+//   1. FE session whose torn_id matches event.creator_torn_id (the
+//      normal "I made this event, I can delete it" path).
+//   2. Happy Jump admin via Supabase Auth (the operator backdoor — lets
+//      Giro clean up any event regardless of creator).
+// Participant rows are removed automatically by the ON DELETE CASCADE
+// on faction_event_participants.event_id (migration 011 line 25).
+async function handleDeleteFactionEvent(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, creator_torn_id, title')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  // Admin backdoor first — if a valid Supabase Auth session is on the
+  // request, the caller is the HJ operator and gets unconditional
+  // delete. requireAuth returns null for unauthenticated requests, so
+  // this is safe to try without an FE session.
+  const adminUser = await requireAuth(req);
+  let authorizedBy: string;
+
+  if (adminUser) {
+    authorizedBy = `admin:${adminUser.id}`;
+  } else {
+    // Fall back to FE creator auth.
+    const resolved = await resolveFactionEventApiKey(body);
+    if (resolved instanceof Response) return resolved;
+    const callerTornId = String(resolved.torn_id || '');
+    if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+    if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+      return json({ error: 'Only the event creator (or the operator) can delete this event' }, 403);
+    }
+    authorizedBy = `creator:${callerTornId}`;
+  }
+
+  const { error: delErr } = await supabase
+    .from('faction_events')
+    .delete()
+    .eq('id', event_id);
+  if (delErr) return json({ error: delErr.message }, 500);
+
+  console.log(`[delete-faction-event] event=${event_id} title=${JSON.stringify(event.title)} authorizedBy=${authorizedBy}`);
+  return json({ success: true, deleted_event_id: event_id });
+}
+
 async function handleUpdateFactionEvent(body: any) {
   const event_id = typeof body.event_id === 'string' ? body.event_id : '';
   if (!event_id) return json({ error: 'Missing event_id' }, 400);
@@ -3543,6 +3594,8 @@ serve(async (req) => {
         return await handleListFactionEvents(body);
       case 'update-faction-event':
         return await handleUpdateFactionEvent(body);
+      case 'delete-faction-event':
+        return await handleDeleteFactionEvent(req, body);
       case 'join-faction-event':
         return await handleJoinFactionEvent(body);
       case 'refresh-faction-event':
