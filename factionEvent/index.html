@@ -225,6 +225,14 @@
             <button type="button" id="me-leave" class="submit-btn-alt fe-secondary">Sign out (forget my key)</button>
           </div>
 
+          <!-- Diagnostic panel — populated after every "Refresh my count"
+               click with the count function's per-page log + rejected
+               sample entries. Hidden until first refresh, collapsible. -->
+          <details id="me-debug" class="me-debug hidden">
+            <summary>Last refresh diagnostics (tap to expand)</summary>
+            <pre id="me-debug-body" class="me-debug-body"></pre>
+          </details>
+
           <!-- Inline start-time editor — hidden until "Change my start time"
                is clicked. Saving re-runs the count over the new window. -->
           <div id="me-change-start-form" class="hidden" style="margin-top:12px">
