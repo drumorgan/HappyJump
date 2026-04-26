@@ -309,21 +309,6 @@ function showPickerView() {
   loadRecentEvents();
 }
 
-// Recompute the personal-start slot picker on the create form whenever the
-// event date changes. Preserves the time-of-day selection across date changes.
-function refreshCreateSlotPicker() {
-  const dateStr = document.getElementById('ce-starts-at').value;
-  const personalSel = document.getElementById('ce-personal-start');
-  if (!dateStr) {
-    personalSel.innerHTML = '<option value="">— pick a date first —</option>';
-    return;
-  }
-  const startsIso = dateInputToStartIso(dateStr);
-  const endsIso = dateInputToEndIso(dateStr);
-  const previous = personalSel.value;
-  fillSlotPicker(personalSel, startsIso, endsIso, previous || null);
-}
-
 function wireCreateForm() {
   const presetSel = document.getElementById('ce-drug-preset');
   const customRow = document.getElementById('ce-custom-row');
@@ -345,9 +330,6 @@ function wireCreateForm() {
   // Default date = today in TCT.
   const startsInput = document.getElementById('ce-starts-at');
   if (!startsInput.value) startsInput.value = todayTctDateInput();
-  startsInput.oninput = refreshCreateSlotPicker;
-
-  refreshCreateSlotPicker();
 
   document.getElementById('create-event-form').onsubmit = async (e) => {
     e.preventDefault();
@@ -387,18 +369,17 @@ function wireCreateForm() {
     const endsAtIso = dateInputToEndIso(dateStr);
     if (!startsAtIso || !endsAtIso) { toast('Invalid event date'); return; }
 
-    const personalIso = document.getElementById('ce-personal-start').value;
-    if (!personalIso) { toast('Pick your personal start time'); return; }
-
     setLoading(true);
     try {
+      // No personal_start_at on create — backend defaults the creator's
+      // personal start to event_start. Creator picks their slot from the
+      // me-card's "Change my start time" UI after the event exists.
       const res = await createFactionEvent({
         title,
         drug_item_id,
         drug_name,
         starts_at: startsAtIso,
         ends_at: endsAtIso,
-        personalStartAt: personalIso,
         auth: feAuth(),
       });
       saveJoinedTornId(res.event.id, res.participant.torn_id);
@@ -883,6 +864,66 @@ function wireEventControls(eventId) {
       toast('Already signed out.', 'success');
     }
     refreshEventView(eventId);
+  };
+
+  // ── "Change my start time" — toggle the inline picker, populate slots
+  //    from the event window, and on Save call joinFactionEvent (which is
+  //    an upsert — same flow as the original join, just with a new
+  //    personal_start_at). The backend recounts over the new window
+  //    immediately and we re-render the leaderboard with the fresh number.
+  const changeStartBtn = document.getElementById('me-change-start');
+  const changeStartForm = document.getElementById('me-change-start-form');
+  const startPicker = document.getElementById('me-start-picker');
+  const changeStartSave = document.getElementById('me-change-start-save');
+  const changeStartCancel = document.getElementById('me-change-start-cancel');
+
+  changeStartBtn.onclick = () => {
+    if (!feSession) {
+      toast('Sign in above to change your start time');
+      return;
+    }
+    if (!currentEvent) return;
+    const myRow = (lastParticipants || []).find(
+      (p) => String(p.torn_id) === String(feSession.torn_id),
+    );
+    fillSlotPicker(
+      startPicker,
+      currentEvent.starts_at,
+      currentEvent.ends_at,
+      myRow?.personal_start_at || null,
+    );
+    changeStartForm.classList.remove('hidden');
+  };
+
+  changeStartCancel.onclick = () => {
+    changeStartForm.classList.add('hidden');
+  };
+
+  changeStartSave.onclick = async () => {
+    if (!feSession) {
+      toast('Sign in above to change your start time');
+      return;
+    }
+    const newStart = startPicker.value;
+    if (!newStart) {
+      toast('Pick a slot');
+      return;
+    }
+    setLoading(true);
+    try {
+      await joinFactionEvent({
+        eventId,
+        auth: feAuth(),
+        personalStartAt: newStart,
+      });
+      changeStartForm.classList.add('hidden');
+      await refreshEventView(eventId);
+      toast('Start time updated — recounted', 'success');
+    } catch (err) {
+      toast(err.message || 'Update failed');
+    } finally {
+      setLoading(false);
+    }
   };
 
   wireEditPencils(eventId);

@@ -86,14 +86,7 @@
             <label class="fe-label">Event date
               <input type="date" id="ce-starts-at" required />
             </label>
-            <p class="key-note">Events run from 10:00 TCT to 16:00 TCT (game time) on the date you pick.</p>
-
-            <label class="fe-label">Your personal start time (TCT)
-              <select id="ce-personal-start" required>
-                <option value="">— pick a date first —</option>
-              </select>
-            </label>
-            <p class="key-note">Pick when YOUR count starts. 15-minute slots from 10:00 TCT to 16:00 TCT (Torn game time). Defaults to the slot at-or-before now if today is the event date.</p>
+            <p class="key-note">Events run from 10:00 TCT to 16:00 TCT (game time) on the date you pick. After creating, you (and every joiner) pick your own personal start time from the leaderboard page.</p>
 
             <button type="submit" class="submit-btn-alt">Create Event</button>
           </form>
@@ -168,7 +161,7 @@
             <label class="fe-label">Event date
               <input type="date" id="ev-edit-starts-at" />
             </label>
-            <p class="key-note">Events always run 10:00 TCT to 16:00 TCT. Changing the date invalidates everyone's count and clamps any personal start times back inside the new window.</p>
+            <p class="key-note">Events always run 10:00 TCT to 16:00 TCT. Changing the date invalidates everyone's count and re-anchors each participant's personal start time to the new date (their slot stays the same, just on the new day).</p>
             <div class="fe-edit-actions">
               <button type="button" id="ev-edit-window-save" class="submit-btn-alt">Save</button>
               <button type="button" data-cancel="window" class="submit-btn-alt fe-secondary fe-edit-cancel">Cancel</button>
@@ -220,7 +213,21 @@
           <div class="big-price" id="me-count">0</div>
           <div class="price-note" id="me-meta">—</div>
           <button type="button" id="me-refresh" class="submit-btn-alt">Refresh my count</button>
+          <button type="button" id="me-change-start" class="submit-btn-alt fe-secondary">Change my start time</button>
           <button type="button" id="me-leave" class="submit-btn-alt fe-secondary">Sign out (forget my key)</button>
+
+          <!-- Inline start-time editor — hidden until "Change my start time"
+               is clicked. Saving re-runs the count over the new window. -->
+          <div id="me-change-start-form" class="hidden" style="margin-top:12px">
+            <label class="fe-label">New personal start time
+              <select id="me-start-picker"><option value="">— loading slots —</option></select>
+            </label>
+            <p class="key-note">15-minute slots from event start to event end (your local time). Saving recounts over the new window.</p>
+            <div class="fe-edit-actions">
+              <button type="button" id="me-change-start-save" class="submit-btn-alt">Save</button>
+              <button type="button" id="me-change-start-cancel" class="submit-btn-alt fe-secondary">Cancel</button>
+            </div>
+          </div>
         </div>
       </div>
 
