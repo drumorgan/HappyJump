@@ -56,12 +56,14 @@ function setEventIdInUrl(id) {
 }
 
 // ── Time helpers ─────────────────────────────────────────────────────
-// TCT (Torn City Time) = UTC. Events always run 10:00–16:00 TCT on a
-// chosen calendar date. Personal start slots are 15-min increments in
-// that fixed [10:00, 16:00] TCT range.
+// TCT (Torn City Time) = UTC. Events anchor at 10:00 TCT on the chosen
+// start date and run for a per-event duration in hours (default 6h, cap
+// 30 days). Personal start slots are 15-min increments spanning the
+// event's full window.
 
 const EVENT_START_HOUR_TCT = 10;
-const EVENT_END_HOUR_TCT = 16;
+const DEFAULT_EVENT_DURATION_HOURS = 6;
+const MAX_EVENT_DURATION_HOURS = 30 * 24; // backend caps at 30 days
 const SLOT_MS = 15 * 60 * 1000;
 
 function pad2(n) { return String(n).padStart(2, '0'); }
@@ -74,12 +76,23 @@ function dateInputToStartIso(dateStr) {
   return `${dateStr}T${pad2(EVENT_START_HOUR_TCT)}:00:00.000Z`;
 }
 
-// "YYYY-MM-DD" (UTC) → ISO at 16:00:00 TCT that day.
-function dateInputToEndIso(dateStr) {
-  if (!dateStr) return null;
-  const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
-  if (!m) return null;
-  return `${dateStr}T${pad2(EVENT_END_HOUR_TCT)}:00:00.000Z`;
+// "YYYY-MM-DD" (UTC) + duration in hours → ISO at start + duration.
+function dateInputToEndIso(dateStr, durationHours = DEFAULT_EVENT_DURATION_HOURS) {
+  const startIso = dateInputToStartIso(dateStr);
+  if (!startIso) return null;
+  const startMs = new Date(startIso).getTime();
+  const hours = Number(durationHours);
+  if (!Number.isFinite(hours) || hours <= 0) return null;
+  return new Date(startMs + hours * 60 * 60 * 1000).toISOString();
+}
+
+// Hours between two ISO timestamps, rounded to nearest integer (defaults to
+// DEFAULT_EVENT_DURATION_HOURS when either is missing).
+function durationHoursFromIsos(startIso, endIso) {
+  if (!startIso || !endIso) return DEFAULT_EVENT_DURATION_HOURS;
+  const ms = new Date(endIso).getTime() - new Date(startIso).getTime();
+  if (!Number.isFinite(ms) || ms <= 0) return DEFAULT_EVENT_DURATION_HOURS;
+  return Math.round(ms / (60 * 60 * 1000));
 }
 
 // ISO → "YYYY-MM-DD" in UTC (TCT). Used to seed the date inputs.
@@ -110,33 +123,41 @@ function fmtDateTime(iso) {
   return new Date(iso).toLocaleString();
 }
 
-function fmtSlotLabel(d) {
-  // Time-only label in TCT, e.g. "10:15 TCT".
-  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
+function fmtSlotLabel(d, includeDate) {
+  // Time-only label in TCT for short windows, e.g. "10:15 TCT".
+  // For multi-day events, prefix with the day so 10:15 on day 1 vs day 2
+  // are visibly distinct, e.g. "Sat 10:15 TCT".
+  const hhmm = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
+  if (!includeDate) return hhmm;
+  const day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
+  return `${day} ${hhmm}`;
 }
 
 // ── Slot picker ──────────────────────────────────────────────────────
-// Fixed 15-min TCT slots from 10:00 to 16:00 inclusive (25 slots) on the
-// event's calendar date. Returns [{ value: ISO string, label: "HH:MM TCT" }].
-function generateSlots(startIso /* event starts_at */, _endIso) {
-  if (!startIso) return [];
-  const dateStr = isoToDateInput(startIso);
-  if (!dateStr) return [];
-  const baseStart = new Date(`${dateStr}T${pad2(EVENT_START_HOUR_TCT)}:00:00.000Z`).getTime();
-  const baseEnd = new Date(`${dateStr}T${pad2(EVENT_END_HOUR_TCT)}:00:00.000Z`).getTime();
+// 15-minute TCT slots spanning the event's full window. Slot count grows
+// with the event duration (24 per 6h, 96 per day, etc.). For windows that
+// span more than one calendar day, slot labels include the day so the user
+// can pick "Sat 10:15 TCT" vs "Sun 10:15 TCT".
+function generateSlots(startIso /* event starts_at */, endIso /* event ends_at */) {
+  if (!startIso || !endIso) return [];
+  const baseStart = new Date(startIso).getTime();
+  const baseEnd = new Date(endIso).getTime();
   if (!Number.isFinite(baseStart) || !Number.isFinite(baseEnd) || baseEnd <= baseStart) return [];
+
+  const startDateStr = new Date(baseStart).toISOString().slice(0, 10);
+  const endDateStr = new Date(baseEnd).toISOString().slice(0, 10);
+  const includeDate = startDateStr !== endDateStr;
 
   const slots = [];
   for (let cursor = baseStart; cursor <= baseEnd; cursor += SLOT_MS) {
     const d = new Date(cursor);
-    slots.push({ value: d.toISOString(), label: fmtSlotLabel(d) });
+    slots.push({ value: d.toISOString(), label: fmtSlotLabel(d, includeDate) });
   }
   return slots;
 }
 
-// Default selection: the slot at-or-before now (in TCT), clamped into
-// [10:00, 16:00] on the event's date. If today isn't the event date, falls
-// back to the first slot.
+// Default selection: the slot at-or-before now, clamped into the event
+// window. If now is before the event starts, falls back to the first slot.
 function defaultSlotIso(startIso, _endIso, slots) {
   if (slots.length === 0) return '';
   const nowMs = Date.now();
@@ -365,9 +386,15 @@ function wireCreateForm() {
     const dateStr = document.getElementById('ce-starts-at').value;
     if (!dateStr) { toast('Pick an event date'); return; }
 
+    const durationHours = Number(document.getElementById('ce-duration-hours').value);
+    if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > MAX_EVENT_DURATION_HOURS) {
+      toast(`Duration must be 1–${MAX_EVENT_DURATION_HOURS} hours`);
+      return;
+    }
+
     const startsAtIso = dateInputToStartIso(dateStr);
-    const endsAtIso = dateInputToEndIso(dateStr);
-    if (!startsAtIso || !endsAtIso) { toast('Invalid event date'); return; }
+    const endsAtIso = dateInputToEndIso(dateStr, durationHours);
+    if (!startsAtIso || !endsAtIso) { toast('Invalid event date or duration'); return; }
 
     setLoading(true);
     try {
@@ -643,6 +670,9 @@ function wireEditPencils(eventId) {
   document.getElementById('ev-edit-window-btn').onclick = () => {
     if (currentEvent) {
       document.getElementById('ev-edit-starts-at').value = isoToDateInput(currentEvent.starts_at);
+      document.getElementById('ev-edit-duration-hours').value = String(
+        durationHoursFromIsos(currentEvent.starts_at, currentEvent.ends_at),
+      );
     }
     openEditForm('window');
   };
@@ -702,9 +732,14 @@ function wireEditPencils(eventId) {
   document.getElementById('ev-edit-window-save').onclick = async () => {
     const dateStr = document.getElementById('ev-edit-starts-at').value;
     if (!dateStr) { toast('Pick an event date'); return; }
+    const durationHours = Number(document.getElementById('ev-edit-duration-hours').value);
+    if (!Number.isFinite(durationHours) || durationHours <= 0 || durationHours > MAX_EVENT_DURATION_HOURS) {
+      toast(`Duration must be 1–${MAX_EVENT_DURATION_HOURS} hours`);
+      return;
+    }
     const starts_at = dateInputToStartIso(dateStr);
-    const ends_at = dateInputToEndIso(dateStr);
-    if (!starts_at || !ends_at) { toast('Invalid event date'); return; }
+    const ends_at = dateInputToEndIso(dateStr, durationHours);
+    if (!starts_at || !ends_at) { toast('Invalid event date or duration'); return; }
 
     setLoading(true);
     try {
@@ -712,7 +747,7 @@ function wireEditPencils(eventId) {
       closeEditForms();
       await refreshEventView(eventId);
       scheduleSweep(eventId);
-      toast('Date updated — counts will refresh', 'success');
+      toast('Window updated — counts will refresh', 'success');
     } catch (err) {
       toast(err.message || 'Update failed');
     } finally {
