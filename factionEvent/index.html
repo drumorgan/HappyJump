@@ -204,7 +204,7 @@
               </label>
               <button type="button" id="join-fetch-calendar" class="submit-btn-alt fe-secondary">Pull from Torn calendar</button>
             </div>
-            <p class="key-note">Each player picks their own start time — you only get credit for uses logged at or after this moment, capped at the event window. 15-minute slots from event start to event end, your local time. "Pull from Torn calendar" asks Torn for your current Event start time preference and snaps the picker to the closest slot.</p>
+            <p class="key-note">Each player picks their own start time — 15-minute slots between 10:00 TCT and 16:00 TCT on the event's start date. Your count window then runs from that moment until the event end. "Pull from Torn calendar" asks Torn for your current Event start time preference and snaps the picker to the closest slot.</p>
 
             <button type="submit" class="submit-btn-alt">Join &amp; Count</button>
           </form>
@@ -219,9 +219,11 @@
         <div class="card-body">
           <div class="big-price" id="me-count">0</div>
           <div class="price-note" id="me-meta">—</div>
-          <button type="button" id="me-refresh" class="submit-btn-alt">Refresh my count</button>
-          <button type="button" id="me-change-start" class="submit-btn-alt fe-secondary">Change my start time</button>
-          <button type="button" id="me-leave" class="submit-btn-alt fe-secondary">Sign out (forget my key)</button>
+          <div class="me-actions">
+            <button type="button" id="me-refresh" class="submit-btn-alt">Refresh my count</button>
+            <button type="button" id="me-change-start" class="submit-btn-alt fe-secondary">Change my start time</button>
+            <button type="button" id="me-leave" class="submit-btn-alt fe-secondary">Sign out (forget my key)</button>
+          </div>
 
           <!-- Inline start-time editor — hidden until "Change my start time"
                is clicked. Saving re-runs the count over the new window. -->
@@ -229,7 +231,7 @@
             <label class="fe-label">New personal start time
               <select id="me-start-picker"><option value="">— loading slots —</option></select>
             </label>
-            <p class="key-note">15-minute slots from event start to event end (your local time). Saving recounts over the new window.</p>
+            <p class="key-note">15-minute slots between 10:00 TCT and 16:00 TCT on the event's start date. Your count window starts here and runs to the event end. Saving recounts immediately.</p>
             <div class="fe-edit-actions">
               <button type="button" id="me-change-start-save" class="submit-btn-alt">Save</button>
               <button type="button" id="me-change-start-cancel" class="submit-btn-alt fe-secondary">Cancel</button>
