@@ -442,3 +442,22 @@ export async function adminRescrapeParticipant({ eventId, tornId, auth }) {
   });
 }
 
+/**
+ * Bulk re-scrape ALL participants in an event (capped at 100 per call).
+ * Authorized to HJ admin OR event creator. Unlike refresh-stale-participants
+ * (15 stale rows, no auth, public sweep), this ignores last_checked_at and
+ * touches every row. Per-row outcomes:
+ *   - refreshed: count + diag updated
+ *   - transient: paused/rate-limited key — count NOT overwritten
+ *   - deleted: permanent key error — secret + all participant rows removed
+ *   - skipped: no stored key on file
+ * Returns { refreshed, deleted, skipped, transient, total, transient_names,
+ * deleted_names, skipped_names }.
+ */
+export async function forceRefreshAllParticipants({ eventId, auth }) {
+  return gateway('force-refresh-all-participants', {
+    event_id: eventId,
+    ...authPayload(auth),
+  });
+}
+

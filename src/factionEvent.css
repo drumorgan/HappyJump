@@ -326,6 +326,20 @@
   overflow-y: auto;
 }
 
+/* ── Leaderboard header right-side actions (Refresh all + last-updated) ── */
+.lb-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.lb-refresh-all {
+  padding: 0.25rem 0.65rem;
+  font-size: 0.8rem;
+}
+.lb-refresh-all.hidden {
+  display: none;
+}
+
 /* ── Leaderboard scrape-log column + button (admin/creator only) ── */
 .lb-table th.lb-scrape,
 .lb-table td.lb-scrape {
