@@ -3138,6 +3138,67 @@ async function handleUpdateFactionEvent(body: any) {
   return json({ event: updatedEvent, drug_changed: drugChanged, window_changed: windowChanged });
 }
 
+// Shape of the per-scrape diagnostic blob persisted in
+// faction_event_participants.last_diag_json. Mirrors the response field
+// returned to the calling user from `refresh-faction-event` so the
+// modal-mode display can use one renderer for stored + fresh scrapes.
+type ScrapeDiag = {
+  from_sec: number;
+  until_sec: number;
+  window_seconds: number;
+  pages?: number;
+  total_entries?: number;
+  in_window_total?: number;
+  reached_cutoff?: boolean;
+  debug?: string[];
+  rejected_samples?: string[];
+  interesting_rejections?: string[];
+  log_type_histogram?: Array<{ key: string; count: number }>;
+  data_item_histogram?: Array<{ key: string; count: number }>;
+  matched?: string[];
+  skipped_reason?: string;
+  scraped_at?: string;
+  drug_name?: string;
+  drug_item_id?: number;
+};
+
+// Build a ScrapeDiag from a countItemUseInLog result for a given window.
+// `result` is null when the window was zero-length and the count function
+// was skipped; in that case the diag carries `skipped_reason` instead of
+// the count payload. Both shapes are persisted so a "skipped: zero-length
+// window" snapshot is itself diagnostic.
+function buildScrapeDiag(
+  fromSec: number,
+  untilSec: number,
+  drugName: string,
+  drugItemId: number,
+  result: Awaited<ReturnType<typeof countItemUseInLog>> | null,
+): ScrapeDiag {
+  const diag: ScrapeDiag = {
+    from_sec: fromSec,
+    until_sec: untilSec,
+    window_seconds: untilSec - fromSec,
+    scraped_at: new Date().toISOString(),
+    drug_name: drugName,
+    drug_item_id: drugItemId,
+  };
+  if (result) {
+    diag.pages = result.pages;
+    diag.total_entries = result.totalEntries;
+    diag.in_window_total = result.inWindowTotal;
+    diag.reached_cutoff = result.reachedCutoff;
+    diag.debug = result.debug;
+    diag.rejected_samples = result.rejectedSamples;
+    diag.interesting_rejections = result.interestingRejections;
+    diag.log_type_histogram = result.logTypeHistogram;
+    diag.data_item_histogram = result.dataItemHistogram;
+    diag.matched = result.details;
+  } else {
+    diag.skipped_reason = `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, count function not called`;
+  }
+  return diag;
+}
+
 // Validate the caller's API key, look up the event, run a bounded log scan,
 // and either insert or update the participant row. Returns the updated row +
 // fresh count so the client can render the leaderboard immediately.
@@ -3189,10 +3250,14 @@ async function handleJoinFactionEvent(body: any) {
   const untilSec = Math.min(nowSec, Math.floor(eventEndMs / 1000));
 
   let count = 0;
+  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
   if (untilSec > fromSec) {
-    const result = await countItemUseInLog(api_key, Number(event.drug_item_id), String(event.drug_name), fromSec, untilSec);
+    result = await countItemUseInLog(api_key, drugItemId, drugName, fromSec, untilSec);
     count = result.count;
   }
+  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
   const checkedAt = new Date().toISOString();
 
@@ -3208,6 +3273,7 @@ async function handleJoinFactionEvent(body: any) {
         personal_start_at: clampedStartIso,
         last_count: count,
         last_checked_at: checkedAt,
+        last_diag_json: diag,
       },
       { onConflict: 'event_id,torn_id' },
     )
@@ -3221,6 +3287,145 @@ async function handleJoinFactionEvent(body: any) {
     count,
     event,
   });
+}
+
+// Two-path authorization for "view another participant's scrape log"
+// affordances: same model as handleDeleteFactionEvent. Admin Supabase
+// session (operator backdoor) wins outright; otherwise the caller must
+// hold a Faction Event session whose torn_id matches event.creator_torn_id.
+// Returns either an authorization label string or a Response with 401/403.
+async function authorizeScrapeLogAccess(
+  req: Request,
+  body: any,
+  event: { creator_torn_id?: string | null },
+): Promise<string | Response> {
+  const adminUser = await requireAuth(req);
+  if (adminUser) return `admin:${adminUser.id}`;
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const callerTornId = String(resolved.torn_id || '');
+  if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+  if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+    return json({ error: 'Only the event creator (or the operator) can view scrape logs' }, 403);
+  }
+  return `creator:${callerTornId}`;
+}
+
+// Read the most recent persisted scrape diagnostic for a single participant.
+// Authorized to HJ admin OR the event's creator (per authorizeScrapeLogAccess).
+// Surfaces last_diag_json + the participant's count metadata so the modal
+// can render one cohesive view without two round-trips.
+async function handleGetParticipantScrapeLog(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  const torn_id = typeof body.torn_id === 'string' ? body.torn_id : '';
+  if (!event_id || !torn_id) return json({ error: 'Missing event_id or torn_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const authResult = await authorizeScrapeLogAccess(req, body, event);
+  if (authResult instanceof Response) return authResult;
+
+  const { data: participant, error: pErr } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, last_diag_json')
+    .eq('event_id', event_id)
+    .eq('torn_id', torn_id)
+    .maybeSingle();
+  if (pErr) return json({ error: pErr.message }, 500);
+  if (!participant) return json({ error: 'Participant not found' }, 404);
+
+  return json({ participant, event, authorized_by: authResult });
+}
+
+// Run a fresh scrape against ANY participant's stored API key and persist
+// the result + diag. Authorized to HJ admin OR the event's creator. Differs
+// from refresh-faction-event in that the *caller's* identity does NOT have
+// to match the participant being scraped — instead we look up the
+// participant's stored key from faction_event_player_secrets and use that.
+// If the participant has no stored key (signed out, never set one) or the
+// key has been revoked, we surface that as a clear error so the caller
+// understands why no fresh scrape is possible.
+async function handleAdminRescrapeParticipant(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  const torn_id = typeof body.torn_id === 'string' ? body.torn_id : '';
+  if (!event_id || !torn_id) return json({ error: 'Missing event_id or torn_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const authResult = await authorizeScrapeLogAccess(req, body, event);
+  if (authResult instanceof Response) return authResult;
+
+  const { data: participant, error: pErr } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at')
+    .eq('event_id', event_id)
+    .eq('torn_id', torn_id)
+    .maybeSingle();
+  if (pErr) return json({ error: pErr.message }, 500);
+  if (!participant) return json({ error: 'Participant not found' }, 404);
+
+  const tornIdNum = Number(torn_id);
+  if (!Number.isFinite(tornIdNum)) return json({ error: 'Invalid torn_id' }, 400);
+
+  const { data: secret } = await supabase
+    .from('faction_event_player_secrets')
+    .select('api_key_enc, api_key_iv')
+    .eq('torn_player_id', tornIdNum)
+    .maybeSingle();
+  if (!secret) {
+    return json({ error: 'No stored API key for this participant — they need to sign in to Faction Events to enable re-scrape.' }, 409);
+  }
+
+  const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+  if (!apiKey) {
+    return json({ error: 'Stored key for this participant could not be decrypted (master key changed?). Ask them to sign in again.' }, 500);
+  }
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const startMs = new Date(participant.personal_start_at).getTime();
+  const fromSec = Math.floor(startMs / 1000);
+  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
+
+  let count = 0;
+  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
+  if (untilSec > fromSec) {
+    result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+    count = result.count;
+  }
+  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
+
+  const { data: updated, error: updErr } = await supabase
+    .from('faction_event_participants')
+    .update({
+      last_count: count,
+      last_checked_at: new Date().toISOString(),
+      last_diag_json: diag,
+    })
+    .eq('id', participant.id)
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, last_diag_json')
+    .single();
+  if (updErr) return json({ error: updErr.message }, 500);
+
+  console.log(`[admin-rescrape-participant] event=${event_id} torn_id=${torn_id} count=${count} authorizedBy=${authResult}`);
+  return json({ participant: updated, count, event, diag, authorized_by: authResult });
 }
 
 // Re-run the count for the calling user against the same event. Identical
@@ -3267,45 +3472,14 @@ async function handleRefreshFactionEventParticipant(body: any) {
   const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
 
   let count = 0;
-  // Diagnostic info surfaced to the client. Non-empty even if the count call
-  // doesn't run (so the FE can show "skipped: window has zero length").
-  const diag: {
-    from_sec: number;
-    until_sec: number;
-    window_seconds: number;
-    pages?: number;
-    total_entries?: number;
-    in_window_total?: number;
-    reached_cutoff?: boolean;
-    debug?: string[];
-    rejected_samples?: string[];
-    interesting_rejections?: string[];
-    log_type_histogram?: Array<{ key: string; count: number }>;
-    data_item_histogram?: Array<{ key: string; count: number }>;
-    matched?: string[];
-    skipped_reason?: string;
-  } = {
-    from_sec: fromSec,
-    until_sec: untilSec,
-    window_seconds: untilSec - fromSec,
-  };
-
+  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
   if (untilSec > fromSec) {
-    const result = await countItemUseInLog(api_key, Number(event.drug_item_id), String(event.drug_name), fromSec, untilSec);
+    result = await countItemUseInLog(api_key, drugItemId, drugName, fromSec, untilSec);
     count = result.count;
-    diag.pages = result.pages;
-    diag.total_entries = result.totalEntries;
-    diag.in_window_total = result.inWindowTotal;
-    diag.reached_cutoff = result.reachedCutoff;
-    diag.debug = result.debug;
-    diag.rejected_samples = result.rejectedSamples;
-    diag.interesting_rejections = result.interestingRejections;
-    diag.log_type_histogram = result.logTypeHistogram;
-    diag.data_item_histogram = result.dataItemHistogram;
-    diag.matched = result.details;
-  } else {
-    diag.skipped_reason = `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, count function not called`;
   }
+  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
   const checkedAt = new Date().toISOString();
   const { data: updated, error: updErr } = await supabase
@@ -3313,6 +3487,7 @@ async function handleRefreshFactionEventParticipant(body: any) {
     .update({
       last_count: count,
       last_checked_at: checkedAt,
+      last_diag_json: diag,
       torn_name: String(identData.name || existing.torn_name),
       torn_faction: identData.faction?.faction_name ?? existing.torn_faction,
     })
@@ -3453,14 +3628,16 @@ async function handleRefreshStaleParticipants(body: any) {
     const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
 
     let count = 0;
+    let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
     if (untilSec > fromSec) {
-      const result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+      result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
       count = result.count;
     }
+    const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
     await supabase
       .from('faction_event_participants')
-      .update({ last_count: count, last_checked_at: new Date().toISOString() })
+      .update({ last_count: count, last_checked_at: new Date().toISOString(), last_diag_json: diag })
       .eq('id', row.id);
     refreshed++;
   }
@@ -3602,6 +3779,10 @@ serve(async (req) => {
         return await handleRefreshFactionEventParticipant(body);
       case 'refresh-stale-participants':
         return await handleRefreshStaleParticipants(body);
+      case 'get-participant-scrape-log':
+        return await handleGetParticipantScrapeLog(req, body);
+      case 'admin-rescrape-participant':
+        return await handleAdminRescrapeParticipant(req, body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
       default:
