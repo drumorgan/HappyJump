@@ -273,3 +273,32 @@
   min-width: 0;
   white-space: nowrap;
 }
+
+/* ── Diagnostics panel on me-card ── */
+.me-debug {
+  margin-top: 12px;
+  border: 1px solid #2a3045;
+  border-radius: 6px;
+  background: #0e1322;
+}
+.me-debug summary {
+  cursor: pointer;
+  padding: 8px 12px;
+  color: #aab;
+  font-size: 13px;
+  user-select: none;
+}
+.me-debug-body {
+  margin: 0;
+  padding: 12px;
+  border-top: 1px solid #2a3045;
+  background: #0a0e1a;
+  color: #cde;
+  font-family: ui-monospace, "SF Mono", Menlo, monospace;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 400px;
+  overflow-y: auto;
+}

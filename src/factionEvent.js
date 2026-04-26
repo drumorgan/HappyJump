@@ -567,6 +567,47 @@ function renderLeaderboard(event, participants) {
   document.getElementById('lb-refreshed').textContent = `updated ${new Date().toLocaleTimeString()}`;
 }
 
+// Render the count diagnostic panel on the me-card. `diag` is the object
+// returned by refresh-faction-event when the count function ran (or
+// short-circuited). Hides the panel if no diag is supplied.
+function renderMeDebug(diag) {
+  const panel = document.getElementById('me-debug');
+  const body = document.getElementById('me-debug-body');
+  if (!panel || !body) return;
+  if (!diag) {
+    panel.classList.add('hidden');
+    body.textContent = '';
+    return;
+  }
+  const lines = [];
+  lines.push(`window: from=${diag.from_sec} until=${diag.until_sec} (${diag.window_seconds}s)`);
+  if (diag.skipped_reason) {
+    lines.push('');
+    lines.push('SKIPPED: ' + diag.skipped_reason);
+  } else {
+    lines.push(
+      `pages=${diag.pages ?? '?'} totalEntries=${diag.total_entries ?? '?'} reachedCutoff=${diag.reached_cutoff ?? '?'}`,
+    );
+    if (Array.isArray(diag.matched) && diag.matched.length > 0) {
+      lines.push('');
+      lines.push(`MATCHED (${diag.matched.length}):`);
+      for (const m of diag.matched) lines.push('  ' + m);
+    }
+    if (Array.isArray(diag.rejected_samples) && diag.rejected_samples.length > 0) {
+      lines.push('');
+      lines.push(`REJECTED in window (sample of up to 5):`);
+      for (const r of diag.rejected_samples) lines.push('  ' + r);
+    }
+    if (Array.isArray(diag.debug)) {
+      lines.push('');
+      lines.push('PER-PAGE LOG:');
+      for (const d of diag.debug) lines.push('  ' + d);
+    }
+  }
+  body.textContent = lines.join('\n');
+  panel.classList.remove('hidden');
+}
+
 function renderJoinOrMe(event, participants) {
   // Determine whether THIS user (FE-signed-in) is on the leaderboard.
   const myTornId = feSession?.torn_id || loadJoinedTornId(event.id) || null;
@@ -874,7 +915,8 @@ function wireEventControls(eventId) {
     }
     setLoading(true);
     try {
-      await refreshFactionEvent({ eventId, auth: feAuth() });
+      const res = await refreshFactionEvent({ eventId, auth: feAuth() });
+      renderMeDebug(res?.diag);
       await refreshEventView(eventId);
       toast('Refreshed', 'success');
     } catch (err) {
@@ -892,6 +934,7 @@ function wireEventControls(eventId) {
       feSession = null;
       clearFeSession();
       renderIdentityBar();
+      renderMeDebug(null);
       toast('Signed out — your key has been deleted from our server.', 'success');
     } else {
       toast('Already signed out.', 'success');
