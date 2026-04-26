@@ -569,14 +569,21 @@ function renderLeaderboard(event, participants) {
 
 // Render the count diagnostic panel on the me-card. `diag` is the object
 // returned by refresh-faction-event when the count function ran (or
-// short-circuited). Hides the panel if no diag is supplied.
-function renderMeDebug(diag) {
+// short-circuited). If the call ran but the response had no `diag` field
+// (i.e. gateway not redeployed yet), surface that fact so we can tell it
+// apart from "the click handler never fired".
+function renderMeDebug(diag, opts) {
   const panel = document.getElementById('me-debug');
   const body = document.getElementById('me-debug-body');
   if (!panel || !body) return;
-  if (!diag) {
+  if (opts && opts.clear) {
     panel.classList.add('hidden');
     body.textContent = '';
+    return;
+  }
+  if (!diag) {
+    body.textContent = 'No diagnostics returned by the gateway. Redeploy supabase/functions/gateway/index.ts (latest on main) — the running version pre-dates the `diag` response field.';
+    panel.classList.remove('hidden');
     return;
   }
   const lines = [];
@@ -934,7 +941,7 @@ function wireEventControls(eventId) {
       feSession = null;
       clearFeSession();
       renderIdentityBar();
-      renderMeDebug(null);
+      renderMeDebug(null, { clear: true });
       toast('Signed out — your key has been deleted from our server.', 'success');
     } else {
       toast('Already signed out.', 'success');
