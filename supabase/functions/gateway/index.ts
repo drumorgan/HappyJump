@@ -420,10 +420,17 @@ function entryMatchesDrugUseWithReason(
     itemField === String(itemId) ||
     (typeof itemField === 'string' && itemField.toLowerCase() === drugLower);
 
+  // Narrative signal: drug name plus a "use" verb or stat phrase. Torn's
+  // user-log titles use the present tense ("Item use cannabis"), not the
+  // past tense ("You used some cannabis") — so we match BOTH forms.
+  // The "gaining"/"energy"/"happiness" branches catch the long-form
+  // narratives the operator originally verified for Xanax.
   const narrativeMatch =
     hay.includes(drugLower) &&
     (hay.includes('used some ' + drugLower) ||
       hay.includes('used ' + drugLower) ||
+      hay.includes('use ' + drugLower) ||         // "item use cannabis"
+      hay.includes('item use ' + drugLower) ||    // explicit Torn title
       hay.includes('gaining') ||
       hay.includes('energy') ||
       hay.includes('happiness'));
