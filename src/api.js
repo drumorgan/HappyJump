@@ -415,3 +415,30 @@ export async function fetchTornEventStart(auth) {
   return gateway('fetch-torn-event-start', { ...authPayload(auth) });
 }
 
+/**
+ * Read the most recent persisted scrape diagnostic for a single participant.
+ * Authorized to HJ admin (via Supabase Auth — `auth` may be omitted) OR the
+ * event's creator (FE session). Returns { participant, event, authorized_by }.
+ */
+export async function getParticipantScrapeLog({ eventId, tornId, auth }) {
+  return gateway('get-participant-scrape-log', {
+    event_id: eventId,
+    torn_id: String(tornId),
+    ...authPayload(auth),
+  });
+}
+
+/**
+ * Force a fresh scrape against another participant's stored API key and
+ * persist the result. Same authorization model as get-participant-scrape-log.
+ * Returns { participant, count, event, diag, authorized_by }. Errors with a
+ * 409 if the participant has no stored key (signed out / never set one).
+ */
+export async function adminRescrapeParticipant({ eventId, tornId, auth }) {
+  return gateway('admin-rescrape-participant', {
+    event_id: eventId,
+    torn_id: String(tornId),
+    ...authPayload(auth),
+  });
+}
+
