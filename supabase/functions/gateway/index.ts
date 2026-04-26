@@ -624,6 +624,10 @@ async function countItemUseInLog(
   reachedCutoff: boolean;
   debug: string[];
   rejectedSamples: string[];
+  inWindowTotal: number;
+  logTypeHistogram: Array<{ key: string; count: number }>;
+  dataItemHistogram: Array<{ key: string; count: number }>;
+  interestingRejections: string[];
 }> {
   let toParam = '';
   const uses: { timestamp: number; detail: string; key: string }[] = [];
@@ -635,6 +639,7 @@ async function countItemUseInLog(
   let totalEntries = 0;
   let lastOldestTs = Infinity;
   let reachedCutoff = false;
+  let inWindowTotal = 0;
 
   // Diagnostic log mirrored to console AND collected so it can be surfaced
   // in the HTTP response (debug=true on refresh-faction-event). Lets the
@@ -642,6 +647,19 @@ async function countItemUseInLog(
   // Supabase's log explorer.
   const debug: string[] = [];
   const rejectedSamples: string[] = [];
+  // Categorize the whole in-window population so we can answer "does the
+  // user actually have any drug-use-shaped entries in this window?" without
+  // dumping every entry. logTypeKey = `<entry.log>/<entry.title>` since both
+  // disambiguate Torn's log categories. dataItemKey = entry.data.item value
+  // (any item, not just the target — surfaces "you have lots of item-use
+  // entries but none for this drug").
+  const logTypeCounts = new Map<string, number>();
+  const dataItemCounts = new Map<string, number>();
+  // "Interesting" rejections = ones where the matcher said no but the entry
+  // either has data.item set OR mentions the drug name anywhere. These are
+  // the rejections worth investigating; the dumb crime-success rejections
+  // captured in rejectedSamples are not.
+  const interestingRejections: string[] = [];
   function dbg(line: string) { debug.push(line); console.log(line); }
 
   dbg(`[countItemUseInLog ${drugName}] START itemId=${itemId} cutoff=${cutoff} upper=${upper}`);
@@ -677,13 +695,37 @@ async function countItemUseInLog(
       if (ts < cutoff) continue;
       if (ts > upper) continue;
       pageInWindow++;
+      inWindowTotal++;
+
+      // Histograms over the whole in-window population.
+      const logKey = `${entry.log ?? '?'}/${entry.title ?? '?'}`;
+      logTypeCounts.set(logKey, (logTypeCounts.get(logKey) || 0) + 1);
+      const itemFieldVal = entry.data?.item;
+      if (itemFieldVal !== undefined && itemFieldVal !== null) {
+        const itemKey = String(itemFieldVal);
+        dataItemCounts.set(itemKey, (dataItemCounts.get(itemKey) || 0) + 1);
+      }
+
       const verdict = entryMatchesDrugUseWithReason(entry, drugName, itemId);
       if (!verdict.match) {
         // Capture up to 5 in-window-but-rejected entries with the reason —
-        // the most useful signal for "is the matcher dropping real uses?".
+        // bias toward the *first* rejections so the sample shows the most
+        // common shape (typically post-event noise).
         if (rejectedSamples.length < 5) {
           rejectedSamples.push(
             `${verdict.reason} :: title=${JSON.stringify(entry.title).slice(0, 60)} log=${JSON.stringify(entry.log).slice(0, 80)} data=${JSON.stringify(entry.data || {}).slice(0, 120)}`,
+          );
+        }
+        // ALSO capture rejections that look plausibly drug-related — those
+        // are the ones that would indicate a matcher false-negative. An
+        // entry is "interesting" if it has data.item set OR if the drug
+        // name appears anywhere in its serialized form.
+        const hasDataItem = itemFieldVal !== undefined && itemFieldVal !== null;
+        const serialized = JSON.stringify(entry).toLowerCase();
+        const mentionsDrug = serialized.includes(drugName.toLowerCase());
+        if ((hasDataItem || mentionsDrug) && interestingRejections.length < 15) {
+          interestingRejections.push(
+            `${verdict.reason} :: title=${JSON.stringify(entry.title).slice(0, 80)} log=${entry.log} data=${JSON.stringify(entry.data || {}).slice(0, 200)}`,
           );
         }
         continue;
@@ -719,7 +761,22 @@ async function countItemUseInLog(
   }
 
   uses.sort((a, b) => a.timestamp - b.timestamp);
-  dbg(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} reachedCutoff=${reachedCutoff} rejectedInWindow=${rejectedSamples.length}`);
+
+  // Build the histograms (top 20 by count). logTypeHistogram tells us
+  // "what kinds of entries are actually in this window" — a drug-use
+  // type will surface here if any exist. dataItemHistogram surfaces the
+  // distribution of structured item references (any item, not just the
+  // target) — proves whether ANY item-use entries are in the window.
+  const sortedLogTypes = [...logTypeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([key, count]) => ({ key, count }));
+  const sortedDataItems = [...dataItemCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([key, count]) => ({ key, count }));
+
+  dbg(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} inWindowTotal=${inWindowTotal} reachedCutoff=${reachedCutoff} distinctLogTypes=${logTypeCounts.size} distinctDataItems=${dataItemCounts.size}`);
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
@@ -728,6 +785,10 @@ async function countItemUseInLog(
     reachedCutoff,
     debug,
     rejectedSamples,
+    inWindowTotal,
+    logTypeHistogram: sortedLogTypes,
+    dataItemHistogram: sortedDataItems,
+    interestingRejections,
   };
 }
 
@@ -3141,9 +3202,13 @@ async function handleRefreshFactionEventParticipant(body: any) {
     window_seconds: number;
     pages?: number;
     total_entries?: number;
+    in_window_total?: number;
     reached_cutoff?: boolean;
     debug?: string[];
     rejected_samples?: string[];
+    interesting_rejections?: string[];
+    log_type_histogram?: Array<{ key: string; count: number }>;
+    data_item_histogram?: Array<{ key: string; count: number }>;
     matched?: string[];
     skipped_reason?: string;
   } = {
@@ -3157,9 +3222,13 @@ async function handleRefreshFactionEventParticipant(body: any) {
     count = result.count;
     diag.pages = result.pages;
     diag.total_entries = result.totalEntries;
+    diag.in_window_total = result.inWindowTotal;
     diag.reached_cutoff = result.reachedCutoff;
     diag.debug = result.debug;
     diag.rejected_samples = result.rejectedSamples;
+    diag.interesting_rejections = result.interestingRejections;
+    diag.log_type_histogram = result.logTypeHistogram;
+    diag.data_item_histogram = result.dataItemHistogram;
     diag.matched = result.details;
   } else {
     diag.skipped_reason = `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, count function not called`;
