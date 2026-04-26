@@ -260,3 +260,16 @@
   opacity: 0.5;
   cursor: not-allowed;
 }
+
+/* ── Me-card action row — three buttons on one line, wrap on narrow ── */
+.me-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.me-actions > button {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: nowrap;
+}

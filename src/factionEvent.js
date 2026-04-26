@@ -123,35 +123,33 @@ function fmtDateTime(iso) {
   return new Date(iso).toLocaleString();
 }
 
-function fmtSlotLabel(d, includeDate) {
-  // Time-only label in TCT for short windows, e.g. "10:15 TCT".
-  // For multi-day events, prefix with the day so 10:15 on day 1 vs day 2
-  // are visibly distinct, e.g. "Sat 10:15 TCT".
-  const hhmm = `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
-  if (!includeDate) return hhmm;
-  const day = d.toLocaleDateString(undefined, { weekday: 'short', month: 'numeric', day: 'numeric', timeZone: 'UTC' });
-  return `${day} ${hhmm}`;
+function fmtSlotLabel(d) {
+  // Time-only label in TCT, e.g. "10:15 TCT". All slots are on the event's
+  // start date — no need to disambiguate by day.
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
 }
 
 // ── Slot picker ──────────────────────────────────────────────────────
-// 15-minute TCT slots spanning the event's full window. Slot count grows
-// with the event duration (24 per 6h, 96 per day, etc.). For windows that
-// span more than one calendar day, slot labels include the day so the user
-// can pick "Sat 10:15 TCT" vs "Sun 10:15 TCT".
-function generateSlots(startIso /* event starts_at */, endIso /* event ends_at */) {
-  if (!startIso || !endIso) return [];
-  const baseStart = new Date(startIso).getTime();
-  const baseEnd = new Date(endIso).getTime();
-  if (!Number.isFinite(baseStart) || !Number.isFinite(baseEnd) || baseEnd <= baseStart) return [];
+// Personal start time is always a TIME OF DAY between 10:00 and 16:00 TCT
+// (25 fixed 15-minute slots) anchored to the event's start date — even
+// when the event runs for 72h or more. The count window is then
+// [personal_start, event.ends_at]: pick 12:00 TCT on a 3-day event
+// starting Saturday and you count from Sat 12:00 through Tue 10:00.
+const PERSONAL_START_FIRST_HOUR_TCT = 10;
+const PERSONAL_START_LAST_HOUR_TCT = 16;
 
-  const startDateStr = new Date(baseStart).toISOString().slice(0, 10);
-  const endDateStr = new Date(baseEnd).toISOString().slice(0, 10);
-  const includeDate = startDateStr !== endDateStr;
+function generateSlots(startIso /* event starts_at */, _endIso) {
+  if (!startIso) return [];
+  const dateStr = isoToDateInput(startIso);
+  if (!dateStr) return [];
+  const firstSlot = new Date(`${dateStr}T${pad2(PERSONAL_START_FIRST_HOUR_TCT)}:00:00.000Z`).getTime();
+  const lastSlot = new Date(`${dateStr}T${pad2(PERSONAL_START_LAST_HOUR_TCT)}:00:00.000Z`).getTime();
+  if (!Number.isFinite(firstSlot) || !Number.isFinite(lastSlot) || lastSlot <= firstSlot) return [];
 
   const slots = [];
-  for (let cursor = baseStart; cursor <= baseEnd; cursor += SLOT_MS) {
+  for (let cursor = firstSlot; cursor <= lastSlot; cursor += SLOT_MS) {
     const d = new Date(cursor);
-    slots.push({ value: d.toISOString(), label: fmtSlotLabel(d, includeDate) });
+    slots.push({ value: d.toISOString(), label: fmtSlotLabel(d) });
   }
   return slots;
 }
