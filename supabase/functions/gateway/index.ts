@@ -391,7 +391,14 @@ const XANAX_ITEM_ID = 206;
 // The drug name lives in the narrative, NOT in entry.title (which is a
 // category label like "Item use"). Detection matches on narrative text.
 
-function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): boolean {
+// Returns { match: boolean, reason?: string } — the reason explains WHY a
+// non-match was rejected so callers (e.g. the FE diagnostic UI) can surface
+// false-negative shapes without dumping every entry.
+function entryMatchesDrugUseWithReason(
+  entry: any,
+  drugName: string,
+  itemId: number,
+): { match: boolean; reason?: string } {
   const drugLower = drugName.toLowerCase();
 
   // Build a haystack from every stringy field Torn might put the narrative in
@@ -403,25 +410,16 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
   if (entry.params) parts.push(JSON.stringify(entry.params));
   const hay = parts.join(' ').toLowerCase();
 
-  // Exclude overdoses — those aren't successful uses
-  if (hay.includes('overdos')) return false;
-  // Exclude buys / trades / sends / receives — only successful uses count.
-  // (Intentionally NOT excluding "used" — that's the verb we want.)
-  // "buy" covers Torn titles like "Item buy abroad" / "Item market buy"; "abroad"
-  // catches country-run bulk purchases whose title may not include "buy".
-  if (/\b(buy|bought|buying|purchase|purchased|sold|sell|sent|received|dumped|bazaar|market|trade|traded|gift|abroad)\b/.test(hay)) return false;
+  if (hay.includes('overdos')) return { match: false, reason: 'overdose' };
+  const exclusionMatch = /\b(buy|bought|buying|purchase|purchased|sold|sell|sent|received|dumped|bazaar|market|trade|traded|gift|abroad)\b/.exec(hay);
+  if (exclusionMatch) return { match: false, reason: `excluded keyword: "${exclusionMatch[1]}"` };
 
-  // Primary signal: structured data points at the drug.
-  // IMPORTANT: only data.item (singular) indicates a USE. data.items (plural, an
-  // object like {"197": 19}) is how Torn logs bulk transactions (buys from abroad,
-  // bazaar sales, trades) — those are NOT uses and must not match here.
   const itemField = entry.data?.item;
   const structuredMatch =
     itemField === itemId ||
     itemField === String(itemId) ||
     (typeof itemField === 'string' && itemField.toLowerCase() === drugLower);
 
-  // Narrative signal: drug name plus a "use" verb or a known stat gain phrase
   const narrativeMatch =
     hay.includes(drugLower) &&
     (hay.includes('used some ' + drugLower) ||
@@ -430,7 +428,15 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
       hay.includes('energy') ||
       hay.includes('happiness'));
 
-  return structuredMatch || narrativeMatch;
+  if (structuredMatch || narrativeMatch) return { match: true };
+  return {
+    match: false,
+    reason: `no match (data.item=${JSON.stringify(itemField)}, hay-has-drug=${hay.includes(drugLower)})`,
+  };
+}
+
+function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): boolean {
+  return entryMatchesDrugUseWithReason(entry, drugName, itemId).match;
 }
 
 async function findEcstasyUsageInLog(
@@ -610,7 +616,15 @@ async function countItemUseInLog(
   sinceTimestamp?: number,
   untilTimestamp?: number,
   maxPages = 200,
-): Promise<{ count: number; details: string[]; pages: number; totalEntries: number; reachedCutoff: boolean }> {
+): Promise<{
+  count: number;
+  details: string[];
+  pages: number;
+  totalEntries: number;
+  reachedCutoff: boolean;
+  debug: string[];
+  rejectedSamples: string[];
+}> {
   let toParam = '';
   const uses: { timestamp: number; detail: string; key: string }[] = [];
   const cutoff = sinceTimestamp || 0;
@@ -622,18 +636,28 @@ async function countItemUseInLog(
   let lastOldestTs = Infinity;
   let reachedCutoff = false;
 
+  // Diagnostic log mirrored to console AND collected so it can be surfaced
+  // in the HTTP response (debug=true on refresh-faction-event). Lets the
+  // operator inspect a refresh from the iPad without digging through
+  // Supabase's log explorer.
+  const debug: string[] = [];
+  const rejectedSamples: string[] = [];
+  function dbg(line: string) { debug.push(line); console.log(line); }
+
+  dbg(`[countItemUseInLog ${drugName}] START itemId=${itemId} cutoff=${cutoff} upper=${upper}`);
+
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
     const res = await fetch(url);
     const data = await res.json();
     if (data.error || !data.log) {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      dbg(`[countItemUseInLog ${drugName}] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
       break;
     }
 
     const entriesKv = Object.entries(data.log) as [string, any][];
     if (entriesKv.length === 0) {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} empty page, stopping`);
+      dbg(`[countItemUseInLog ${drugName}] page=${page} empty page, stopping`);
       break;
     }
     pagesFetched++;
@@ -641,9 +665,9 @@ async function countItemUseInLog(
 
     if (page === 0) {
       const sample = entriesKv[0][1];
-      console.log(`[countItemUseInLog ${drugName}] page=0 entries=${entriesKv.length} cutoff=${cutoff} upper=${upper} sampleEntry=${JSON.stringify(sample).slice(0, 400)}`);
+      dbg(`[countItemUseInLog ${drugName}] page=0 entries=${entriesKv.length} sampleEntry=${JSON.stringify(sample).slice(0, 600)}`);
     } else {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} entries=${entriesKv.length}`);
+      dbg(`[countItemUseInLog ${drugName}] page=${page} entries=${entriesKv.length}`);
     }
 
     let pageMatches = 0;
@@ -653,7 +677,17 @@ async function countItemUseInLog(
       if (ts < cutoff) continue;
       if (ts > upper) continue;
       pageInWindow++;
-      if (!entryMatchesDrugUse(entry, drugName, itemId)) continue;
+      const verdict = entryMatchesDrugUseWithReason(entry, drugName, itemId);
+      if (!verdict.match) {
+        // Capture up to 5 in-window-but-rejected entries with the reason —
+        // the most useful signal for "is the matcher dropping real uses?".
+        if (rejectedSamples.length < 5) {
+          rejectedSamples.push(
+            `${verdict.reason} :: title=${JSON.stringify(entry.title).slice(0, 60)} log=${JSON.stringify(entry.log).slice(0, 80)} data=${JSON.stringify(entry.data || {}).slice(0, 120)}`,
+          );
+        }
+        continue;
+      }
       if (seenKeys.has(key)) continue;
       seenKeys.add(key);
       const narrative = String(entry.log || entry.title || '').slice(0, 200);
@@ -664,16 +698,16 @@ async function countItemUseInLog(
       });
       pageMatches++;
     }
-    console.log(`[countItemUseInLog ${drugName}] page=${page} inWindow=${pageInWindow} matches=${pageMatches} runningTotal=${uses.length}`);
+    dbg(`[countItemUseInLog ${drugName}] page=${page} inWindow=${pageInWindow} matches=${pageMatches} runningTotal=${uses.length}`);
 
     const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
     if (oldestTs <= cutoff) {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      dbg(`[countItemUseInLog ${drugName}] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
       reachedCutoff = true;
       break;
     }
     if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
-      console.log(`[countItemUseInLog ${drugName}] page=${page} no forward progress, stopping`);
+      dbg(`[countItemUseInLog ${drugName}] page=${page} no forward progress, stopping`);
       break;
     }
     lastOldestTs = oldestTs;
@@ -681,17 +715,19 @@ async function countItemUseInLog(
   }
 
   if (!reachedCutoff && pagesFetched === maxPages) {
-    console.log(`[countItemUseInLog ${drugName}] WARNING hit maxPages=${maxPages} without reaching cutoff=${cutoff} (lastOldestTs=${lastOldestTs}) — count may be incomplete`);
+    dbg(`[countItemUseInLog ${drugName}] WARNING hit maxPages=${maxPages} without reaching cutoff=${cutoff} — count may be incomplete`);
   }
 
   uses.sort((a, b) => a.timestamp - b.timestamp);
-  console.log(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} cutoff=${cutoff} upper=${upper} reachedCutoff=${reachedCutoff}`);
+  dbg(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} reachedCutoff=${reachedCutoff} rejectedInWindow=${rejectedSamples.length}`);
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
     pages: pagesFetched,
     totalEntries,
     reachedCutoff,
+    debug,
+    rejectedSamples,
   };
 }
 
@@ -3097,9 +3133,36 @@ async function handleRefreshFactionEventParticipant(body: any) {
   const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
 
   let count = 0;
+  // Diagnostic info surfaced to the client. Non-empty even if the count call
+  // doesn't run (so the FE can show "skipped: window has zero length").
+  const diag: {
+    from_sec: number;
+    until_sec: number;
+    window_seconds: number;
+    pages?: number;
+    total_entries?: number;
+    reached_cutoff?: boolean;
+    debug?: string[];
+    rejected_samples?: string[];
+    matched?: string[];
+    skipped_reason?: string;
+  } = {
+    from_sec: fromSec,
+    until_sec: untilSec,
+    window_seconds: untilSec - fromSec,
+  };
+
   if (untilSec > fromSec) {
     const result = await countItemUseInLog(api_key, Number(event.drug_item_id), String(event.drug_name), fromSec, untilSec);
     count = result.count;
+    diag.pages = result.pages;
+    diag.total_entries = result.totalEntries;
+    diag.reached_cutoff = result.reachedCutoff;
+    diag.debug = result.debug;
+    diag.rejected_samples = result.rejectedSamples;
+    diag.matched = result.details;
+  } else {
+    diag.skipped_reason = `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, count function not called`;
   }
 
   const checkedAt = new Date().toISOString();
@@ -3116,7 +3179,7 @@ async function handleRefreshFactionEventParticipant(body: any) {
     .single();
 
   if (updErr) return json({ error: updErr.message }, 500);
-  return json({ participant: updated, count, event });
+  return json({ participant: updated, count, event, diag });
 }
 
 // Public sweep called in the background by every viewer of an event page so
