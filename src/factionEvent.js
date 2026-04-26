@@ -563,15 +563,20 @@ function renderLeaderboard(event, participants) {
   document.getElementById('lb-refreshed').textContent = `updated ${new Date().toLocaleTimeString()}`;
 }
 
-// Render the count diagnostic panel on the me-card. `diag` is the object
-// returned by refresh-faction-event when the count function ran (or
-// short-circuited). If the call ran but the response had no `diag` field
-// (i.e. gateway not redeployed yet), surface that fact so we can tell it
-// apart from "the click handler never fired".
+// Render the count diagnostic panel on the me-card. Only visible to the
+// HJ admin (operator) — regular players don't need to see Torn API
+// pagination internals. `diag` is the object returned by
+// refresh-faction-event when the count function ran (or short-circuited).
 function renderMeDebug(diag, opts) {
   const panel = document.getElementById('me-debug');
   const body = document.getElementById('me-debug-body');
   if (!panel || !body) return;
+  // Always keep the panel hidden for non-admin users.
+  if (!isHjAdmin) {
+    panel.classList.add('hidden');
+    body.textContent = '';
+    return;
+  }
   if (opts && opts.clear) {
     panel.classList.add('hidden');
     body.textContent = '';
