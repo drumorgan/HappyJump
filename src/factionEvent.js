@@ -18,6 +18,7 @@ import {
   fetchTornEventStart,
   getParticipantScrapeLog,
   adminRescrapeParticipant,
+  forceRefreshAllParticipants,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
@@ -574,6 +575,11 @@ function renderLeaderboard(event, participants) {
   `;
   document.getElementById('lb-refreshed').textContent = `updated ${new Date().toLocaleTimeString()}`;
 
+  // Refresh-all button shares the same admin/creator gating as the per-row
+  // scrape-log buttons (gateway requires admin OR creator on the bulk action).
+  const refreshAllBtn = document.getElementById('lb-refresh-all');
+  if (refreshAllBtn) refreshAllBtn.classList.toggle('hidden', !showScrapeLog);
+
   if (showScrapeLog) {
     body.querySelectorAll('.lb-scrape-btn').forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -583,6 +589,49 @@ function renderLeaderboard(event, participants) {
       });
     });
   }
+}
+
+// Wire the Refresh-all button once on boot. Visibility is toggled in
+// renderLeaderboard based on canViewScrapeLog(event); we just need a single
+// click handler that closes over the always-fresh `currentEvent` reference.
+function wireRefreshAllButton() {
+  const btn = document.getElementById('lb-refresh-all');
+  if (!btn || btn.dataset.wired) return;
+  btn.dataset.wired = '1';
+  btn.addEventListener('click', async () => {
+    if (!currentEvent) return;
+    const eventId = currentEvent.id;
+    const orig = btn.textContent;
+    btn.disabled = true;
+    btn.textContent = 'Refreshing all…';
+    try {
+      const res = await forceRefreshAllParticipants({ eventId, auth: feAuth() });
+      // Pull fresh event + participants so the leaderboard reflects the new
+      // counts — force-refresh wrote them server-side but we hold a stale copy.
+      try {
+        const fresh = await getFactionEvent(eventId);
+        currentEvent = fresh.event;
+        lastParticipants = fresh.participants || [];
+        renderLeaderboard(currentEvent, lastParticipants);
+        renderJoinOrMe(currentEvent, lastParticipants);
+      } catch { /* leaderboard refresh is best-effort */ }
+      // Build a result toast that surfaces transient skips (e.g. paused
+      // keys) by name so the operator knows whose count was NOT updated.
+      const parts = [`Refreshed ${res.refreshed}/${res.total}`];
+      if (res.transient) parts.push(`${res.transient} skipped (paused/throttled)`);
+      if (res.deleted) parts.push(`${res.deleted} removed (revoked)`);
+      if (res.skipped) parts.push(`${res.skipped} no key`);
+      toast(parts.join(' · '), 'success');
+      if (Array.isArray(res.transient_names) && res.transient_names.length) {
+        console.log('[refresh-all] transient skips:', res.transient_names.join(', '));
+      }
+    } catch (err) {
+      toast(err.message || 'Refresh-all failed');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = orig;
+    }
+  });
 }
 
 // Format a diag object into the plain-text block that gets rendered in the
@@ -1337,6 +1386,7 @@ async function boot() {
 
   renderIdentityBar();
   wireIdentityBar();
+  wireRefreshAllButton();
 
   const id = getEventIdFromUrl();
   if (id) {
