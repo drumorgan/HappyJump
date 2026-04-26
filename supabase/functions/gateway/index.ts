@@ -777,6 +777,21 @@ async function countItemUseInLog(
     .map(([key, count]) => ({ key, count }));
 
   dbg(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} inWindowTotal=${inWindowTotal} reachedCutoff=${reachedCutoff} distinctLogTypes=${logTypeCounts.size} distinctDataItems=${dataItemCounts.size}`);
+  // Inline histograms in the per-page log too — they're the most useful
+  // diagnostic and the new dedicated render section may not be live yet
+  // on the FE if the FTP deploy is still propagating.
+  if (sortedDataItems.length > 0) {
+    dbg(`[countItemUseInLog ${drugName}] data.item HISTOGRAM (top ${sortedDataItems.length}): ${sortedDataItems.map((e) => `${e.key}:${e.count}`).join(', ')}`);
+  } else {
+    dbg(`[countItemUseInLog ${drugName}] data.item HISTOGRAM: (empty — no item-use-shaped entries in window)`);
+  }
+  dbg(`[countItemUseInLog ${drugName}] log-type HISTOGRAM (top ${sortedLogTypes.length}): ${sortedLogTypes.map((e) => `${e.key}=${e.count}`).join(' | ')}`);
+  if (interestingRejections.length > 0) {
+    dbg(`[countItemUseInLog ${drugName}] INTERESTING REJECTIONS (${interestingRejections.length}):`);
+    for (const r of interestingRejections) dbg(`  -> ${r}`);
+  } else {
+    dbg(`[countItemUseInLog ${drugName}] INTERESTING REJECTIONS: (none — no rejections had data.item set OR mentioned "${drugName}")`);
+  }
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
