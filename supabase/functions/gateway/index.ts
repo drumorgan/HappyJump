@@ -612,8 +612,8 @@ async function countItemUseInLog(
   drugName: string,
   sinceTimestamp?: number,
   untilTimestamp?: number,
-  maxPages = 50,
-): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
+  maxPages = 200,
+): Promise<{ count: number; details: string[]; pages: number; totalEntries: number; reachedCutoff: boolean }> {
   // Anchor pagination at the upper bound. If no upper bound was passed we
   // start with no `to=` (Torn defaults to "now") which mirrors the legacy
   // behaviour for unbounded scans.
@@ -625,6 +625,7 @@ async function countItemUseInLog(
   let pagesFetched = 0;
   let totalEntries = 0;
   let lastOldestTs = Infinity;
+  let reachedCutoff = false;
 
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${toParam}&key=${apiKey}`;
@@ -670,6 +671,7 @@ async function countItemUseInLog(
     const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
     if (oldestTs <= cutoff) {
       console.log(`[countItemUseInLog ${drugName}] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      reachedCutoff = true;
       break;
     }
     if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
@@ -680,13 +682,18 @@ async function countItemUseInLog(
     toParam = `&to=${oldestTs - 1}`;
   }
 
+  if (!reachedCutoff && pagesFetched === maxPages) {
+    console.log(`[countItemUseInLog ${drugName}] WARNING hit maxPages=${maxPages} without reaching cutoff=${cutoff} (lastOldestTs=${lastOldestTs}) — count may be incomplete`);
+  }
+
   uses.sort((a, b) => a.timestamp - b.timestamp);
-  console.log(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} cutoff=${cutoff} upper=${upper}`);
+  console.log(`[countItemUseInLog ${drugName}] FINAL count=${uses.length} pagesFetched=${pagesFetched} totalEntries=${totalEntries} cutoff=${cutoff} upper=${upper} reachedCutoff=${reachedCutoff}`);
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
     pages: pagesFetched,
     totalEntries,
+    reachedCutoff,
   };
 }
 
