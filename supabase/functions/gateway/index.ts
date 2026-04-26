@@ -3396,6 +3396,27 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
     return json({ error: 'Stored key for this participant could not be decrypted (master key changed?). Ask them to sign in again.' }, 500);
   }
 
+  // Identity probe before the count call. Without this, a paused / revoked
+  // key returns an error on every page of countItemUseInLog and we'd
+  // happily write last_count=0 over a previously-good count. Mirror the
+  // probe pattern from handleRefreshStaleParticipants:
+  //   - permanent error (codes 2/16) → cascade-delete and 410 to caller
+  //   - transient error (paused / rate-limited / IP-banned / 5xx) →
+  //     return 503 to caller WITHOUT touching last_count or last_diag_json
+  //     so the prior good count survives
+  const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+  const probe = await probeRes.json().catch(() => ({}));
+  if (probe?.error) {
+    if (isPermanentTornKeyError(probe.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+      return json({ error: `Torn API: ${probe.error.error} — participant's stored key has been removed.` }, 410);
+    }
+    return json({
+      error: `Torn API (transient, count not overwritten): code ${probe.error.code} — ${probe.error.error}`,
+      torn_error_code: probe.error.code,
+    }, 503);
+  }
+
   const eventEndMs = new Date(event.ends_at).getTime();
   const startMs = new Date(participant.personal_start_at).getTime();
   const fromSec = Math.floor(startMs / 1000);
@@ -3426,6 +3447,137 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
 
   console.log(`[admin-rescrape-participant] event=${event_id} torn_id=${torn_id} count=${count} authorizedBy=${authResult}`);
   return json({ participant: updated, count, event, diag, authorized_by: authResult });
+}
+
+// Force-refresh every participant in an event in a single call. Unlike
+// handleRefreshStaleParticipants (which is a public, no-auth sweep that
+// only picks up to 15 stale rows), this handler:
+//   - Requires HJ-admin or event-creator auth (authorizeScrapeLogAccess)
+//   - Ignores last_checked_at — picks ALL rows for the event
+//   - Caps at MAX_BATCH so a 200-participant event can't hang the Edge Function
+//     (operator can call it again to finish the rest)
+// Per-row outcomes mirror the sweep:
+//   - No stored key → skipped (left unchanged)
+//   - Permanent Torn error → cascade-delete + counted as deleted
+//   - Transient Torn error → skipped (count + diag NOT overwritten so a
+//     paused key never destroys a good count)
+//   - Success → count + diag persisted
+async function handleForceRefreshAllParticipants(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const MAX_BATCH = 100;
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const authResult = await authorizeScrapeLogAccess(req, body, event);
+  if (authResult instanceof Response) return authResult;
+
+  // Stale-first ordering: rows with NULL last_checked_at, then oldest first.
+  // Lets a partial pass make maximum progress on the most-out-of-date rows.
+  const { data: rows = [] } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, torn_name, personal_start_at, last_count, last_checked_at')
+    .eq('event_id', event_id)
+    .order('last_checked_at', { ascending: true, nullsFirst: true })
+    .limit(MAX_BATCH);
+
+  if (!rows || rows.length === 0) {
+    return json({ refreshed: 0, deleted: 0, skipped: 0, transient: 0, total: 0, picked: 0 });
+  }
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
+
+  let refreshed = 0;
+  let deleted = 0;
+  let skipped = 0;
+  let transient = 0;
+  const transientNames: string[] = [];
+  const deletedNames: string[] = [];
+  const skippedNames: string[] = [];
+
+  for (const row of rows) {
+    const tornIdNum = Number(row.torn_id);
+    if (!Number.isFinite(tornIdNum)) {
+      skipped++;
+      skippedNames.push(row.torn_name || row.torn_id);
+      continue;
+    }
+
+    const { data: secret } = await supabase
+      .from('faction_event_player_secrets')
+      .select('api_key_enc, api_key_iv')
+      .eq('torn_player_id', tornIdNum)
+      .maybeSingle();
+
+    if (!secret) {
+      skipped++;
+      skippedNames.push(row.torn_name || row.torn_id);
+      continue;
+    }
+
+    const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+    if (!apiKey) {
+      await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+      deleted++;
+      deletedNames.push(row.torn_name || row.torn_id);
+      continue;
+    }
+
+    const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+    const probe = await probeRes.json().catch(() => ({}));
+    if (probe?.error) {
+      if (isPermanentTornKeyError(probe.error.code)) {
+        await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+        deleted++;
+        deletedNames.push(row.torn_name || row.torn_id);
+      } else {
+        transient++;
+        transientNames.push(`${row.torn_name || row.torn_id} (code ${probe.error.code})`);
+      }
+      continue;
+    }
+
+    const startMs = new Date(row.personal_start_at).getTime();
+    const fromSec = Math.floor(startMs / 1000);
+    const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+
+    let count = 0;
+    let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
+    if (untilSec > fromSec) {
+      result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+      count = result.count;
+    }
+    const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
+
+    await supabase
+      .from('faction_event_participants')
+      .update({ last_count: count, last_checked_at: new Date().toISOString(), last_diag_json: diag })
+      .eq('id', row.id);
+    refreshed++;
+  }
+
+  console.log(`[force-refresh-all-participants] event=${event_id} refreshed=${refreshed} transient=${transient} deleted=${deleted} skipped=${skipped} authorizedBy=${authResult}`);
+  return json({
+    refreshed,
+    deleted,
+    skipped,
+    transient,
+    total: rows.length,
+    picked: rows.length,
+    transient_names: transientNames,
+    deleted_names: deletedNames,
+    skipped_names: skippedNames,
+  });
 }
 
 // Re-run the count for the calling user against the same event. Identical
@@ -3783,6 +3935,8 @@ serve(async (req) => {
         return await handleGetParticipantScrapeLog(req, body);
       case 'admin-rescrape-participant':
         return await handleAdminRescrapeParticipant(req, body);
+      case 'force-refresh-all-participants':
+        return await handleForceRefreshAllParticipants(req, body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
       default:
