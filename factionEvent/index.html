@@ -157,6 +157,20 @@
             <input type="text" id="ev-share-link" readonly />
             <button type="button" id="ev-copy-link" class="submit-btn-alt">Copy link</button>
           </div>
+
+          <!-- Delete event — visible only to the creator OR the HJ admin
+               (operator backdoor). Two-step inline confirm so a stray tap
+               doesn't nuke the event. -->
+          <div class="ev-delete-block hidden" id="ev-delete-block">
+            <button type="button" id="ev-delete-btn" class="submit-btn-alt fe-secondary fe-danger">Delete event</button>
+            <div id="ev-delete-confirm" class="hidden ev-delete-confirm">
+              <p class="key-note">This permanently removes the event and every participant row. Cannot be undone.</p>
+              <div class="fe-edit-actions">
+                <button type="button" id="ev-delete-confirm-yes" class="submit-btn-alt fe-danger">Yes, delete it</button>
+                <button type="button" id="ev-delete-confirm-no" class="submit-btn-alt fe-secondary">Cancel</button>
+              </div>
+            </div>
+          </div>
         </div>
       </div>
 

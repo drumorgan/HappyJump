@@ -261,6 +261,29 @@
   cursor: not-allowed;
 }
 
+/* ── Delete event button + inline confirm ── */
+.ev-delete-block {
+  margin-top: 12px;
+  text-align: right;
+}
+.ev-delete-confirm {
+  margin-top: 8px;
+  padding: 10px;
+  border: 1px solid #e94560;
+  border-radius: 6px;
+  background: rgba(233, 69, 96, 0.08);
+  text-align: left;
+}
+.fe-danger {
+  color: #fff !important;
+  background: #b53050 !important;
+  border-color: #b53050 !important;
+}
+.fe-danger:hover {
+  background: #c84062 !important;
+  border-color: #c84062 !important;
+}
+
 /* ── Me-card action row — three buttons on one line, wrap on narrow ── */
 .me-actions {
   display: flex;

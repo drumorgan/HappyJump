@@ -365,6 +365,21 @@ export async function updateFactionEvent({
   return gateway('update-faction-event', payload);
 }
 
+/**
+ * Delete a faction event. Authorized server-side either by:
+ *   - the FE session whose torn_id matches event.creator_torn_id, or
+ *   - a Happy Jump admin Supabase Auth session (operator backdoor).
+ * `auth` may be omitted entirely when the caller is HJ-admin-signed-in
+ * — supabase-js will include the Authorization header automatically.
+ * Cascades to faction_event_participants via the FK ON DELETE CASCADE.
+ */
+export async function deleteFactionEvent({ eventId, auth }) {
+  return gateway('delete-faction-event', {
+    event_id: eventId,
+    ...authPayload(auth),
+  });
+}
+
 export async function joinFactionEvent({ eventId, auth, personalStartAt }) {
   return gateway('join-faction-event', {
     event_id: eventId,
