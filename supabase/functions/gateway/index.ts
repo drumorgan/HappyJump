@@ -1152,6 +1152,14 @@ async function handleFeSetApiKey(body: any) {
   const encrypted = await encryptApiKey(api_key);
   if (!encrypted) return json({ error: 'Encryption failed' }, 500);
 
+  // Faction id = 0 in Torn means "no faction" — store NULL so the
+  // auto-add-faction-members lookup doesn't match all factionless players
+  // to each other.
+  const factionIdRaw = Number(basic.faction?.faction_id);
+  const factionId = Number.isFinite(factionIdRaw) && factionIdRaw > 0 ? factionIdRaw : null;
+  const factionName = basic.faction?.faction_name ? String(basic.faction.faction_name) : null;
+  const tornName = basic.name ? String(basic.name) : null;
+
   const nowIso = new Date().toISOString();
   const supabase = serviceClient();
   const { error: upErr } = await supabase
@@ -1165,6 +1173,9 @@ async function handleFeSetApiKey(body: any) {
         failed_attempts: 0,
         updated_at: nowIso,
         last_login_at: nowIso,
+        torn_name: tornName,
+        torn_faction_id: factionId,
+        torn_faction_name: factionName,
       },
       { onConflict: 'torn_player_id' },
     );
@@ -1215,9 +1226,23 @@ async function handleFeAutoLogin(body: any) {
     return sessionInvalid();
   }
 
+  // Refresh the cached identity fields — name / faction can change between
+  // logins, and we want auto-add-faction-members to match against the
+  // user's *current* faction, not whatever it was on first sign-in.
+  const factionIdRaw = Number(identData.faction?.faction_id);
+  const factionId = Number.isFinite(factionIdRaw) && factionIdRaw > 0 ? factionIdRaw : null;
+  const factionName = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
+  const tornName = identData.name ? String(identData.name) : null;
+
   await supabase
     .from('faction_event_player_secrets')
-    .update({ failed_attempts: 0, last_login_at: new Date().toISOString() })
+    .update({
+      failed_attempts: 0,
+      last_login_at: new Date().toISOString(),
+      torn_name: tornName,
+      torn_faction_id: factionId,
+      torn_faction_name: factionName,
+    })
     .eq('torn_player_id', Number(player_id));
 
   return json({
@@ -2842,6 +2867,23 @@ async function handleCreateFactionEvent(body: any) {
 
   const creatorTornName = String(identData.name || '');
   const creatorTornFaction = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
+  const creatorFactionIdRaw = Number(identData.faction?.faction_id);
+  const creatorFactionId =
+    Number.isFinite(creatorFactionIdRaw) && creatorFactionIdRaw > 0 ? creatorFactionIdRaw : null;
+
+  // Refresh the creator's cached identity on the secret row — we just
+  // re-validated against Torn so this is the freshest data we have, and
+  // we're about to use the same lookup (torn_faction_id) to find faction-
+  // mates. Keeps name/faction in sync without waiting for the next
+  // fe-auto-login round-trip.
+  await supabase
+    .from('faction_event_player_secrets')
+    .update({
+      torn_name: creatorTornName || null,
+      torn_faction_id: creatorFactionId,
+      torn_faction_name: creatorTornFaction,
+    })
+    .eq('torn_player_id', Number(creatorTornId));
 
   // Clamp the creator's personal start to the event window.
   const clampedStartMs = Math.min(
@@ -2899,7 +2941,56 @@ async function handleCreateFactionEvent(body: any) {
     return json({ error: `Failed to seed creator participant: ${partErr.message}` }, 500);
   }
 
-  return json({ event: eventRow, participant: participantRow });
+  // Auto-add every other player whose stored FE session puts them in the
+  // same Torn faction as the creator. Saves the creator from asking each
+  // faction-mate to log in and join manually for every new event. The
+  // self-healing leaderboard sweep (refresh-stale-participants) picks
+  // these rows up on the next event-view load and runs the count using
+  // their server-stored key — no creator-side scraping here.
+  //
+  // Skipped silently when the creator has no faction (faction_id is NULL),
+  // when no torn_name has been cached for a member (rows from before
+  // migration 015), or when an insert collides with an existing row.
+  let autoAdded = 0;
+  if (creatorFactionId) {
+    const { data: factionMates = [] } = await supabase
+      .from('faction_event_player_secrets')
+      .select('torn_player_id, torn_name, torn_faction_name')
+      .eq('torn_faction_id', creatorFactionId)
+      .neq('torn_player_id', Number(creatorTornId));
+
+    const seedRows = (factionMates || [])
+      .filter((m: any) => m.torn_name)
+      .map((m: any) => ({
+        event_id: eventRow.id,
+        torn_id: String(m.torn_player_id),
+        torn_name: m.torn_name,
+        torn_faction: m.torn_faction_name || creatorTornFaction,
+        personal_start_at: starts_at.toISOString(),
+        last_count: 0,
+        // last_checked_at left NULL so refresh-stale-participants picks
+        // these rows first (NULL-first ordering) on the next view load
+        // and runs the count using the member's stored key.
+        last_checked_at: null,
+      }));
+
+    if (seedRows.length > 0) {
+      const { data: inserted, error: seedErr } = await supabase
+        .from('faction_event_participants')
+        .insert(seedRows)
+        .select('id');
+      if (seedErr) {
+        // Don't fail the create — the event + creator row already exist
+        // and the operator can use the per-row remove button to clean
+        // up any partial seeding. Just log it.
+        console.log(`[create-faction-event] auto-seed failed for event=${eventRow.id}: ${seedErr.message}`);
+      } else {
+        autoAdded = (inserted || []).length;
+      }
+    }
+  }
+
+  return json({ event: eventRow, participant: participantRow, auto_added: autoAdded });
 }
 
 async function handleGetFactionEvent(body: any) {
@@ -2994,6 +3085,54 @@ async function handleDeleteFactionEvent(req: Request, body: any) {
 
   console.log(`[delete-faction-event] event=${event_id} title=${JSON.stringify(event.title)} authorizedBy=${authorizedBy}`);
   return json({ success: true, deleted_event_id: event_id });
+}
+
+// Remove a single participant row from a faction event. Authorized by:
+//   1. FE session whose torn_id matches event.creator_torn_id (the
+//      "I run this event, kick this person out" path), or
+//   2. HJ admin via Supabase Auth (operator backdoor).
+// Does NOT touch the participant's secret row — they keep their FE
+// session and can re-join the event manually if they want, and they'll
+// still get auto-added to *future* events the creator makes.
+async function handleRemoveFactionEventParticipant(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  const torn_id = typeof body.torn_id === 'string' ? body.torn_id : '';
+  if (!event_id || !torn_id) return json({ error: 'Missing event_id or torn_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, creator_torn_id, title')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const adminUser = await requireAuth(req);
+  let authorizedBy: string;
+
+  if (adminUser) {
+    authorizedBy = `admin:${adminUser.id}`;
+  } else {
+    const resolved = await resolveFactionEventApiKey(body);
+    if (resolved instanceof Response) return resolved;
+    const callerTornId = String(resolved.torn_id || '');
+    if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+    if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+      return json({ error: 'Only the event creator (or the operator) can remove participants' }, 403);
+    }
+    authorizedBy = `creator:${callerTornId}`;
+  }
+
+  const { error: delErr } = await supabase
+    .from('faction_event_participants')
+    .delete()
+    .eq('event_id', event_id)
+    .eq('torn_id', torn_id);
+  if (delErr) return json({ error: delErr.message }, 500);
+
+  console.log(`[remove-faction-event-participant] event=${event_id} torn_id=${torn_id} authorizedBy=${authorizedBy}`);
+  return json({ success: true });
 }
 
 async function handleUpdateFactionEvent(body: any) {
@@ -4135,6 +4274,8 @@ serve(async (req) => {
         return await handleUpdateFactionEvent(body);
       case 'delete-faction-event':
         return await handleDeleteFactionEvent(req, body);
+      case 'remove-faction-event-participant':
+        return await handleRemoveFactionEventParticipant(req, body);
       case 'join-faction-event':
         return await handleJoinFactionEvent(body);
       case 'refresh-faction-event':

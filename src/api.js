@@ -380,6 +380,23 @@ export async function deleteFactionEvent({ eventId, auth }) {
   });
 }
 
+/**
+ * Remove a single participant from a faction event leaderboard. Authorized
+ * server-side either by:
+ *   - the FE session whose torn_id matches event.creator_torn_id, or
+ *   - a Happy Jump admin Supabase Auth session (operator backdoor).
+ * Does not touch the participant's stored FE session — they can re-join
+ * the event manually and will still get auto-added to future events the
+ * creator makes.
+ */
+export async function removeFactionEventParticipant({ eventId, tornId, auth }) {
+  return gateway('remove-faction-event-participant', {
+    event_id: eventId,
+    torn_id: String(tornId),
+    ...authPayload(auth),
+  });
+}
+
 export async function joinFactionEvent({ eventId, auth, personalStartAt }) {
   return gateway('join-faction-event', {
     event_id: eventId,

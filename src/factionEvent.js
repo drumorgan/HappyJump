@@ -12,6 +12,7 @@ import {
   listFactionEvents,
   updateFactionEvent,
   deleteFactionEvent,
+  removeFactionEventParticipant,
   joinFactionEvent,
   refreshFactionEvent,
   refreshStaleParticipants,
@@ -403,7 +404,13 @@ function wireCreateForm() {
         auth: feAuth(),
       });
       saveJoinedTornId(res.event.id, res.participant.torn_id);
-      toast('Event created', 'success');
+      const autoAdded = Number(res.auto_added) || 0;
+      toast(
+        autoAdded > 0
+          ? `Event created — auto-added ${autoAdded} faction member${autoAdded === 1 ? '' : 's'}`
+          : 'Event created',
+        'success',
+      );
       setEventIdInUrl(res.event.id);
       showEventView(res.event.id);
     } catch (err) {
@@ -540,6 +547,10 @@ function renderLeaderboard(event, participants) {
   // event creator). Mirrors the gateway authorization for
   // get-participant-scrape-log so we don't render a button that would 403.
   const showScrapeLog = canViewScrapeLog(event);
+  // Same gating for the per-row remove button — creator or HJ admin can
+  // kick a participant off the leaderboard. Mirrors the gateway auth on
+  // remove-faction-event-participant.
+  const showRemove = showScrapeLog;
 
   const rows = sorted.map((p, i) => {
     const isMe = String(p.torn_id) === String(myTornId);
@@ -560,6 +571,9 @@ function renderLeaderboard(event, participants) {
     const scrapeBtn = showScrapeLog
       ? `<td class="lb-scrape"><button type="button" class="lb-scrape-btn" data-torn-id="${esc(String(p.torn_id))}" title="View scrape log">view</button></td>`
       : '';
+    const removeBtn = showRemove
+      ? `<td class="lb-remove"><button type="button" class="lb-remove-btn" data-torn-id="${esc(String(p.torn_id))}" data-torn-name="${esc(String(p.torn_name))}" title="Remove from this event">×</button></td>`
+      : '';
     return `
       <tr class="${rowClasses.join(' ')}">
         <td class="lb-rank">${i + 1}</td>
@@ -571,6 +585,7 @@ function renderLeaderboard(event, participants) {
         <td class="recent-meta">${checkedCell}</td>
         <td class="lb-count">${Number(p.last_count) || 0}</td>
         ${scrapeBtn}
+        ${removeBtn}
       </tr>
     `;
   }).join('');
@@ -585,6 +600,7 @@ function renderLeaderboard(event, participants) {
           <th>Last refresh</th>
           <th style="text-align:right">${esc(event.drug_name)}</th>
           ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
+          ${showRemove ? '<th class="lb-remove" title="Remove participant"></th>' : ''}
         </tr>
       </thead>
       <tbody>${rows}</tbody>
@@ -603,6 +619,26 @@ function renderLeaderboard(event, participants) {
         const tornId = btn.dataset.tornId;
         if (!tornId) return;
         openScrapeLogModal({ eventId: event.id, tornId });
+      });
+    });
+  }
+
+  if (showRemove) {
+    body.querySelectorAll('.lb-remove-btn').forEach((btn) => {
+      btn.addEventListener('click', async () => {
+        const tornId = btn.dataset.tornId;
+        const tornName = btn.dataset.tornName || tornId;
+        if (!tornId) return;
+        if (!confirm(`Remove ${tornName} from this event?\n\nTheir count will be deleted from this leaderboard, but they keep their FE login and can re-join manually.`)) return;
+        btn.disabled = true;
+        try {
+          await removeFactionEventParticipant({ eventId: event.id, tornId, auth: feAuth() });
+          toast(`Removed ${tornName}`, 'success');
+          await refreshEventView(event.id);
+        } catch (err) {
+          toast(err.message || 'Remove failed');
+          btn.disabled = false;
+        }
       });
     });
   }
