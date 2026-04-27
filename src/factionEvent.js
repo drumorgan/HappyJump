@@ -71,12 +71,12 @@ function setEventIdInUrl(id) {
 
 // ── Time helpers ─────────────────────────────────────────────────────
 // TCT (Torn City Time) = UTC. Events anchor at 10:00 TCT on the chosen
-// start date and run for a per-event duration in hours (default 6h, cap
+// start date and run for a per-event duration in hours (default 48h, cap
 // 30 days). Personal start slots are 15-min increments spanning the
 // event's full window.
 
 const EVENT_START_HOUR_TCT = 10;
-const DEFAULT_EVENT_DURATION_HOURS = 6;
+const DEFAULT_EVENT_DURATION_HOURS = 48;
 const MAX_EVENT_DURATION_HOURS = 30 * 24; // backend caps at 30 days
 const SLOT_MS = 15 * 60 * 1000;
 
