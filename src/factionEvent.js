@@ -328,8 +328,10 @@ function refreshAllViewsForAuth() {
     renderEventHeader(currentEvent);
     renderJoinOrMe(currentEvent, lastParticipants);
   } else if (!id) {
-    // Picker view — reflect "API key field hidden when signed in" (currently
-    // we don't show one in the create form; nothing to do).
+    // Picker view — the recent-events list is auth-scoped (sees own/joined
+    // for FE users, all for HJ admin, none for anon), so re-fetch when the
+    // caller signs in or out.
+    loadRecentEvents();
   }
 }
 
@@ -424,9 +426,21 @@ function wireCreateForm() {
 async function loadRecentEvents() {
   const body = document.getElementById('recent-events-body');
   try {
-    const { events } = await listFactionEvents();
+    // Backend filters: HJ admin sees all, FE-signed-in sees own/joined,
+    // anon sees []. feAuth() returns null when signed-out, which authPayload
+    // turns into {} — supabase-js still attaches the Supabase Auth header
+    // automatically for the admin path.
+    const { events } = await listFactionEvents(feAuth());
     if (!events || events.length === 0) {
-      body.innerHTML = '<p class="form-intro" style="color:#888">No events yet — create the first one above.</p>';
+      let msg;
+      if (isHjAdmin) {
+        msg = 'No events yet — create the first one above.';
+      } else if (feSession) {
+        msg = 'No events yet — events you create or join will show up here.';
+      } else {
+        msg = 'Sign in above to see events you’ve created or joined.';
+      }
+      body.innerHTML = `<p class="form-intro" style="color:#888">${esc(msg)}</p>`;
       return;
     }
     const now = Date.now();

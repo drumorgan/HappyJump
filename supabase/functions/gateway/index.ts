@@ -3018,16 +3018,61 @@ async function handleGetFactionEvent(body: any) {
   return json({ event, participants: participants || [] });
 }
 
-async function handleListFactionEvents(_body: any) {
+// Visibility rules:
+//   1. HJ admin (Supabase Auth) — sees every event.
+//   2. FE-signed-in user — sees only events they created OR have a
+//      participant row in.
+//   3. Anonymous — empty list (events are not browseable without identity).
+async function handleListFactionEvents(req: Request, body: any) {
   const supabase = serviceClient();
-  const { data, error } = await supabase
+  const baseSelect = 'id, title, drug_name, drug_item_id, starts_at, ends_at, created_at';
+
+  const adminUser = await requireAuth(req);
+  if (adminUser) {
+    const { data, error } = await supabase
+      .from('faction_events')
+      .select(baseSelect)
+      .order('created_at', { ascending: false })
+      .limit(20);
+    if (error) return json({ error: error.message }, 500);
+    return json({ events: data || [], scope: 'admin' });
+  }
+
+  const hasCreds = !!(body && (body.key || body.api_key || (body.player_id && body.session_token)));
+  if (!hasCreds) {
+    return json({ events: [], scope: 'anonymous' });
+  }
+
+  const resolved = await resolveFactionEventApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const tornId = String(resolved.torn_id || '');
+  if (!tornId) {
+    // Direct-key path can't be tied to a creator/participant — return empty.
+    return json({ events: [], scope: 'anonymous' });
+  }
+
+  const { data: partRows, error: partErr } = await supabase
+    .from('faction_event_participants')
+    .select('event_id')
+    .eq('torn_id', tornId);
+  if (partErr) return json({ error: partErr.message }, 500);
+  const partEventIds = Array.from(new Set((partRows || []).map((r: any) => r.event_id))).filter(Boolean);
+
+  let query = supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, created_at')
+    .select(baseSelect)
     .order('created_at', { ascending: false })
     .limit(20);
 
+  if (partEventIds.length > 0) {
+    query = query.or(`creator_torn_id.eq.${tornId},id.in.(${partEventIds.join(',')})`);
+  } else {
+    query = query.eq('creator_torn_id', tornId);
+  }
+
+  const { data, error } = await query;
   if (error) return json({ error: error.message }, 500);
-  return json({ events: data || [] });
+  return json({ events: data || [], scope: 'user' });
 }
 
 // Creator-only patch of an event's title / drug / window. Authorized via
@@ -4269,7 +4314,7 @@ serve(async (req) => {
       case 'get-faction-event':
         return await handleGetFactionEvent(body);
       case 'list-faction-events':
-        return await handleListFactionEvents(body);
+        return await handleListFactionEvents(req, body);
       case 'update-faction-event':
         return await handleUpdateFactionEvent(body);
       case 'delete-faction-event':
