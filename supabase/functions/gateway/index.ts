@@ -626,6 +626,7 @@ async function countItemUseInLog(
 ): Promise<{
   count: number;
   details: string[];
+  matchedItems: Array<{ ts: number; drug: string }>;
   pages: number;
   totalEntries: number;
   reachedCutoff: boolean;
@@ -802,6 +803,10 @@ async function countItemUseInLog(
   return {
     count: uses.length,
     details: uses.map((u) => u.detail),
+    // Structured per-match list for the simplified modal. Plain {ts,drug}
+    // pairs so the frontend can render "YYYY-MM-DD HH:MM:SS — Cannabis"
+    // lines without parsing the human-readable `details` strings.
+    matchedItems: uses.map((u) => ({ ts: u.timestamp, drug: drugName })),
     pages: pagesFetched,
     totalEntries,
     reachedCutoff,
@@ -2913,7 +2918,7 @@ async function handleGetFactionEvent(body: any) {
 
   const { data: participants, error: partErr } = await supabase
     .from('faction_event_participants')
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, created_at')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, created_at, scrape_status')
     .eq('event_id', event_id)
     .order('last_count', { ascending: false });
 
@@ -3156,6 +3161,10 @@ type ScrapeDiag = {
   log_type_histogram?: Array<{ key: string; count: number }>;
   data_item_histogram?: Array<{ key: string; count: number }>;
   matched?: string[];
+  // Structured per-match list — plain {ts (unix sec), drug} pairs so the
+  // simplified modal can render "YYYY-MM-DD HH:MM:SS — Cannabis" lines
+  // without parsing the human-readable `matched` strings.
+  matched_items?: Array<{ ts: number; drug: string }>;
   skipped_reason?: string;
   scraped_at?: string;
   drug_name?: string;
@@ -3193,6 +3202,7 @@ function buildScrapeDiag(
     diag.log_type_histogram = result.logTypeHistogram;
     diag.data_item_histogram = result.dataItemHistogram;
     diag.matched = result.details;
+    diag.matched_items = result.matchedItems;
   } else {
     diag.skipped_reason = `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, count function not called`;
   }
@@ -3580,6 +3590,206 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
   });
 }
 
+// Mark every participant in an event as scrape_status='pending'. The
+// frontend then drives a one-at-a-time loop calling scrape-next-pending
+// with a timer between calls. Authorized to HJ admin OR event creator.
+// Idempotent — calling it twice in a row is safe (still ends with all
+// rows pending). If a prior run was interrupted (some rows still
+// pending), this resets ALL rows to pending again. To resume an
+// interrupted batch instead of starting over, the frontend should skip
+// this call and just keep calling scrape-next-pending.
+async function handleStartBulkRefresh(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const authResult = await authorizeScrapeLogAccess(req, body, event);
+  if (authResult instanceof Response) return authResult;
+
+  const { data: updated, error: updErr } = await supabase
+    .from('faction_event_participants')
+    .update({ scrape_status: 'pending' })
+    .eq('event_id', event_id)
+    .select('id, torn_id, torn_name');
+  if (updErr) return json({ error: updErr.message }, 500);
+
+  console.log(`[start-bulk-refresh] event=${event_id} marked=${updated?.length || 0} authorizedBy=${authResult}`);
+  return json({ marked: updated?.length || 0, participants: updated || [] });
+}
+
+// Pick the oldest scrape_status='pending' row for the event, run a
+// probe + scrape using their stored API key, persist the result, and
+// clear scrape_status. Frontend drives the loop: call repeatedly with
+// a timer between calls until `done: true` is returned.
+//
+// Per-row outcomes (mirror the bulk sweep):
+//   - 'refreshed'        → count + diag updated, scrape_status cleared
+//   - 'transient_error'  → count + diag NOT touched (paused / rate-
+//                          limited / 5xx); scrape_status cleared so
+//                          the queue still drains
+//   - 'permanent_error'  → cascade-delete; row no longer exists
+//   - 'no_key'           → no stored secret; scrape_status cleared
+//   - 'decrypt_failed'   → cascade-delete (master key changed?)
+async function handleScrapeNextPending(req: Request, body: any) {
+  const event_id = typeof body.event_id === 'string' ? body.event_id : '';
+  if (!event_id) return json({ error: 'Missing event_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: event, error: evtErr } = await supabase
+    .from('faction_events')
+    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .eq('id', event_id)
+    .maybeSingle();
+  if (evtErr) return json({ error: evtErr.message }, 500);
+  if (!event) return json({ error: 'Event not found' }, 404);
+
+  const authResult = await authorizeScrapeLogAccess(req, body, event);
+  if (authResult instanceof Response) return authResult;
+
+  // Pick the oldest pending row. Order by created_at so we process
+  // participants in the order they joined — gives the operator a
+  // predictable "we're working through the leaderboard top-to-bottom"
+  // feel rather than random.
+  const { data: row, error: rowErr } = await supabase
+    .from('faction_event_participants')
+    .select('id, torn_id, torn_name, personal_start_at, last_count, last_checked_at')
+    .eq('event_id', event_id)
+    .eq('scrape_status', 'pending')
+    .order('created_at', { ascending: true })
+    .limit(1)
+    .maybeSingle();
+  if (rowErr) return json({ error: rowErr.message }, 500);
+
+  if (!row) {
+    // Queue is empty → tell the frontend to stop looping.
+    const { count: remaining } = await supabase
+      .from('faction_event_participants')
+      .select('id', { count: 'exact', head: true })
+      .eq('event_id', event_id)
+      .eq('scrape_status', 'pending');
+    return json({ done: true, remaining: remaining || 0 });
+  }
+
+  const tornIdNum = Number(row.torn_id);
+  const clearStatus = async () =>
+    supabase.from('faction_event_participants').update({ scrape_status: null }).eq('id', row.id);
+
+  if (!Number.isFinite(tornIdNum)) {
+    await clearStatus();
+    return await respondWithRemaining(supabase, event_id, {
+      status: 'no_key',
+      participant: row,
+      message: `Invalid torn_id: ${row.torn_id}`,
+    });
+  }
+
+  const { data: secret } = await supabase
+    .from('faction_event_player_secrets')
+    .select('api_key_enc, api_key_iv')
+    .eq('torn_player_id', tornIdNum)
+    .maybeSingle();
+
+  if (!secret) {
+    await clearStatus();
+    return await respondWithRemaining(supabase, event_id, {
+      status: 'no_key',
+      participant: row,
+      message: 'No stored API key on file.',
+    });
+  }
+
+  const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+  if (!apiKey) {
+    await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+    return await respondWithRemaining(supabase, event_id, {
+      status: 'decrypt_failed',
+      participant: row,
+      message: 'Stored key could not be decrypted; participant row removed.',
+    });
+  }
+
+  const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+  const probe = await probeRes.json().catch(() => ({}));
+  if (probe?.error) {
+    if (isPermanentTornKeyError(probe.error.code)) {
+      await cascadeDeleteFactionEventSecret(supabase, tornIdNum);
+      return await respondWithRemaining(supabase, event_id, {
+        status: 'permanent_error',
+        participant: row,
+        message: `Torn API: ${probe.error.error} — participant removed.`,
+        torn_error_code: probe.error.code,
+      });
+    }
+    await clearStatus();
+    return await respondWithRemaining(supabase, event_id, {
+      status: 'transient_error',
+      participant: row,
+      message: `Torn API (transient): code ${probe.error.code} — ${probe.error.error}`,
+      torn_error_code: probe.error.code,
+    });
+  }
+
+  const eventEndMs = new Date(event.ends_at).getTime();
+  const startMs = new Date(row.personal_start_at).getTime();
+  const fromSec = Math.floor(startMs / 1000);
+  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name);
+
+  let count = 0;
+  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
+  if (untilSec > fromSec) {
+    result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+    count = result.count;
+  }
+  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
+
+  const { data: updated, error: updErr } = await supabase
+    .from('faction_event_participants')
+    .update({
+      last_count: count,
+      last_checked_at: new Date().toISOString(),
+      last_diag_json: diag,
+      scrape_status: null,
+    })
+    .eq('id', row.id)
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, scrape_status')
+    .single();
+  if (updErr) return json({ error: updErr.message }, 500);
+
+  console.log(`[scrape-next-pending] event=${event_id} torn_id=${row.torn_id} count=${count} authorizedBy=${authResult}`);
+  return await respondWithRemaining(supabase, event_id, {
+    status: 'refreshed',
+    participant: updated,
+    count,
+    diag,
+  });
+}
+
+// Helper for handleScrapeNextPending: append the remaining-pending
+// count to whatever per-row response the caller built. The frontend
+// uses `remaining` to decide whether to keep looping.
+async function respondWithRemaining(
+  supabase: any,
+  event_id: string,
+  payload: Record<string, unknown>,
+): Promise<Response> {
+  const { count: remaining } = await supabase
+    .from('faction_event_participants')
+    .select('id', { count: 'exact', head: true })
+    .eq('event_id', event_id)
+    .eq('scrape_status', 'pending');
+  return json({ done: false, remaining: remaining || 0, ...payload });
+}
+
 // Re-run the count for the calling user against the same event. Identical
 // scan to `join`, but does NOT change personal_start_at or identity fields.
 async function handleRefreshFactionEventParticipant(body: any) {
@@ -3937,6 +4147,10 @@ serve(async (req) => {
         return await handleAdminRescrapeParticipant(req, body);
       case 'force-refresh-all-participants':
         return await handleForceRefreshAllParticipants(req, body);
+      case 'start-bulk-refresh':
+        return await handleStartBulkRefresh(req, body);
+      case 'scrape-next-pending':
+        return await handleScrapeNextPending(req, body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
       default:
