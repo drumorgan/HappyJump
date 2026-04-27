@@ -817,11 +817,13 @@ function formatDiagText(diag, header) {
     lines.push('');
   }
   // Window line — UTC (= TCT) so the values match the slot picker.
-  lines.push(`Window: ${fmtTctTimestamp(diag.from_sec)} → ${fmtTctTimestamp(diag.until_sec)} TCT`);
+  // Em-dash separator (not colon) for paste-friendliness on iOS, which
+  // otherwise URL-encodes text with `<word>:` patterns at the start.
+  lines.push(`Window — ${fmtTctTimestamp(diag.from_sec)} → ${fmtTctTimestamp(diag.until_sec)} TCT`);
 
   if (diag.skipped_reason) {
     lines.push('');
-    lines.push('Skipped: ' + diag.skipped_reason);
+    lines.push('Skipped — ' + diag.skipped_reason);
     return lines.join('\n');
   }
 
@@ -841,7 +843,7 @@ function formatDiagText(diag, header) {
     }
   }
 
-  lines.push(`Count: ${items.length}`);
+  lines.push(`Count — ${items.length}`);
   lines.push('');
   if (items.length === 0) {
     lines.push('(no matching log entries in window)');
@@ -999,11 +1001,20 @@ function populateScrapeLogModal({ participant, event, diagSourceLabel }) {
     `Personal start: ${new Date(participant.personal_start_at).toISOString()}\n` +
     `Source: ${diagSourceLabel}`;
 
+  // Header for the copyable textarea body. NOTE: the first line MUST NOT
+  // match a `<word>:` pattern — iOS data detectors interpret leading
+  // `Participant:` / `Event:` patterns as URI schemes (`participant:` is
+  // technically a valid scheme shape) and Apple Notes URL-encodes the
+  // entire pasted text when it sees one. Leading "Scrape log —" defeats
+  // detection. We use em-dash separators inside the metadata block too
+  // for the same reason — pasting into other apps stays clean. The
+  // `Window:` / per-match lines further down don't matter; iOS only
+  // checks line one.
   const header =
-    `Participant: ${participant.torn_name} [${participant.torn_id}]\n` +
-    `Event: ${event.title}\n` +
-    `Count: ${Number(participant.last_count) || 0}\n` +
-    `Source: ${diagSourceLabel}`;
+    `Scrape log — ${participant.torn_name} [${participant.torn_id}]\n` +
+    `Event — ${event.title}\n` +
+    `Count — ${Number(participant.last_count) || 0}\n` +
+    `Source — ${diagSourceLabel}`;
   body.value = formatDiagText(participant.last_diag_json, header);
 }
 
