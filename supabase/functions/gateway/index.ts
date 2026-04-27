@@ -2885,18 +2885,19 @@ async function handleCreateFactionEvent(body: any) {
     })
     .eq('torn_player_id', Number(creatorTornId));
 
-  // Clamp the creator's personal start to the event window.
-  const clampedStartMs = Math.min(
-    Math.max(personalStart.getTime(), starts_at.getTime()),
-    ends_at.getTime(),
-  );
+  // Floor the creator's personal start to event_start (you can't begin
+  // counting before the event has started). No upper clamp: each
+  // participant's count window is [personal_start, personal_start +
+  // duration], so a late personal_start just shifts the whole window
+  // later — it doesn't get truncated by event.ends_at.
+  const clampedStartMs = Math.max(personalStart.getTime(), starts_at.getTime());
   const clampedStartIso = new Date(clampedStartMs).toISOString();
 
-  // Initial count for the creator. If the personal start is in the future
-  // (shouldn't happen post-clamp, but defensively) we just record 0.
-  const nowSec = Math.floor(Date.now() / 1000);
-  const fromSec = Math.floor(clampedStartMs / 1000);
-  const untilSec = Math.min(nowSec, Math.floor(ends_at.getTime() / 1000));
+  // Initial count for the creator over their personal duration window.
+  const { fromSec, untilSec } = participantCountWindow(
+    { starts_at: starts_at.toISOString(), ends_at: ends_at.toISOString() },
+    clampedStartIso,
+  );
   let creatorCount = 0;
   if (untilSec > fromSec) {
     const result = await countItemUseInLog(api_key, drug_item_id, drug_name, fromSec, untilSec);
@@ -3273,14 +3274,12 @@ async function handleUpdateFactionEvent(body: any) {
   // the next refresh-stale-participants sweep recounts. Also re-anchor
   // personal_start_at to the new event date — preserving each participant's
   // chosen TIME-OF-DAY so a date edit moves their start by exactly the
-  // amount the event moved.
-  //
-  // Old behaviour clamped psMs against [startMs, endMs] which, when the
-  // window shrunk past the participant's old start, snapped them to the new
-  // event END — leaving a zero-second count window and silently producing 0.
+  // amount the event moved. Under the new "personal_start + duration"
+  // model the upper bound is irrelevant — only the new event_start floor
+  // matters (so a personal_start that ended up before event_start gets
+  // snapped forward).
   if (drugChanged || windowChanged) {
     const startMs = newStartsAt.getTime();
-    const endMs = newEndsAt.getTime();
     const { data: parts } = await supabase
       .from('faction_event_participants')
       .select('id, personal_start_at')
@@ -3295,20 +3294,20 @@ async function handleUpdateFactionEvent(body: any) {
 
       if (windowChanged) {
         // Re-anchor each participant's personal-start time to the new event
-        // date, keeping the same UTC time-of-day. If the resulting moment
-        // still falls outside the new window, snap to the event START
-        // (never the event end — that's a zero-length window).
+        // date, keeping the same UTC time-of-day. Floor at the new event
+        // start (you can't begin counting before the event has started);
+        // no upper bound — a late personal_start just shifts the
+        // [personal_start, personal_start + duration] window later, it's
+        // never truncated by event.ends_at.
         const newDateStr = newStartsAt.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
         for (const p of parts) {
           const oldPs = new Date(p.personal_start_at);
           const oldTimeStr = oldPs.toISOString().slice(11); // "HH:MM:SS.sssZ"
           const reAnchoredMs = new Date(`${newDateStr}T${oldTimeStr}`).getTime();
           let finalMs: number;
-          if (Number.isNaN(reAnchoredMs)) {
-            finalMs = startMs;
-          } else if (reAnchoredMs < startMs || reAnchoredMs >= endMs) {
-            // Outside the new window — snap to the event start so the
-            // participant gets a meaningful (non-zero) count window.
+          if (Number.isNaN(reAnchoredMs) || reAnchoredMs < startMs) {
+            // Old time-of-day predates the new event start — snap to
+            // event start so the participant still has a valid window.
             finalMs = startMs;
           } else {
             finalMs = reAnchoredMs;
@@ -3354,6 +3353,32 @@ type ScrapeDiag = {
   drug_name?: string;
   drug_item_id?: number;
 };
+
+// Per-participant count window. Each participant gets the FULL event
+// duration anchored to their own personal_start_at — so a late joiner
+// (e.g. personal_start = event_start + 6h on a 48h event) still has the
+// full 48h to use drugs, even if their window runs past event.ends_at.
+// duration_ms is derived from event.ends_at − event.starts_at; the
+// global event.ends_at is no longer the count-window cap, only the
+// definition source for "duration".
+//
+// Returns { fromSec, untilSec } where untilSec is capped at "now" so a
+// future personal_end never counts entries that haven't happened yet.
+// Callers still guard `if (untilSec > fromSec)` before scraping.
+function participantCountWindow(
+  event: { starts_at: string; ends_at: string },
+  personal_start_at: string,
+): { fromSec: number; untilSec: number } {
+  const durationMs =
+    new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime();
+  const personalStartMs = new Date(personal_start_at).getTime();
+  const personalEndMs = personalStartMs + durationMs;
+  const nowSec = Math.floor(Date.now() / 1000);
+  return {
+    fromSec: Math.floor(personalStartMs / 1000),
+    untilSec: Math.min(nowSec, Math.floor(personalEndMs / 1000)),
+  };
+}
 
 // Build a ScrapeDiag from a countItemUseInLog result for a given window.
 // `result` is null when the window was zero-length and the count function
@@ -3418,10 +3443,12 @@ async function handleJoinFactionEvent(body: any) {
   if (!event) return json({ error: 'Event not found' }, 404);
 
   const eventStartMs = new Date(event.starts_at).getTime();
-  const eventEndMs = new Date(event.ends_at).getTime();
-  // Clamp the personal start time to the event window: never earlier than the
-  // event start, never later than the event end.
-  const clampedStartMs = Math.min(Math.max(personalStart.getTime(), eventStartMs), eventEndMs);
+  // Floor the personal start time to event_start (you can't begin counting
+  // before the event has started). No upper clamp: each participant's
+  // count window is [personal_start, personal_start + duration], so a
+  // late personal_start just shifts the whole window later — it's never
+  // truncated by event.ends_at.
+  const clampedStartMs = Math.max(personalStart.getTime(), eventStartMs);
   const clampedStartIso = new Date(clampedStartMs).toISOString();
 
   // Validate the key + grab identity (name / faction)
@@ -3438,10 +3465,8 @@ async function handleJoinFactionEvent(body: any) {
   const tornName = String(identData.name || '');
   const tornFaction = identData.faction?.faction_name ? String(identData.faction.faction_name) : null;
 
-  // Run the count for this user's window: [clampedStart, min(now, eventEnd)].
-  const nowSec = Math.floor(Date.now() / 1000);
-  const fromSec = Math.floor(clampedStartMs / 1000);
-  const untilSec = Math.min(nowSec, Math.floor(eventEndMs / 1000));
+  // Run the count over [personal_start, min(now, personal_start + duration)].
+  const { fromSec, untilSec } = participantCountWindow(event, clampedStartIso);
 
   let count = 0;
   let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
@@ -3611,11 +3636,7 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
     }, 503);
   }
 
-  const eventEndMs = new Date(event.ends_at).getTime();
-  const startMs = new Date(participant.personal_start_at).getTime();
-  const fromSec = Math.floor(startMs / 1000);
-  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
-
+  const { fromSec, untilSec } = participantCountWindow(event, participant.personal_start_at);
   const drugItemId = Number(event.drug_item_id);
   const drugName = String(event.drug_name);
 
@@ -3687,7 +3708,6 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
     return json({ refreshed: 0, deleted: 0, skipped: 0, transient: 0, total: 0, picked: 0 });
   }
 
-  const eventEndMs = new Date(event.ends_at).getTime();
   const drugItemId = Number(event.drug_item_id);
   const drugName = String(event.drug_name);
 
@@ -3741,9 +3761,7 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
       continue;
     }
 
-    const startMs = new Date(row.personal_start_at).getTime();
-    const fromSec = Math.floor(startMs / 1000);
-    const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+    const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
 
     let count = 0;
     let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
@@ -3921,10 +3939,7 @@ async function handleScrapeNextPending(req: Request, body: any) {
     });
   }
 
-  const eventEndMs = new Date(event.ends_at).getTime();
-  const startMs = new Date(row.personal_start_at).getTime();
-  const fromSec = Math.floor(startMs / 1000);
-  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+  const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
   const drugItemId = Number(event.drug_item_id);
   const drugName = String(event.drug_name);
 
@@ -4012,10 +4027,7 @@ async function handleRefreshFactionEventParticipant(body: any) {
   if (existErr) return json({ error: existErr.message }, 500);
   if (!existing) return json({ error: 'You have not joined this event yet' }, 404);
 
-  const eventEndMs = new Date(event.ends_at).getTime();
-  const startMs = new Date(existing.personal_start_at).getTime();
-  const fromSec = Math.floor(startMs / 1000);
-  const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+  const { fromSec, untilSec } = participantCountWindow(event, existing.personal_start_at);
 
   let count = 0;
   let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
@@ -4113,7 +4125,6 @@ async function handleRefreshStaleParticipants(body: any) {
     return json({ refreshed: 0, deleted: 0, skipped: 0 });
   }
 
-  const eventEndMs = new Date(event.ends_at).getTime();
   const drugItemId = Number(event.drug_item_id);
   const drugName = String(event.drug_name);
 
@@ -4169,9 +4180,7 @@ async function handleRefreshStaleParticipants(body: any) {
       continue;
     }
 
-    const startMs = new Date(row.personal_start_at).getTime();
-    const fromSec = Math.floor(startMs / 1000);
-    const untilSec = Math.min(Math.floor(Date.now() / 1000), Math.floor(eventEndMs / 1000));
+    const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
 
     let count = 0;
     let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
