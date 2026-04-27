@@ -19,6 +19,8 @@ import {
   getParticipantScrapeLog,
   adminRescrapeParticipant,
   forceRefreshAllParticipants,
+  startBulkRefresh,
+  scrapeNextPending,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
@@ -454,6 +456,10 @@ async function showEventView(eventId) {
   wireEventControls(eventId);
   // Self-healing leaderboard: kick off a background sweep, then re-render.
   scheduleSweep(eventId);
+  // If a prior bulk-refresh batch was interrupted (page reloaded mid-loop),
+  // any rows still flagged scrape_status='pending' will auto-resume here.
+  // No-op when the operator isn't authorized to drive the queue.
+  maybeResumePendingScrape();
 }
 
 async function refreshEventView(eventId) {
@@ -537,21 +543,32 @@ function renderLeaderboard(event, participants) {
 
   const rows = sorted.map((p, i) => {
     const isMe = String(p.torn_id) === String(myTornId);
-    const checked = p.last_checked_at
+    const isPending = p.scrape_status === 'pending';
+    const checkedBase = p.last_checked_at
       ? fmtRelative(Date.now() - new Date(p.last_checked_at).getTime()) + ' ago'
       : 'pending';
+    // Pending badge takes priority — that's the "actively in the bulk-
+    // refresh queue" state. The relative timestamp underneath shows the
+    // last successful scrape so the operator can tell how stale the
+    // current count is even while the refresh is in progress.
+    const checkedCell = isPending
+      ? `<span class="lb-pending-badge">⏳ pending</span><div class="recent-meta">${esc(checkedBase)}</div>`
+      : esc(checkedBase);
+    const rowClasses = [];
+    if (isMe) rowClasses.push('me-row');
+    if (isPending) rowClasses.push('pending-row');
     const scrapeBtn = showScrapeLog
       ? `<td class="lb-scrape"><button type="button" class="lb-scrape-btn" data-torn-id="${esc(String(p.torn_id))}" title="View scrape log">view</button></td>`
       : '';
     return `
-      <tr class="${isMe ? 'me-row' : ''}">
+      <tr class="${rowClasses.join(' ')}">
         <td class="lb-rank">${i + 1}</td>
         <td>
           <strong>${esc(p.torn_name)}</strong>
           <div class="recent-meta">${esc(p.torn_faction || 'No faction')}</div>
         </td>
         <td class="recent-meta">since ${fmtDateTime(p.personal_start_at)}</td>
-        <td class="recent-meta">${esc(checked)}</td>
+        <td class="recent-meta">${checkedCell}</td>
         <td class="lb-count">${Number(p.last_count) || 0}</td>
         ${scrapeBtn}
       </tr>
@@ -591,61 +608,171 @@ function renderLeaderboard(event, participants) {
   }
 }
 
-// Wire the Refresh-all button once on boot. Visibility is toggled in
-// renderLeaderboard based on canViewScrapeLog(event); we just need a single
-// click handler that closes over the always-fresh `currentEvent` reference.
+// Delay between scrape-next-pending calls, in ms. Gives the operator
+// visible per-row progress and spreads load across Torn's API.
+const REFRESH_ALL_DELAY_MS = 1500;
+
+// Module-scoped flag so a second click doesn't double-fire the loop, and
+// so a page reload mid-batch can detect "I'm not currently running" and
+// auto-resume any rows still marked 'pending' in the DB.
+let bulkRefreshInFlight = false;
+
 function wireRefreshAllButton() {
   const btn = document.getElementById('lb-refresh-all');
   if (!btn || btn.dataset.wired) return;
   btn.dataset.wired = '1';
   btn.addEventListener('click', async () => {
     if (!currentEvent) return;
-    const eventId = currentEvent.id;
-    const orig = btn.textContent;
-    btn.disabled = true;
-    btn.textContent = 'Refreshing all…';
+    if (bulkRefreshInFlight) return;
+    // If any rows are already pending (from a prior interrupted run),
+    // resume that queue instead of re-marking everyone pending. Click
+    // again to start a fresh batch — the `start-bulk-refresh` call
+    // resets every row to pending, so the operator can re-run from
+    // scratch any time.
+    const anyPending = (lastParticipants || []).some((p) => p.scrape_status === 'pending');
+    await runBulkRefresh({ resume: anyPending });
+  });
+}
+
+// Drive the timed one-at-a-time refresh loop. Marks all rows as pending
+// (unless `resume` is true), then calls scrape-next-pending repeatedly
+// with REFRESH_ALL_DELAY_MS between calls until the queue drains. After
+// each iteration we re-fetch the event so the leaderboard shows the
+// fresh counts and the pending badge clears as rows complete.
+async function runBulkRefresh({ resume }) {
+  if (!currentEvent || bulkRefreshInFlight) return;
+  bulkRefreshInFlight = true;
+  const eventId = currentEvent.id;
+  const btn = document.getElementById('lb-refresh-all');
+  const origLabel = btn?.textContent || 'Refresh all';
+
+  let processed = 0;
+  let refreshed = 0;
+  let transient = 0;
+  let removed = 0;
+  let noKey = 0;
+  const transientNames = [];
+
+  const updateBtn = (label) => {
+    if (btn) {
+      btn.disabled = true;
+      btn.textContent = label;
+    }
+  };
+
+  try {
+    if (!resume) {
+      updateBtn('Marking pending…');
+      await startBulkRefresh({ eventId, auth: feAuth() });
+    } else {
+      updateBtn('Resuming…');
+    }
+
+    // Pull the freshly-marked roster so pending badges show up immediately.
     try {
-      const res = await forceRefreshAllParticipants({ eventId, auth: feAuth() });
-      // Pull fresh event + participants so the leaderboard reflects the new
-      // counts — force-refresh wrote them server-side but we hold a stale copy.
+      const fresh = await getFactionEvent(eventId);
+      currentEvent = fresh.event;
+      lastParticipants = fresh.participants || [];
+      renderLeaderboard(currentEvent, lastParticipants);
+      renderJoinOrMe(currentEvent, lastParticipants);
+    } catch { /* best-effort */ }
+
+    while (true) {
+      updateBtn(`Scraping… (${processed} done)`);
+      const res = await scrapeNextPending({ eventId, auth: feAuth() });
+      if (res.done) break;
+
+      processed++;
+      switch (res.status) {
+        case 'refreshed':
+          refreshed++;
+          break;
+        case 'transient_error':
+          transient++;
+          if (res.participant?.torn_name) {
+            transientNames.push(`${res.participant.torn_name} (code ${res.torn_error_code ?? '?'})`);
+          }
+          break;
+        case 'permanent_error':
+        case 'decrypt_failed':
+          removed++;
+          break;
+        case 'no_key':
+          noKey++;
+          break;
+      }
+
+      // Re-fetch and re-render so the just-processed row's pending badge
+      // clears and its new count surfaces. Cheaper than maintaining a
+      // local mutation: one round-trip per row, but the whole flow is
+      // already paced by REFRESH_ALL_DELAY_MS.
       try {
         const fresh = await getFactionEvent(eventId);
         currentEvent = fresh.event;
         lastParticipants = fresh.participants || [];
         renderLeaderboard(currentEvent, lastParticipants);
         renderJoinOrMe(currentEvent, lastParticipants);
-      } catch { /* leaderboard refresh is best-effort */ }
-      // Build a result toast that surfaces transient skips (e.g. paused
-      // keys) by name so the operator knows whose count was NOT updated.
-      const parts = [`Refreshed ${res.refreshed}/${res.total}`];
-      if (res.transient) parts.push(`${res.transient} skipped (paused/throttled)`);
-      if (res.deleted) parts.push(`${res.deleted} removed (revoked)`);
-      if (res.skipped) parts.push(`${res.skipped} no key`);
-      toast(parts.join(' · '), 'success');
-      if (Array.isArray(res.transient_names) && res.transient_names.length) {
-        console.log('[refresh-all] transient skips:', res.transient_names.join(', '));
-      }
-    } catch (err) {
-      toast(err.message || 'Refresh-all failed');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = orig;
+      } catch { /* best-effort */ }
+
+      await new Promise((r) => setTimeout(r, REFRESH_ALL_DELAY_MS));
     }
-  });
+
+    const parts = [`Refreshed ${refreshed}/${processed}`];
+    if (transient) parts.push(`${transient} skipped (paused/throttled)`);
+    if (removed) parts.push(`${removed} removed (revoked)`);
+    if (noKey) parts.push(`${noKey} no key`);
+    toast(parts.join(' · '), 'success');
+    if (transientNames.length) {
+      console.log('[refresh-all] transient skips:', transientNames.join(', '));
+    }
+  } catch (err) {
+    toast(err.message || 'Refresh-all failed');
+  } finally {
+    bulkRefreshInFlight = false;
+    if (btn) {
+      btn.disabled = false;
+      btn.textContent = origLabel;
+    }
+  }
+}
+
+// On every event-view load, look for any rows still flagged pending
+// from an interrupted prior run and auto-resume the loop. The operator
+// doesn't have to click anything — just navigating back to the event
+// finishes whatever batch was in progress when their tab closed.
+function maybeResumePendingScrape() {
+  if (bulkRefreshInFlight) return;
+  if (!currentEvent || !canViewScrapeLog(currentEvent)) return;
+  const anyPending = (lastParticipants || []).some((p) => p.scrape_status === 'pending');
+  if (anyPending) {
+    runBulkRefresh({ resume: true });
+  }
+}
+
+// Format unix-seconds to "YYYY-MM-DD HH:MM:SS" in UTC (= Torn City Time).
+// Keeps the modal output stable across viewers in different timezones —
+// the entire FE feature is anchored to TCT, so UTC is the right default.
+function fmtTctTimestamp(unixSec) {
+  if (!Number.isFinite(unixSec)) return '?';
+  const d = new Date(unixSec * 1000);
+  const pad = (n) => String(n).padStart(2, '0');
+  return (
+    `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())} ` +
+    `${pad(d.getUTCHours())}:${pad(d.getUTCMinutes())}:${pad(d.getUTCSeconds())}`
+  );
 }
 
 // Format a diag object into the plain-text block that gets rendered in the
-// admin debug panel and the per-row scrape-log modal. Designed to be
-// copy-pasteable into Discord — no markdown, no ANSI, just lines. `header`
-// is an optional preamble (participant info, scrape timestamp) prepended
-// above the standard diag dump so the same renderer covers both stored
-// scrapes (header includes "stored scrape from X") and fresh scrapes.
+// admin debug panel and the per-row scrape-log modal. Stripped down to
+// just "window + matched timestamps" per the operator's request — no
+// histograms, no rejections, no per-page log. Designed to be copy-paste-
+// friendly into Discord. `header` is an optional preamble prepended above.
 function formatDiagText(diag, header) {
   if (!diag) {
     return [
       header || '',
       '',
-      'No diagnostics available — this row was last refreshed before the scrape-log column existed, or the gateway pre-dates the diag column. Click "Re-scrape now" to populate it.',
+      'No log data — this row was last refreshed before the scrape-log column existed, or the gateway pre-dates the diag column. Click "Re-scrape now" to populate it.',
     ].filter(Boolean).join('\n');
   }
   const lines = [];
@@ -653,49 +780,38 @@ function formatDiagText(diag, header) {
     lines.push(header);
     lines.push('');
   }
-  if (diag.scraped_at) lines.push(`scraped_at: ${diag.scraped_at}`);
-  if (diag.drug_name) lines.push(`drug: ${diag.drug_name} (item ${diag.drug_item_id ?? '?'})`);
-  lines.push(`window: from=${diag.from_sec} until=${diag.until_sec} (${diag.window_seconds}s)`);
+  // Window line — UTC (= TCT) so the values match the slot picker.
+  lines.push(`Window: ${fmtTctTimestamp(diag.from_sec)} → ${fmtTctTimestamp(diag.until_sec)} TCT`);
+
   if (diag.skipped_reason) {
     lines.push('');
-    lines.push('SKIPPED: ' + diag.skipped_reason);
+    lines.push('Skipped: ' + diag.skipped_reason);
+    return lines.join('\n');
+  }
+
+  // Prefer the structured matched_items emitted by the new gateway. Fall
+  // back to parsing the legacy `matched` strings (rows scraped before the
+  // gateway started persisting matched_items will only have the strings).
+  let items = [];
+  if (Array.isArray(diag.matched_items) && diag.matched_items.length) {
+    items = diag.matched_items.map((it) => ({ ts: it.ts, drug: it.drug }));
+  } else if (Array.isArray(diag.matched) && diag.matched.length) {
+    // Legacy strings look like: `Cannabis @ 2026-04-19T16:10:55.000Z — ...`
+    for (const s of diag.matched) {
+      const m = /^(.+?) @ (\S+)/.exec(s);
+      if (!m) continue;
+      const ts = Math.floor(new Date(m[2]).getTime() / 1000);
+      if (Number.isFinite(ts)) items.push({ ts, drug: m[1] });
+    }
+  }
+
+  lines.push(`Count: ${items.length}`);
+  lines.push('');
+  if (items.length === 0) {
+    lines.push('(no matching log entries in window)');
   } else {
-    lines.push(
-      `pages=${diag.pages ?? '?'} totalEntries=${diag.total_entries ?? '?'} inWindowTotal=${diag.in_window_total ?? '?'} reachedCutoff=${diag.reached_cutoff ?? '?'}`,
-    );
-    if (Array.isArray(diag.matched) && diag.matched.length > 0) {
-      lines.push('');
-      lines.push(`MATCHED (${diag.matched.length}):`);
-      for (const m of diag.matched) lines.push('  ' + m);
-    }
-    if (Array.isArray(diag.log_type_histogram) && diag.log_type_histogram.length > 0) {
-      lines.push('');
-      lines.push(`IN-WINDOW LOG TYPES (top ${diag.log_type_histogram.length}):`);
-      for (const e of diag.log_type_histogram) lines.push(`  ${e.count}x ${e.key}`);
-    }
-    if (Array.isArray(diag.data_item_histogram) && diag.data_item_histogram.length > 0) {
-      lines.push('');
-      lines.push(`IN-WINDOW data.item VALUES (top ${diag.data_item_histogram.length}):`);
-      for (const e of diag.data_item_histogram) lines.push(`  ${e.count}x item=${e.key}`);
-    } else if (Array.isArray(diag.data_item_histogram)) {
-      lines.push('');
-      lines.push('IN-WINDOW data.item VALUES: (none — no item-use-shaped entries at all)');
-    }
-    if (Array.isArray(diag.interesting_rejections) && diag.interesting_rejections.length > 0) {
-      lines.push('');
-      lines.push(`INTERESTING REJECTIONS (have data.item or mention drug name, up to 15):`);
-      for (const r of diag.interesting_rejections) lines.push('  ' + r);
-    }
-    if (Array.isArray(diag.rejected_samples) && diag.rejected_samples.length > 0) {
-      lines.push('');
-      lines.push(`FIRST REJECTIONS (sample of up to 5):`);
-      for (const r of diag.rejected_samples) lines.push('  ' + r);
-    }
-    if (Array.isArray(diag.debug)) {
-      lines.push('');
-      lines.push('PER-PAGE LOG:');
-      for (const d of diag.debug) lines.push('  ' + d);
-    }
+    items.sort((a, b) => a.ts - b.ts);
+    for (const it of items) lines.push(`${fmtTctTimestamp(it.ts)} — ${it.drug}`);
   }
   return lines.join('\n');
 }

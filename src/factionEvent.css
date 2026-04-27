@@ -340,6 +340,24 @@
   display: none;
 }
 
+/* ── Pending-scrape row state (timed Refresh-all flow) ── */
+.lb-table tr.pending-row {
+  opacity: 0.7;
+}
+.lb-table tr.pending-row td.lb-count {
+  color: #aab;
+}
+.lb-pending-badge {
+  display: inline-block;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: rgba(232, 200, 74, 0.18);
+  color: #e8c84a;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
 /* ── Leaderboard scrape-log column + button (admin/creator only) ── */
 .lb-table th.lb-scrape,
 .lb-table td.lb-scrape {
