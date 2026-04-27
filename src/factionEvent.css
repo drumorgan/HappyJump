@@ -168,6 +168,42 @@
   font-size: 0.85rem;
 }
 
+/* ── Top-level event-type tabs (Consumables / Racing / …) ──
+   Lives below the sign-in card so one Torn API key login works for every
+   event type. Active tab is the red brand color; inactive tabs are dim. */
+.fe-tabs {
+  display: flex;
+  gap: 0;
+  margin: 0.5rem 0 1rem;
+  border-bottom: 1px solid #2c2c3a;
+}
+
+.fe-tab {
+  flex: 1 1 auto;
+  padding: 0.65rem 1rem;
+  background: transparent;
+  color: #888;
+  border: none;
+  border-bottom: 2px solid transparent;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: color 0.15s, border-color 0.15s;
+}
+
+.fe-tab:hover {
+  color: #ccc;
+}
+
+.fe-tab.active {
+  color: #e94560;
+  border-bottom-color: #e94560;
+}
+
+.fe-tab-panel.hidden {
+  display: none;
+}
+
 /* ── Pencil-edit buttons (creator only) ── */
 .fe-pencil-btn {
   display: inline-block;

@@ -1564,6 +1564,7 @@ async function boot() {
   renderIdentityBar();
   wireIdentityBar();
   wireRefreshAllButton();
+  wireTabs();
 
   const id = getEventIdFromUrl();
   if (id) {
@@ -1571,6 +1572,31 @@ async function boot() {
   } else {
     showPickerView();
   }
+}
+
+// ── Top-level tabs (Consumables / Racing / …) ───────────────────────
+// Sign-in card sits ABOVE the tabs so a single login covers every event
+// type. Tabs just toggle which panel is visible; default is Consumables.
+function wireTabs() {
+  const tabs = document.querySelectorAll('.fe-tab');
+  const panels = {
+    consumables: document.getElementById('tab-consumables'),
+    racing: document.getElementById('tab-racing'),
+  };
+  tabs.forEach((tab) => {
+    tab.addEventListener('click', () => {
+      const which = tab.dataset.tab;
+      tabs.forEach((t) => {
+        const active = t === tab;
+        t.classList.toggle('active', active);
+        t.setAttribute('aria-selected', active ? 'true' : 'false');
+      });
+      Object.entries(panels).forEach(([name, panel]) => {
+        if (!panel) return;
+        panel.classList.toggle('hidden', name !== which);
+      });
+    });
+  });
 }
 
 boot();
