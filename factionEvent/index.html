@@ -27,8 +27,10 @@
       <button type="button" id="fe-sign-out-btn" class="submit-btn-alt fe-secondary fe-sign-out-btn">Sign out</button>
     </div>
 
-    <!-- Sign-in card — visible while no FE session exists. Once signed in,
-         this card hides and the create / join forms drop their key inputs. -->
+    <!-- Sign-in card — visible while no FE session exists. Lives ABOVE the
+         tabs so a single sign-in works for every event type (Consumables,
+         Racing, …). Once signed in, this card hides and the create / join
+         forms drop their key inputs. -->
     <section id="sign-in-view" class="hidden">
       <div class="card">
         <div class="card-header">
@@ -47,6 +49,16 @@
         </div>
       </div>
     </section>
+
+    <!-- Top-level tabs. Consumables = drug-counting app (current entire FE
+         feature). Racing = future faction racing leaderboard, placeholder
+         only for now. -->
+    <nav class="fe-tabs" role="tablist" aria-label="Faction Event categories">
+      <button type="button" class="fe-tab active" data-tab="consumables" role="tab" aria-selected="true">Consumables</button>
+      <button type="button" class="fe-tab" data-tab="racing" role="tab" aria-selected="false">Racing</button>
+    </nav>
+
+    <div id="tab-consumables" class="fe-tab-panel" role="tabpanel">
 
     <!-- Create / pick mode -->
     <section id="picker-view" class="hidden">
@@ -248,6 +260,20 @@
 
       <button id="back-to-picker" class="back-button">← Back to all events</button>
     </section>
+
+    </div><!-- /#tab-consumables -->
+
+    <div id="tab-racing" class="fe-tab-panel hidden" role="tabpanel">
+      <div class="card highlight-card">
+        <div class="card-header">
+          <span>Faction Racing Leaderboard</span>
+        </div>
+        <div class="card-body">
+          <div class="big-price">Coming soon</div>
+          <p class="form-intro" style="text-align:center;color:#888">A racing leaderboard for your faction is on the way.</p>
+        </div>
+      </div>
+    </div><!-- /#tab-racing -->
 
     <div id="loading" class="loading hidden">Loading...</div>
 
