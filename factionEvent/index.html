@@ -255,9 +255,21 @@
       <div class="crosslink-label">More Torn tools by Giro Vagabondo</div>
       <div class="crosslink-list">
         <div><a href="/" class="crosslink-link crosslink-happyjump">Happy Jump</a> &mdash; Insured drug packages</div>
-        <div><a href="https://valigia.girovagabondo.com" target="_blank" rel="noopener" class="crosslink-link crosslink-valigia">Valigia</a> &mdash; Torn City Travel Arbitrage</div>
         <div><a href="https://tornder.girovagabondo.com" target="_blank" rel="noopener" class="crosslink-link crosslink-tornder">Tornder</a> &mdash; Swipe your way through Torn City</div>
+        <div><a href="https://yoinkadventures.com" target="_blank" rel="noopener" class="crosslink-link crosslink-yoink">Yoink Adventures</a> &mdash; <span id="yoink-tagline"></span></div>
       </div>
+      <script>
+        (() => {
+          const tags = [
+            'Turn your travels into a real-world game',
+            'Start collecting your world — on a map',
+            'A travel tracker that feels like a game',
+            'Collect your adventures. See them on a map.',
+            'Explore the world like a game board'
+          ];
+          document.getElementById('yoink-tagline').textContent = tags[Math.floor(Math.random() * tags.length)];
+        })();
+      </script>
     </div>
   </div>
 
