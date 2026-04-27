@@ -337,8 +337,14 @@ export async function getFactionEvent(eventId) {
   return gateway('get-faction-event', { event_id: eventId });
 }
 
-export async function listFactionEvents() {
-  return gateway('list-faction-events');
+/**
+ * List faction events visible to the caller. Backend filters server-side:
+ *   - HJ admin (Supabase Auth header, auto-attached) — sees all events.
+ *   - FE session — sees events they created OR have a participant row in.
+ *   - No auth — empty list.
+ */
+export async function listFactionEvents(auth) {
+  return gateway('list-faction-events', authPayload(auth));
 }
 
 /**
