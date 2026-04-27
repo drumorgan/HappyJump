@@ -461,3 +461,32 @@ export async function forceRefreshAllParticipants({ eventId, auth }) {
   });
 }
 
+/**
+ * Mark every participant in an event as scrape_status='pending' so the
+ * frontend can drive a timed one-at-a-time refresh loop. Idempotent.
+ * Authorized to HJ admin OR event creator. Returns { marked, participants }.
+ */
+export async function startBulkRefresh({ eventId, auth }) {
+  return gateway('start-bulk-refresh', {
+    event_id: eventId,
+    ...authPayload(auth),
+  });
+}
+
+/**
+ * Process the next pending participant in the queue: probe key, scrape,
+ * persist count + diag, clear scrape_status. Frontend calls this in a
+ * loop with a delay between calls until `done: true`. Returns one of:
+ *   { done: true, remaining: 0 }                            — queue empty
+ *   { done: false, remaining: N, status: 'refreshed', participant, count, diag }
+ *   { done: false, remaining: N, status: 'transient_error' | 'permanent_error'
+ *                                          | 'no_key' | 'decrypt_failed',
+ *     participant, message, torn_error_code? }
+ */
+export async function scrapeNextPending({ eventId, auth }) {
+  return gateway('scrape-next-pending', {
+    event_id: eventId,
+    ...authPayload(auth),
+  });
+}
+
