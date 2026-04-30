@@ -1843,12 +1843,15 @@ async function handleReportOd(body: any) {
   const xanaxUsedCount = xanaxResult.count;
   const ecstasyUsed = !!ecstasyUsage;
 
-  // If all drugs used (4 Xanax + 1 Ecstasy) AND no OD was detected, auto-close — the jump is complete.
+  // If Ecstasy was used successfully AND no OD was detected, auto-close — the jump is complete.
+  // Ecstasy is the final step of a Happy Jump; once it's used without an OD, coverage is spent
+  // regardless of how many Xanax show in the log (clients commonly stack Xanax before buying
+  // insurance, so the in-policy Xanax count is often < 4 even on a fully-completed jump).
   // IMPORTANT: do NOT clean-close if an OD event exists. An Ecstasy OD also produces an Ecstasy "use"
   // log entry (the OD is recorded separately in the events endpoint, and the use-log narrative does
   // not always contain "overdose"), so `ecstasyUsed` can be true precisely when the covered Ecstasy OD
   // happened. Falling through to the OD verification path below is what pays that claim out.
-  if (!odDrug && xanaxUsedCount >= 4 && ecstasyUsed) {
+  if (!odDrug && ecstasyUsed) {
     const nowIso = new Date().toISOString();
     await supabase
       .from('transactions')
@@ -1859,10 +1862,10 @@ async function handleReportOd(body: any) {
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (All Drugs Used) — ${identData.name} [${tornId}]`,
+      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
       [
-        `Client tried to claim an OD, but API log shows all drugs taken successfully (${xanaxUsedCount} Xanax + Ecstasy).`,
-        `Policy auto-closed clean.`,
+        `Client tried to claim an OD, but API log shows Ecstasy taken successfully (${xanaxUsedCount} Xanax + Ecstasy in-policy).`,
+        `Policy auto-closed clean — the Happy Jump is complete.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
         `Transaction ID: ${txn_id}`,
@@ -1874,7 +1877,7 @@ async function handleReportOd(body: any) {
       verified: false,
       policy_closed: true,
       torn_id: tornId,
-      detail: `All 4 Xanax and Ecstasy were already taken successfully — your Happy Jump is complete and the policy has been closed clean.`,
+      detail: `Ecstasy was already taken successfully — your Happy Jump is complete and the policy has been closed clean.`,
     });
   }
 
@@ -2040,8 +2043,11 @@ async function handleCheckDrugUsage(body: any) {
 
   const nowIso = new Date().toISOString();
 
-  // Auto-close if all drugs used successfully (4 Xanax + 1 Ecstasy)
-  if (xanaxUsed >= 4 && ecstasyUsed) {
+  // Auto-close if Ecstasy was used successfully — the Happy Jump is complete.
+  // Xanax count is informational only; clients often stack Xanax before purchase, so the
+  // in-policy count is frequently < 4 even on a fully-finished jump. Ecstasy use is the
+  // unambiguous "jump done" signal.
+  if (ecstasyUsed) {
     await supabase
       .from('transactions')
       .update({ status: 'closed_clean', closed_at: nowIso })
@@ -2051,10 +2057,10 @@ async function handleCheckDrugUsage(body: any) {
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (All Drugs Used) — ${identData.name} [${tornId}]`,
+      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
       [
-        `Client's API log confirms all drugs taken successfully (${xanaxUsed} Xanax + Ecstasy).`,
-        `Policy auto-closed clean.`,
+        `Client's API log confirms Ecstasy taken successfully (${xanaxUsed} Xanax + Ecstasy in-policy).`,
+        `Policy auto-closed clean — the Happy Jump is complete.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
         `Transaction ID: ${txn_id}`,
@@ -2066,7 +2072,7 @@ async function handleCheckDrugUsage(body: any) {
       xanax_used: xanaxUsed,
       ecstasy_used: ecstasyUsed,
       policy_closed: true,
-      detail: 'All drugs taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
+      detail: 'Ecstasy taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
       debug,
     });
   }
