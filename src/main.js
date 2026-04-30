@@ -154,8 +154,8 @@ function buildCoverageHTML(product, pricing, config) {
         <td class="cov-payout">${ecsPayout}</td>
       </tr>
       <tr>
-        <td class="cov-clean">No OD (clean jump)</td>
-        <td class="cov-clean">You keep your Happy Jump profits</td>
+        <td class="cov-clean">Clean jump (Ecstasy used, no OD)</td>
+        <td class="cov-clean">Policy closes clean — you keep your Happy Jump profits</td>
       </tr>`;
   } else if (product === 'insurance') {
     rows = `
@@ -168,8 +168,8 @@ function buildCoverageHTML(product, pricing, config) {
         <td class="cov-payout">${ecsPayout}</td>
       </tr>
       <tr>
-        <td class="cov-clean">No OD (clean jump)</td>
-        <td class="cov-clean">Insurance expires after 3 days (72 hours)</td>
+        <td class="cov-clean">Clean jump (Ecstasy used, no OD)</td>
+        <td class="cov-clean">Policy closes clean on Ecstasy use, or expires after 3 days (72 hours)</td>
       </tr>`;
   } else {
     // ecstasy_only
@@ -183,8 +183,8 @@ function buildCoverageHTML(product, pricing, config) {
         <td class="cov-not-covered">NOT COVERED</td>
       </tr>
       <tr>
-        <td class="cov-clean">No OD (clean jump)</td>
-        <td class="cov-clean">Insurance expires after 3 days (72 hours)</td>
+        <td class="cov-clean">Clean jump (Ecstasy used, no OD)</td>
+        <td class="cov-clean">Policy closes clean on Ecstasy use, or expires after 3 days (72 hours)</td>
       </tr>`;
   }
 
@@ -193,7 +193,10 @@ function buildCoverageHTML(product, pricing, config) {
     <tbody>${rows}</tbody>
   </table>`;
 
-  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong> (ending with successful use of Ecstasy without ODing), max 3 days (72 hours) from purchase. Report any OD with Xanax or Ecstasy within that window and you're fully covered.</p>`;
+  const xanaxClause = product === 'ecstasy_only'
+    ? 'Xanax ODs are <strong>not covered</strong> by this policy.'
+    : 'Any Xanax OD on pills 1&ndash;4 before the Ecstasy is covered too.';
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong>, max 3 days (72 hours) from purchase. <strong>Using your Ecstasy ends the policy</strong> &mdash; clean if you survive (you keep the profits), or paid out if you OD. ${xanaxClause} Report any covered OD within the 72-hour window and you're fully covered.</p>`;
 
   return html;
 }
@@ -754,7 +757,7 @@ function renderActiveDeal(transactions) {
             <li>Wait for Drug/Booster Cooldown to clear</li>
             <li>Wait for the clock to end on :01, :16, :31, :46</li>
             <li>Use 5x Erotic DVDs</li>
-            <li>Use 1x Ecstasy (1 use covered)</li>
+            <li>Use 1x Ecstasy (1 use covered) &mdash; <em>this closes your policy: clean if no OD, payout if OD</em></li>
             <li>Dump all Energy at the Gym</li>
             <li><em>(OPTIONAL)</em> Refill with Points</li>
             <li>Dump all Energy at the Gym</li>
