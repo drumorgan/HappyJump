@@ -824,10 +824,17 @@ function runDrugUsageCheck(activeTxn) {
       const ecstasyDone = result.ecstasy_used || false;
       const xanaxColor = xanaxCount >= 4 ? '#4caf50' : '#c8aa6e';
       const ecstasyColor = ecstasyDone ? '#4caf50' : '#c8aa6e';
+      // L'Ultimo Miglio (ecstasy_only) only covers the Ecstasy step — hide
+      // the Xanax counter so clients don't think their Xanax stack is being
+      // tracked against this policy.
+      const isEcstasyOnly = activeTxn.product_type === 'ecstasy_only';
+      const xanaxSpan = isEcstasyOnly
+        ? ''
+        : `<span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>`;
       progressEl.style.opacity = '1';
       progressEl.innerHTML = `
         <div style="display:flex;gap:1.5rem;justify-content:center;font-size:1.05rem">
-          <span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>
+          ${xanaxSpan}
           <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
         </div>`;
     }
