@@ -1636,6 +1636,16 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
       : Number(txnRecord.ecstasy_payout);
   }
 
+  // When rolling BACK out of an OD state to anything other than payout_sent
+  // (i.e. operator retracts the OD: false alarm, customer didn't actually OD),
+  // clear the stale payout_amount that was stamped on the OD transition.
+  // payout_sent retains the value because that's the real payout record.
+  if ((oldStatus === 'od_xanax' || oldStatus === 'od_ecstasy')
+      && new_status !== 'payout_sent'
+      && new_status !== oldStatus) {
+    updates.payout_amount = null;
+  }
+
   // Apply the status update
   const { error: updateErr } = await supabase
     .from('transactions')
