@@ -870,16 +870,21 @@ async function autoCloseExpired(supabase: any) {
   // Auto-close purchased transactions after 3 days
   const { data: expired } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, ecstasy_payout')
+    .select('id, torn_id, torn_name, ecstasy_payout, suggested_price, amount_paid')
     .eq('status', 'purchased')
     .lt('closes_at', nowIso);
 
   if (!expired || expired.length === 0) return;
 
   for (const txn of expired) {
+    const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
+    // Defensive backstop for legacy purchased rows where amount_paid never got filled.
+    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
+      closeUpdate.amount_paid = txn.suggested_price;
+    }
     await supabase
       .from('transactions')
-      .update({ status: 'closed_clean', closed_at: nowIso })
+      .update(closeUpdate)
       .eq('id', txn.id);
 
     // Release locked reserve (atomic)
@@ -1569,7 +1574,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Always fetch torn_id from the transaction itself (don't rely on request body)
   const { data: txnRecord, error: fetchErr } = await supabase
     .from('transactions')
-    .select('torn_id, torn_name, status, xanax_payout, ecstasy_payout, payout_amount')
+    .select('torn_id, torn_name, status, suggested_price, amount_paid, xanax_payout, ecstasy_payout, payout_amount')
     .eq('id', txn_id)
     .single();
 
@@ -1588,6 +1593,22 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     updates.purchased_at = now;
     updates.closes_at = new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString();
     updates.expires_at = null; // Clear request expiry once purchased
+    // Treat operator's "Mark Purchased" click as confirmation that payment was received.
+    // verify-payment only catches Torn-trade money sends; out-of-band payments (faction
+    // bank, friend pays, in-person trade) leave amount_paid at 0. Operator wouldn't mark
+    // Purchased without payment received, so backfill amount_paid to suggested_price.
+    if (Number(txnRecord.amount_paid || 0) === 0 && txnRecord.suggested_price) {
+      updates.amount_paid = txnRecord.suggested_price;
+    }
+  }
+
+  // Defensive backstop: if a legacy purchased row (from before the autofill above existed)
+  // is now being closed, fill amount_paid on the way out so closed rows always have it set.
+  // rejected stays at 0 — that's the truthful no-payment-received state.
+  if ((new_status === 'closed_clean' || new_status === 'payout_sent')
+      && Number(txnRecord.amount_paid || 0) === 0
+      && txnRecord.suggested_price) {
+    updates.amount_paid = txnRecord.suggested_price;
   }
 
   // Determine reserve transition direction
@@ -1797,7 +1818,7 @@ async function handleReportOd(body: any) {
   // Get the transaction and verify ownership
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, closes_at, status, product_type, xanax_payout, ecstasy_payout')
+    .select('id, torn_id, purchased_at, closes_at, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -1873,9 +1894,14 @@ async function handleReportOd(body: any) {
   // happened. Falling through to the OD verification path below is what pays that claim out.
   if (!odDrug && ecstasyUsed) {
     const nowIso = new Date().toISOString();
+    const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
+    // Defensive backstop for legacy purchased rows where amount_paid never got filled.
+    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
+      closeUpdate.amount_paid = txn.suggested_price;
+    }
     await supabase
       .from('transactions')
-      .update({ status: 'closed_clean', closed_at: nowIso })
+      .update(closeUpdate)
       .eq('id', txn_id);
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
@@ -2024,7 +2050,7 @@ async function handleCheckDrugUsage(body: any) {
 
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, status, ecstasy_payout')
+    .select('id, torn_id, purchased_at, status, suggested_price, amount_paid, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -2068,9 +2094,14 @@ async function handleCheckDrugUsage(body: any) {
   // in-policy count is frequently < 4 even on a fully-finished jump. Ecstasy use is the
   // unambiguous "jump done" signal.
   if (ecstasyUsed) {
+    const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
+    // Defensive backstop for legacy purchased rows where amount_paid never got filled.
+    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
+      closeUpdate.amount_paid = txn.suggested_price;
+    }
     await supabase
       .from('transactions')
-      .update({ status: 'closed_clean', closed_at: nowIso })
+      .update(closeUpdate)
       .eq('id', txn_id);
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
