@@ -122,37 +122,42 @@ export function stripHtml(s) {
  * Parse Torn events to find the most recent OD on Xanax or Ecstasy.
  * Returns { odDrug, odEventTimestamp } or { odDrug: null } if no OD found.
  *
+ * Matches only first-person narratives ("You overdosed on X") to avoid picking
+ * up faction-mate news, attack narratives, or other third-party events that
+ * happen to contain "overdose" plus a drug name. Pass fromTs to defensively
+ * exclude events older than the policy's purchased_at, in case the API's `from`
+ * filter is fuzzy.
+ *
  * @param {Object} eventsData - Raw Torn API events response
- * @returns {{ odDrug: string|null, odEventTimestamp: number|null }}
+ * @param {number|null} fromTs - Optional Unix timestamp lower bound (seconds)
+ * @returns {{ odDrug: string|null, odEventTimestamp: number|null, ecstasyUsedTimestamp: number|null }}
  */
-export function parseOdFromEvents(eventsData) {
+export function parseOdFromEvents(eventsData, fromTs = null) {
   let odDrug = null;
   let odEventTimestamp = null;
   let ecstasyUsedTimestamp = null;
+
+  const odNarrative = /\byou\s+overdosed?\s+on\s+(xanax|ecstasy)\b/;
 
   if (!eventsData?.error && eventsData?.events) {
     const events = Object.values(eventsData.events);
     // Sort by timestamp descending (most recent first)
     events.sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
     for (const evt of events) {
+      if (fromTs && evt.timestamp && evt.timestamp < fromTs) continue;
       const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('overdos')) {
-        if (evtText.includes('xanax')) {
-          odDrug = 'xanax';
-          odEventTimestamp = evt.timestamp;
-          break;
-        }
-        if (evtText.includes('ecstasy')) {
-          odDrug = 'ecstasy';
-          odEventTimestamp = evt.timestamp;
-          break;
-        }
+      const m = evtText.match(odNarrative);
+      if (m) {
+        odDrug = m[1];
+        odEventTimestamp = evt.timestamp;
+        break;
       }
     }
 
     // Scan for successful Ecstasy usage (e.g. "You used some Ecstasy gaining 15,850 happiness")
     // If found, the insured tab is consumed — policy should close.
     for (const evt of events) {
+      if (fromTs && evt.timestamp && evt.timestamp < fromTs) continue;
       const evtText = stripHtml(evt.event || '').toLowerCase();
       if (evtText.includes('ecstasy') && evtText.includes('happ') && !evtText.includes('overdos')) {
         // Keep overwriting to find earliest (events sorted desc)

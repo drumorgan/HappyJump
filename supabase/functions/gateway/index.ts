@@ -1822,14 +1822,25 @@ async function handleReportOd(body: any) {
   let odDrug: string | null = null;
   let odEventTimestamp: number | null = null;
 
+  // Match only first-person OD narratives. Torn's events feed includes faction news,
+  // attack narratives, and other third-party items that can contain "overdose" + a
+  // drug name without belonging to this user. A loose substring match picks those up
+  // and mis-classifies the OD type.
+  const odNarrative = /\byou\s+overdosed?\s+on\s+(xanax|ecstasy)\b/;
+
   if (!eventsData.error && eventsData.events) {
     const events = Object.values(eventsData.events) as any[];
     events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
     for (const evt of events) {
+      // Defensive timestamp re-check in case the API's `from` filter is fuzzy
+      // and a pre-policy OD event from a previous jump leaks through.
+      if (fromTs && evt.timestamp && evt.timestamp < fromTs) continue;
       const evtText = stripHtml(evt.event || '').toLowerCase();
-      if (evtText.includes('overdos')) {
-        if (evtText.includes('xanax')) { odDrug = 'xanax'; odEventTimestamp = evt.timestamp; break; }
-        if (evtText.includes('ecstasy')) { odDrug = 'ecstasy'; odEventTimestamp = evt.timestamp; break; }
+      const m = evtText.match(odNarrative);
+      if (m) {
+        odDrug = m[1];
+        odEventTimestamp = evt.timestamp;
+        break;
       }
     }
   }
@@ -1842,6 +1853,15 @@ async function handleReportOd(body: any) {
 
   const xanaxUsedCount = xanaxResult.count;
   const ecstasyUsed = !!ecstasyUsage;
+
+  // Cross-validate the events-scan classification against the drug-use log.
+  // You cannot OD on a drug you never took, so if events say "Xanax OD" but the
+  // log shows zero in-policy Xanax uses while Ecstasy was used, the events match
+  // is noise and the real OD is on Ecstasy. The log is ground truth for drug use.
+  if (odDrug === 'xanax' && xanaxUsedCount === 0 && ecstasyUsed) {
+    odDrug = 'ecstasy';
+    // odEventTimestamp stays — still a valid timestamp for replay-prevention.
+  }
 
   // If Ecstasy was used successfully AND no OD was detected, auto-close — the jump is complete.
   // Ecstasy is the final step of a Happy Jump; once it's used without an OD, coverage is spent

@@ -449,6 +449,47 @@ describe('parseOdFromEvents', () => {
     const r = parseOdFromEvents(events);
     expect(r.ecstasyUsedTimestamp).toBe(500);
   });
+
+  it('ignores third-party OD narratives (faction-mate / attack reports)', () => {
+    // Faction-mate's Xanax OD news appearing in the user's events feed AFTER
+    // the user's own Ecstasy OD must NOT be classified as the user's Xanax OD.
+    const events = {
+      events: {
+        '1': { timestamp: 1000, event: 'You overdosed on Ecstasy' },
+        '2': { timestamp: 2000, event: 'FactionMate overdosed on Xanax and was hospitalized' },
+        '3': { timestamp: 3000, event: 'SomeMugger mugged you and noted overdose history with Xanax' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.odDrug).toBe('ecstasy');
+    expect(r.odEventTimestamp).toBe(1000);
+  });
+
+  it('ignores OD events older than fromTs', () => {
+    // Pre-policy Xanax OD (from a previous jump) leaks past Torn's `from` filter.
+    // We must defensively re-check timestamps and ignore events before the policy.
+    const events = {
+      events: {
+        '1': { timestamp: 500, event: 'You overdosed on Xanax' },     // old, pre-policy
+        '2': { timestamp: 1500, event: 'You overdosed on Ecstasy' },  // current jump
+      },
+    };
+    const fromTs = 1000;
+    const r = parseOdFromEvents(events, fromTs);
+    expect(r.odDrug).toBe('ecstasy');
+    expect(r.odEventTimestamp).toBe(1500);
+  });
+
+  it('returns no OD when only third-party overdose narratives are present', () => {
+    const events = {
+      events: {
+        '1': { timestamp: 2000, event: 'FactionMate overdosed on Xanax' },
+        '2': { timestamp: 3000, event: 'You were attacked by SomeUser' },
+      },
+    };
+    const r = parseOdFromEvents(events);
+    expect(r.odDrug).toBeNull();
+  });
 });
 
 // ── OD Coverage Validation ──────────────────────────────────────────
