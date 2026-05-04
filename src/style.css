@@ -1057,27 +1057,54 @@ body {
 .crosslink-factionevent { color: #b07cff; }  /* Faction Event lavender */
 .crosslink-girovagabondo { color: #009246; }  /* GiroVagabondo Italian green */
 
-.crosslink-girovagabondo-row {
+.giro-card {
   display: flex;
+  flex-direction: column;
   align-items: center;
-  justify-content: center;
-  gap: 0.5rem;
-  flex-wrap: wrap;
+  gap: 0.85rem;
+  margin-top: 1.5rem;
+  padding: 1.5rem 1rem 1.25rem;
+  text-decoration: none;
+  color: #b8b8b8;
+  border-radius: 10px;
+  transition: background-color 0.15s ease;
 }
 
-.crosslink-girovagabondo-avatar {
-  display: inline-block;
-  line-height: 0;
+.giro-card:hover {
+  background: rgba(255, 255, 255, 0.03);
+  text-decoration: none;
+}
+
+.giro-card-avatar {
+  display: block;
+  width: 96px;
+  height: 96px;
   border-radius: 50%;
   overflow: hidden;
-  width: 28px;
-  height: 28px;
-  flex-shrink: 0;
+  line-height: 0;
 }
 
-.crosslink-girovagabondo-avatar img {
+.giro-card-avatar img {
   width: 100%;
   height: 100%;
   object-fit: cover;
   display: block;
+}
+
+.giro-card-flag {
+  display: block;
+  width: 80px;
+  height: 6px;
+  border-radius: 2px;
+  background: linear-gradient(
+    to right,
+    #009246 0%, #009246 33.33%,
+    #f1f2f1 33.33%, #f1f2f1 66.66%,
+    #ce2b37 66.66%, #ce2b37 100%
+  );
+}
+
+.giro-card-caption {
+  font-size: 0.95rem;
+  letter-spacing: 0.02em;
 }
