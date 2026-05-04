@@ -1056,3 +1056,28 @@ body {
 .crosslink-yoink        { color: #c0c4cc; }  /* Yoink neutral */
 .crosslink-factionevent { color: #b07cff; }  /* Faction Event lavender */
 .crosslink-girovagabondo { color: #009246; }  /* GiroVagabondo Italian green */
+
+.crosslink-girovagabondo-row {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.crosslink-girovagabondo-avatar {
+  display: inline-block;
+  line-height: 0;
+  border-radius: 50%;
+  overflow: hidden;
+  width: 28px;
+  height: 28px;
+  flex-shrink: 0;
+}
+
+.crosslink-girovagabondo-avatar img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
