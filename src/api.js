@@ -253,6 +253,20 @@ export async function adminTestDrugCheck(apiKey, fromTs) {
 }
 
 /**
+ * Admin: run the full report-od logic dry against a client's API key.
+ * Pass either a txn_id (uses that transaction's purchased_at) or a from_ts.
+ * Returns events scan, log OD scan, drug-use counts, and the final
+ * classification the live endpoint would have produced.
+ */
+export async function adminTestOdVerify({ apiKey, txnId, fromTs }) {
+  return gateway('admin-test-od-verify', {
+    api_key: apiKey,
+    txn_id: txnId || undefined,
+    from_ts: fromTs || undefined,
+  });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {

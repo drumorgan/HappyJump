@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -859,6 +859,119 @@ document.getElementById('diag-drug-btn')?.addEventListener('click', async () => 
 
   btn.disabled = false;
   btn.textContent = 'Test Xanax/Ecstasy Count';
+});
+
+// Test OD Verification — runs the full report-od logic (events scan + log
+// OD scan + classification) dry against the API key + txn ID in the diag
+// fields. Surfaces every signal the operator needs to see why a verify-OD
+// did or didn't succeed without poking at function logs.
+document.getElementById('diag-od-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const txnInput = document.getElementById('diag-od-txn');
+  const fromInput = document.getElementById('diag-drug-from');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-od-btn');
+  const apiKey = keyInput.value.trim();
+  const txnId = txnInput?.value.trim();
+  const fromValue = fromInput?.value;
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter the client\'s Torn API key in the field above first.</span>';
+    return;
+  }
+
+  let fromTs;
+  if (!txnId && fromValue) {
+    const ms = new Date(fromValue).getTime();
+    if (!Number.isFinite(ms)) {
+      resultsEl.innerHTML = '<span style="color:#ff6b81">Invalid date/time.</span>';
+      return;
+    }
+    fromTs = Math.floor(ms / 1000);
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  resultsEl.textContent = '';
+
+  try {
+    const r = await adminTestOdVerify({ apiKey, txnId, fromTs });
+    if (r.error) {
+      resultsEl.innerHTML = `<span style="color:#ff6b81">${esc(r.error)}</span>`;
+      btn.disabled = false;
+      btn.textContent = 'Test OD Verification';
+      return;
+    }
+
+    const lines = [];
+    const cls = r.classification || {};
+    const clsColor = cls.drug ? '#6bff8e' : '#ff6b81';
+    const clsLabel = cls.drug
+      ? `${cls.drug.toUpperCase()} OD (source: ${cls.source}${cls.timestamp_iso ? ` @ ${cls.timestamp_iso}` : ''})`
+      : 'NO OD DETECTED — verify-OD would return "Could not verify"';
+
+    lines.push(`<strong>${esc(r.player?.name || '?')} [${esc(r.player?.id || '?')}]</strong>`);
+    if (r.player?.status) lines.push(`<span style="color:#aaa;font-size:0.8rem">Status: ${esc(r.player.status)}</span>`);
+    lines.push(`<strong style="color:${clsColor}">→ ${esc(clsLabel)}</strong>`);
+    lines.push(`<span style="color:#888;font-size:0.8rem">from_ts: ${r.from_ts ?? '(none)'} ${r.from_iso ? `(${esc(r.from_iso)})` : ''}</span>`);
+
+    if (r.transaction) {
+      const t = r.transaction;
+      lines.push(`<span style="color:#888;font-size:0.8rem">txn ${esc(t.id)} · status=${esc(t.status)} · purchased_at=${esc(t.purchased_at || '(null)')}</span>`);
+    }
+
+    lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Events scan</span>');
+    const ev = r.events_scan || {};
+    if (ev.error) {
+      lines.push(`<span style="color:#ff6b81">API error: ${esc(JSON.stringify(ev.error))}</span>`);
+    } else {
+      lines.push(`<span style="color:#ccc;font-size:0.8rem">total_events=${ev.total_events ?? 0} · in_window=${ev.in_window_count ?? 0} · regex_match=${ev.matched ? `${ev.matched.drug}@${ev.matched.ts}` : 'none'}</span>`);
+      if (ev.overdose_narratives && ev.overdose_narratives.length > 0) {
+        lines.push('<span style="color:#aaa;font-size:0.8rem">Overdose narratives (matched OR rejected by regex):</span>');
+        ev.overdose_narratives.forEach((n, i) => {
+          const date = n.ts ? new Date(n.ts * 1000).toLocaleString() : '?';
+          lines.push(`<span style="color:#ccc;font-size:0.75rem">${i + 1}. [${esc(date)}] ${esc(n.text)}</span>`);
+        });
+      } else {
+        lines.push('<span style="color:#888;font-size:0.8rem">No "overdose"-containing narratives in events feed.</span>');
+      }
+      if (ev.sample_narratives && ev.sample_narratives.length > 0 && (!ev.overdose_narratives || ev.overdose_narratives.length === 0)) {
+        lines.push('<span style="color:#666;font-size:0.75rem">Sample narratives (first 5):</span>');
+        ev.sample_narratives.forEach((s, i) => {
+          const date = s.ts ? new Date(s.ts * 1000).toLocaleString() : '?';
+          lines.push(`<span style="color:#666;font-size:0.7rem">${i + 1}. [${esc(date)}] ${esc(s.text)}</span>`);
+        });
+      }
+    }
+
+    lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Log OD scan (fallback)</span>');
+    const lo = r.log_od_scan || {};
+    if (lo.found) {
+      const date = lo.timestamp ? new Date(lo.timestamp * 1000).toLocaleString() : '?';
+      lines.push(`<span style="color:#6bff8e;font-size:0.8rem">FOUND: ${esc(lo.drug)} @ ${esc(date)}</span>`);
+      lines.push(`<span style="color:#ccc;font-size:0.75rem">${esc(lo.detail || '')}</span>`);
+    } else {
+      lines.push('<span style="color:#888;font-size:0.8rem">No OD entry in user log within window.</span>');
+    }
+
+    lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Drug-use counts</span>');
+    const xl = r.xanax_log || {};
+    const el = r.ecstasy_log || {};
+    lines.push(`<span style="color:#ccc;font-size:0.8rem">Xanax uses=${xl.count ?? 0} · pages=${xl.pages ?? 0} · entries=${xl.total_entries ?? 0}</span>`);
+    lines.push(`<span style="color:#ccc;font-size:0.8rem">Ecstasy used=${el.used ? 'YES' : 'no'}${el.detail ? ` — ${esc(el.detail)}` : ''}</span>`);
+    if (xl.details && xl.details.length > 0) {
+      xl.details.forEach((d, i) => {
+        lines.push(`<span style="color:#999;font-size:0.7rem">  X${i + 1}. ${esc(d)}</span>`);
+      });
+    }
+
+    resultsEl.innerHTML = lines.join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Test failed: ${esc(e.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Test OD Verification';
 });
 
 // Config panel toggle
