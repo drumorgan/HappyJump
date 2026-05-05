@@ -1861,6 +1861,18 @@ async function handleReportOd(body: any) {
   // (and could plausibly use "the", "a", etc.).
   const odNarrative = /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/;
 
+  // Diagnostics — captured whether or not we find a match so the no-match
+  // path can surface what Torn actually returned. Without this we're
+  // debugging blind on regex / phrasing / API-delay issues.
+  const eventsDiag = {
+    error: eventsData?.error || null,
+    total_events: eventsData?.events ? Object.keys(eventsData.events).length : 0,
+    in_window_count: 0,
+    overdose_narratives: [] as Array<{ ts: number; text: string }>,
+    sample_narratives: [] as Array<{ ts: number; text: string }>,
+    from_ts: fromTs ?? null,
+  };
+
   if (!eventsData.error && eventsData.events) {
     const events = Object.values(eventsData.events) as any[];
     events.sort((a: any, b: any) => (b.timestamp || 0) - (a.timestamp || 0));
@@ -1868,7 +1880,16 @@ async function handleReportOd(body: any) {
       // Defensive timestamp re-check in case the API's `from` filter is fuzzy
       // and a pre-policy OD event from a previous jump leaks through.
       if (fromTs && evt.timestamp && evt.timestamp < fromTs) continue;
+      eventsDiag.in_window_count++;
       const evtText = stripHtml(evt.event || '').toLowerCase();
+      // Capture any narrative containing "overdose" so we can see why the
+      // regex rejected it. Capture up to 5 generic samples too for context.
+      if (evtText.includes('overdos') && eventsDiag.overdose_narratives.length < 10) {
+        eventsDiag.overdose_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 300) });
+      }
+      if (eventsDiag.sample_narratives.length < 5) {
+        eventsDiag.sample_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 200) });
+      }
       const m = evtText.match(odNarrative);
       if (m) {
         odDrug = m[1];
@@ -1877,6 +1898,7 @@ async function handleReportOd(body: any) {
       }
     }
   }
+  console.log(`[report-od] eventsDiag: ${JSON.stringify(eventsDiag)}`);
 
   // 2. Check log for drug usage (paginated — drug use is in log, not events)
   const [xanaxResult, ecstasyUsage] = await Promise.all([
@@ -1962,6 +1984,13 @@ async function handleReportOd(body: any) {
     return json({
       verified: false,
       detail: `Could not verify OD. No overdose on Xanax or Ecstasy found in your event log since this transaction started. Current status: "${playerStatus}". If you just OD'd, wait a moment and try again.`,
+      // Diagnostic payload — operator-only debug aid. Surfaces whatever
+      // narratives the Torn events feed actually returned so phrasing /
+      // delay / parsing issues can be diagnosed from the response without
+      // digging through Edge Function logs.
+      debug_events: eventsDiag,
+      debug_xanax_log: { count: xanaxUsedCount, pages: xanaxResult.pages, total_entries: xanaxResult.totalEntries },
+      debug_ecstasy_log: { used: ecstasyUsed, detail: ecstasyUsage?.detail || null },
     });
   }
 
