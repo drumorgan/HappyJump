@@ -1856,8 +1856,10 @@ async function handleReportOd(body: any) {
   // Match only first-person OD narratives. Torn's events feed includes faction news,
   // attack narratives, and other third-party items that can contain "overdose" + a
   // drug name without belonging to this user. A loose substring match picks those up
-  // and mis-classifies the OD type.
-  const odNarrative = /\byou\s+overdosed?\s+on\s+(xanax|ecstasy)\b/;
+  // and mis-classifies the OD type. Allow up to 3 optional words between "on" and
+  // the drug name — Torn writes "You overdosed on some Xanax going to the hospital…"
+  // (and could plausibly use "the", "a", etc.).
+  const odNarrative = /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/;
 
   if (!eventsData.error && eventsData.events) {
     const events = Object.values(eventsData.events) as any[];
