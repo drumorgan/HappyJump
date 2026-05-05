@@ -602,6 +602,86 @@ async function countXanaxUsageInLog(
   };
 }
 
+// Scan the user log for an OD entry on a covered drug. The Torn events
+// feed sometimes lags 2-5 minutes behind the actual OD, but the user log
+// usually has the OD entry within seconds — it's just filtered out by
+// the drug-use matchers (which explicitly exclude `overdos` to avoid
+// counting ODs as successful uses). This function INCLUDES those entries
+// and classifies them by drug, so report-od can fall back to the log
+// when the events scan returns nothing.
+//
+// Classification: data.item === 206 (or text mentions xanax) → xanax;
+// data.item === 197 (or text mentions ecstasy) → ecstasy. Returns the
+// EARLIEST matching OD in the window so replay-prevention via
+// od_event_timestamp is deterministic across retries.
+async function findOdInLog(
+  apiKey: string,
+  sinceTimestamp?: number,
+  maxPages = 30,
+): Promise<{ drug: 'xanax' | 'ecstasy'; timestamp: number; detail: string } | null> {
+  let toParam = '';
+  const cutoff = sinceTimestamp || 0;
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  let lastOldestTs = Infinity;
+  let pagesFetched = 0;
+  let totalEntries = 0;
+  let earliest: { drug: 'xanax' | 'ecstasy'; timestamp: number; detail: string } | null = null;
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) {
+      console.log(`[findOdInLog] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
+
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) break;
+    pagesFetched++;
+    totalEntries += entriesKv.length;
+
+    for (const [, entry] of entriesKv) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff) continue;
+
+      const parts: string[] = [];
+      if (entry.title) parts.push(String(entry.title));
+      if (entry.log) parts.push(String(entry.log));
+      if (entry.category) parts.push(String(entry.category));
+      if (entry.data) parts.push(JSON.stringify(entry.data));
+      if (entry.params) parts.push(JSON.stringify(entry.params));
+      const hay = parts.join(' ').toLowerCase();
+
+      if (!hay.includes('overdos')) continue;
+
+      const itemField = entry.data?.item;
+      let drug: 'xanax' | 'ecstasy' | null = null;
+      if (itemField === XANAX_ITEM_ID || itemField === String(XANAX_ITEM_ID) || hay.includes('xanax')) {
+        drug = 'xanax';
+      } else if (itemField === ECSTASY_ITEM_ID || itemField === String(ECSTASY_ITEM_ID) || hay.includes('ecstasy')) {
+        drug = 'ecstasy';
+      }
+      if (!drug) continue;
+
+      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+      const detail = `${drug} OD @ ${new Date(ts * 1000).toISOString()} — "${narrative}" data=${JSON.stringify(entry.data || {}).slice(0, 120)}`;
+      if (!earliest || ts < earliest.timestamp) {
+        earliest = { drug, timestamp: ts, detail };
+      }
+    }
+
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) break;
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) break;
+    lastOldestTs = oldestTs;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  console.log(`[findOdInLog] FINAL match=${earliest ? `${earliest.drug}@${earliest.timestamp}` : 'none'} pagesFetched=${pagesFetched} totalEntries=${totalEntries}`);
+  return earliest;
+}
+
 // Generic Torn-log item-use counter used by Faction Events. Deliberately a
 // LITERAL parameterised copy of countXanaxUsageInLog — the production-proven
 // drug-verification scanner Happy Jump has used reliably for months. Same
@@ -1852,6 +1932,12 @@ async function handleReportOd(body: any) {
 
   let odDrug: string | null = null;
   let odEventTimestamp: number | null = null;
+  // Tracks where the OD classification came from. 'events' = matched the
+  // first-person regex against the events feed (can have noise from faction
+  // narratives, so the cross-validation against drug-use counts applies);
+  // 'log' = matched on a log entry whose data.item ID is authoritative
+  // (cross-validation skipped — the structured ID won't lie about the drug).
+  let odSource: 'events' | 'log' | null = null;
 
   // Match only first-person OD narratives. Torn's events feed includes faction news,
   // attack narratives, and other third-party items that can contain "overdose" + a
@@ -1894,26 +1980,49 @@ async function handleReportOd(body: any) {
       if (m) {
         odDrug = m[1];
         odEventTimestamp = evt.timestamp;
+        odSource = 'events';
         break;
       }
     }
   }
   console.log(`[report-od] eventsDiag: ${JSON.stringify(eventsDiag)}`);
 
-  // 2. Check log for drug usage (paginated — drug use is in log, not events)
-  const [xanaxResult, ecstasyUsage] = await Promise.all([
+  // 2. Check log for drug usage (paginated — drug use is in log, not events).
+  // Also scan the log for OD entries — Torn's events feed sometimes lags
+  // 2-5 minutes behind the actual OD while the log gets the entry within
+  // seconds, so the log scan acts as a fallback when the events scan
+  // finds nothing.
+  const [xanaxResult, ecstasyUsage, logOd] = await Promise.all([
     countXanaxUsageInLog(api_key, fromTs),
     findEcstasyUsageInLog(api_key, fromTs),
+    findOdInLog(api_key, fromTs),
   ]);
 
   const xanaxUsedCount = xanaxResult.count;
   const ecstasyUsed = !!ecstasyUsage;
 
+  // Events-feed fallback — if the events scan didn't find an OD narrative
+  // (regex miss or Torn API delay), use the log-scan result. The log
+  // entry's timestamp serves as the replay-prevention key the same way an
+  // events-feed timestamp would.
+  if (!odDrug && logOd) {
+    odDrug = logOd.drug;
+    odEventTimestamp = logOd.timestamp;
+    odSource = 'log';
+    console.log(`[report-od] events-feed had no match, using log fallback: ${logOd.detail}`);
+  }
+
   // Cross-validate the events-scan classification against the drug-use log.
   // You cannot OD on a drug you never took, so if events say "Xanax OD" but the
   // log shows zero in-policy Xanax uses while Ecstasy was used, the events match
   // is noise and the real OD is on Ecstasy. The log is ground truth for drug use.
-  if (odDrug === 'xanax' && xanaxUsedCount === 0 && ecstasyUsed) {
+  //
+  // Only applied to events-source ODs — the log fallback path (odSource='log')
+  // already classified by data.item ID, which is authoritative. Re-classifying
+  // a Xanax-OD-on-first-pill as Ecstasy because xanaxUsedCount=0 (the OD was
+  // the only Xanax entry, and the matcher excludes ODs from the count) would
+  // be flatly wrong.
+  if (odSource === 'events' && odDrug === 'xanax' && xanaxUsedCount === 0 && ecstasyUsed) {
     odDrug = 'ecstasy';
     // odEventTimestamp stays — still a valid timestamp for replay-prevention.
   }
@@ -1991,6 +2100,7 @@ async function handleReportOd(body: any) {
       debug_events: eventsDiag,
       debug_xanax_log: { count: xanaxUsedCount, pages: xanaxResult.pages, total_entries: xanaxResult.totalEntries },
       debug_ecstasy_log: { used: ecstasyUsed, detail: ecstasyUsage?.detail || null },
+      debug_log_od_scan: { found: false },
     });
   }
 
