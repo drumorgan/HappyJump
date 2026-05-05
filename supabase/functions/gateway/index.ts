@@ -386,6 +386,40 @@ async function adjustReserve(supabase: any, amount: number) {
 const ECSTASY_ITEM_ID = 197;
 const XANAX_ITEM_ID = 206;
 
+// Match a first-person OD narrative against Torn's events feed text and
+// classify by drug. Two narrative shapes are observed in the wild:
+//
+//   1. "You overdosed on some Xanax going to the hospital for 83h 20m..."
+//      — drug name immediately follows "on" (with up to 3 optional filler
+//      words like "some" / "the").
+//
+//   2. "You took some Xanax and downed a glass of water. A headache was
+//      followed by nausea and vomiting. You overdosed."
+//      — drug name in the FIRST sentence ("you took some <drug>"), with
+//      "you overdosed" appearing later as its own sentence. This is the
+//      observed format for Xanax ODs in 2026 events feeds, and was the
+//      cause of the long-running false-negative on Xanax claims (regex
+//      assumed shape 1 only).
+//
+// Both anchored on "you" + "overdosed" so third-party narratives like
+// "someone in your faction overdosed on Xanax" or "you attacked X who
+// had overdosed on Xanax" don't match. Caller passes the lowercased,
+// HTML-stripped event text. Returns the matched drug or null.
+function classifyOdNarrative(evtTextLower: string): 'xanax' | 'ecstasy' | null {
+  const patterns = [
+    // Shape 1: "you overdosed on <drug>"
+    /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/,
+    // Shape 2: "you took ... <drug> ... you overdosed" (single event narrative,
+    // bounded at 500 chars to keep matches within one event)
+    /\byou\s+took\s+(?:\w+\s+){0,5}(xanax|ecstasy)\b[\s\S]{0,500}\byou\s+overdosed?\b/,
+  ];
+  for (const re of patterns) {
+    const m = evtTextLower.match(re);
+    if (m && (m[1] === 'xanax' || m[1] === 'ecstasy')) return m[1];
+  }
+  return null;
+}
+
 // Verified Torn narrative samples (provided by operator) — all 4 matched:
 //   "You used some Xanax gaining 250 energy and 75 happiness"
 // The drug name lives in the narrative, NOT in entry.title (which is a
@@ -1939,14 +1973,6 @@ async function handleReportOd(body: any) {
   // (cross-validation skipped — the structured ID won't lie about the drug).
   let odSource: 'events' | 'log' | null = null;
 
-  // Match only first-person OD narratives. Torn's events feed includes faction news,
-  // attack narratives, and other third-party items that can contain "overdose" + a
-  // drug name without belonging to this user. A loose substring match picks those up
-  // and mis-classifies the OD type. Allow up to 3 optional words between "on" and
-  // the drug name — Torn writes "You overdosed on some Xanax going to the hospital…"
-  // (and could plausibly use "the", "a", etc.).
-  const odNarrative = /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/;
-
   // Diagnostics — captured whether or not we find a match so the no-match
   // path can surface what Torn actually returned. Without this we're
   // debugging blind on regex / phrasing / API-delay issues.
@@ -1976,9 +2002,9 @@ async function handleReportOd(body: any) {
       if (eventsDiag.sample_narratives.length < 5) {
         eventsDiag.sample_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 200) });
       }
-      const m = evtText.match(odNarrative);
-      if (m) {
-        odDrug = m[1];
+      const matchedDrug = classifyOdNarrative(evtText);
+      if (matchedDrug) {
+        odDrug = matchedDrug;
         odEventTimestamp = evt.timestamp;
         odSource = 'events';
         break;
@@ -2355,7 +2381,6 @@ async function handleAdminTestOdVerify(req: Request, body: any) {
   }
 
   const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
-  const odNarrative = /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/;
 
   const eventsUrl = fromTs
     ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
@@ -2385,9 +2410,9 @@ async function handleAdminTestOdVerify(req: Request, body: any) {
       if (eventsDiag.sample_narratives.length < 5) {
         eventsDiag.sample_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 200) });
       }
-      const m = evtText.match(odNarrative);
-      if (m && !eventsDiag.matched) {
-        eventsDiag.matched = { drug: m[1], ts: evt.timestamp, text: evtText.slice(0, 300) };
+      const matchedDrug = classifyOdNarrative(evtText);
+      if (matchedDrug && !eventsDiag.matched) {
+        eventsDiag.matched = { drug: matchedDrug, ts: evt.timestamp, text: evtText.slice(0, 300) };
       }
     }
   }
