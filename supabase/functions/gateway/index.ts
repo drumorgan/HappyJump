@@ -2093,14 +2093,6 @@ async function handleReportOd(body: any) {
     return json({
       verified: false,
       detail: `Could not verify OD. No overdose on Xanax or Ecstasy found in your event log since this transaction started. Current status: "${playerStatus}". If you just OD'd, wait a moment and try again.`,
-      // Diagnostic payload — operator-only debug aid. Surfaces whatever
-      // narratives the Torn events feed actually returned so phrasing /
-      // delay / parsing issues can be diagnosed from the response without
-      // digging through Edge Function logs.
-      debug_events: eventsDiag,
-      debug_xanax_log: { count: xanaxUsedCount, pages: xanaxResult.pages, total_entries: xanaxResult.totalEntries },
-      debug_ecstasy_log: { used: ecstasyUsed, detail: ecstasyUsage?.detail || null },
-      debug_log_od_scan: { found: false },
     });
   }
 
@@ -2325,6 +2317,136 @@ async function handleAdminTestDrugCheck(req: Request, body: any) {
     xanax_details: xanaxResult.details,
     ecstasy_found: !!ecstasyUsage,
     ecstasy_detail: ecstasyUsage ? ecstasyUsage.detail : null,
+  });
+}
+
+// Admin-only: run the full report-od logic against an arbitrary api_key +
+// transaction id (or arbitrary from_ts) without mutating anything. Returns
+// the events-feed scan, the log OD scan, and the drug-use counts so the
+// operator can see exactly why a verify-od call did or did not succeed.
+async function handleAdminTestOdVerify(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { api_key, txn_id, from_ts } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  let fromTs: number | undefined;
+  let txn: any = null;
+  if (txn_id) {
+    const supabase = serviceClient();
+    const { data } = await supabase
+      .from('transactions')
+      .select('id, torn_id, torn_name, status, purchased_at, created_at, suggested_price, xanax_payout, ecstasy_payout, product_type, od_event_timestamp')
+      .eq('id', txn_id)
+      .maybeSingle();
+    if (!data) return json({ error: `Transaction ${txn_id} not found` }, 404);
+    txn = data;
+    if (txn.purchased_at) fromTs = Math.floor(new Date(txn.purchased_at).getTime() / 1000);
+  } else if (from_ts) {
+    fromTs = Number(from_ts);
+    if (!Number.isFinite(fromTs) || fromTs! <= 0) {
+      return json({ error: 'from_ts must be a positive unix timestamp in seconds' }, 400);
+    }
+  }
+
+  const stripHtml = (s: any) => String(s || '').replace(/<[^>]*>/g, '');
+  const odNarrative = /\byou\s+overdosed?\s+on\s+(?:\w+\s+){0,3}(xanax|ecstasy)\b/;
+
+  const eventsUrl = fromTs
+    ? `${TORN_API}/user/?selections=events&from=${fromTs}&key=${api_key}`
+    : `${TORN_API}/user/?selections=events&key=${api_key}`;
+  const eventsRes = await fetch(eventsUrl);
+  const eventsData = await eventsRes.json();
+
+  const eventsDiag = {
+    error: eventsData?.error || null,
+    total_events: eventsData?.events ? Object.keys(eventsData.events).length : 0,
+    in_window_count: 0,
+    overdose_narratives: [] as Array<{ ts: number; text: string }>,
+    sample_narratives: [] as Array<{ ts: number; text: string }>,
+    matched: null as null | { drug: string; ts: number; text: string },
+  };
+
+  if (!eventsData.error && eventsData.events) {
+    const events = (Object.values(eventsData.events) as any[])
+      .sort((a, b) => (b.timestamp || 0) - (a.timestamp || 0));
+    for (const evt of events) {
+      if (fromTs && evt.timestamp && evt.timestamp < fromTs) continue;
+      eventsDiag.in_window_count++;
+      const evtText = stripHtml(evt.event || '').toLowerCase();
+      if (evtText.includes('overdos') && eventsDiag.overdose_narratives.length < 10) {
+        eventsDiag.overdose_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 300) });
+      }
+      if (eventsDiag.sample_narratives.length < 5) {
+        eventsDiag.sample_narratives.push({ ts: evt.timestamp, text: evtText.slice(0, 200) });
+      }
+      const m = evtText.match(odNarrative);
+      if (m && !eventsDiag.matched) {
+        eventsDiag.matched = { drug: m[1], ts: evt.timestamp, text: evtText.slice(0, 300) };
+      }
+    }
+  }
+
+  const [xanaxResult, ecstasyUsage, logOd] = await Promise.all([
+    countXanaxUsageInLog(api_key, fromTs),
+    findEcstasyUsageInLog(api_key, fromTs),
+    findOdInLog(api_key, fromTs),
+  ]);
+
+  // Mirror the report-od classification logic so the operator sees
+  // exactly what the live endpoint would have decided.
+  let finalDrug: string | null = eventsDiag.matched?.drug || null;
+  let finalSource: 'events' | 'log' | null = finalDrug ? 'events' : null;
+  let finalTs: number | null = eventsDiag.matched?.ts || null;
+  if (!finalDrug && logOd) {
+    finalDrug = logOd.drug;
+    finalSource = 'log';
+    finalTs = logOd.timestamp;
+  }
+  if (
+    finalSource === 'events' &&
+    finalDrug === 'xanax' &&
+    xanaxResult.count === 0 &&
+    !!ecstasyUsage
+  ) {
+    finalDrug = 'ecstasy';
+  }
+
+  return json({
+    player: {
+      name: identData.name,
+      id: String(identData.player_id),
+      level: identData.level || null,
+      status: identData.status?.description || null,
+    },
+    transaction: txn,
+    from_ts: fromTs ?? null,
+    from_iso: fromTs ? new Date(fromTs * 1000).toISOString() : null,
+    events_scan: eventsDiag,
+    log_od_scan: logOd
+      ? { found: true, drug: logOd.drug, timestamp: logOd.timestamp, detail: logOd.detail }
+      : { found: false },
+    xanax_log: {
+      count: xanaxResult.count,
+      pages: xanaxResult.pages,
+      total_entries: xanaxResult.totalEntries,
+      details: xanaxResult.details,
+    },
+    ecstasy_log: {
+      used: !!ecstasyUsage,
+      detail: ecstasyUsage?.detail || null,
+    },
+    classification: {
+      drug: finalDrug,
+      source: finalSource,
+      timestamp: finalTs,
+      timestamp_iso: finalTs ? new Date(finalTs * 1000).toISOString() : null,
+    },
   });
 }
 
@@ -4526,6 +4648,8 @@ serve(async (req) => {
         return await handleAdminCheckPayment(body);
       case 'admin-test-drug-check':
         return await handleAdminTestDrugCheck(req, body);
+      case 'admin-test-od-verify':
+        return await handleAdminTestOdVerify(req, body);
       case 'create-faction-event':
         return await handleCreateFactionEvent(body);
       case 'get-faction-event':

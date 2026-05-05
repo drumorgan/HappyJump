@@ -217,6 +217,12 @@
             <button type="button" id="diag-drug-btn" style="background:#c56200;color:#fff;border:none;padding:0.4rem 1rem;border-radius:4px;cursor:pointer;">Test Xanax/Ecstasy Count</button>
             <span style="color:#666;font-size:0.75rem">Uses the API key above; scans your own log from this time.</span>
           </div>
+          <div style="display:flex;gap:0.5rem;flex-wrap:wrap;align-items:center;margin-top:0.6rem;border-top:1px dashed #333;padding-top:0.6rem">
+            <label for="diag-od-txn" style="color:#aaa;font-size:0.85rem">Transaction ID:</label>
+            <input type="text" id="diag-od-txn" placeholder="(uuid — optional, falls back to from_ts above)" style="flex:1;min-width:240px;background:#1a1a1a;color:#eee;border:1px solid #333;padding:0.3rem 0.5rem;border-radius:4px" autocomplete="off" />
+            <button type="button" id="diag-od-btn" style="background:#a02020;color:#fff;border:none;padding:0.4rem 1rem;border-radius:4px;cursor:pointer;">Test OD Verification</button>
+            <span style="color:#666;font-size:0.75rem">Runs the live verify-OD logic dry — no DB writes.</span>
+          </div>
           <div id="diag-results" style="margin-top:0.5rem;font-size:0.85rem"></div>
 
         </div>
