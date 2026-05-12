@@ -7,7 +7,7 @@ export function esc(str) {
 }
 
 export function $(v) {
-  return '$' + Math.round(Number(v)).toLocaleString();
+  return '$' + Math.round(Number(v)).toLocaleString('en-US');
 }
 
 export function getStatusPillClass(status) {
