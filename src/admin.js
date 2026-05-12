@@ -502,17 +502,17 @@ async function loadConfig() {
     return;
   }
 
-  document.getElementById('cfg-xanax-price').value = '$' + Number(data.xanax_price).toLocaleString();
-  document.getElementById('cfg-edvd-price').value = '$' + Number(data.edvd_price).toLocaleString();
-  document.getElementById('cfg-ecstasy-price').value = '$' + Number(data.ecstasy_price).toLocaleString();
+  document.getElementById('cfg-xanax-price').value = '$' + Number(data.xanax_price).toLocaleString('en-US');
+  document.getElementById('cfg-edvd-price').value = '$' + Number(data.edvd_price).toLocaleString('en-US');
+  document.getElementById('cfg-ecstasy-price').value = '$' + Number(data.ecstasy_price).toLocaleString('en-US');
   document.getElementById('cfg-xanax-od').value = data.xanax_od_pct;
   document.getElementById('cfg-ecstasy-od').value = data.ecstasy_od_pct;
-  document.getElementById('cfg-rehab').value = '$' + Number(data.rehab_bonus).toLocaleString();
+  document.getElementById('cfg-rehab').value = '$' + Number(data.rehab_bonus).toLocaleString('en-US');
   document.getElementById('cfg-margin-new').value = data.margin_new;
   document.getElementById('cfg-margin-safe').value = data.margin_safe;
   document.getElementById('cfg-margin-road').value = data.margin_road;
   document.getElementById('cfg-margin-legend').value = data.margin_legend;
-  document.getElementById('cfg-reserve').value = '$' + Number(data.current_reserve).toLocaleString();
+  document.getElementById('cfg-reserve').value = '$' + Number(data.current_reserve).toLocaleString('en-US');
   // Reset dirty flag — reserve was just loaded from DB, not manually edited
   window._reserveManuallyEdited = false;
 }
@@ -738,9 +738,9 @@ document.getElementById('diag-payment-btn')?.addEventListener('click', async () 
       lines.push('<br><span style="color:#6bff8e;font-weight:bold">Matched payments:</span>');
       for (const m of result.matched_payments) {
         const date = m.timestamp ? new Date(m.timestamp * 1000).toLocaleString() : '?';
-        lines.push(`<span style="color:#6bff8e">&#10003;</span> <strong>$${Number(m.amount).toLocaleString()}</strong> — ${date} [${m.source}] — ${esc(m.text)}`);
+        lines.push(`<span style="color:#6bff8e">&#10003;</span> <strong>$${Number(m.amount).toLocaleString('en-US')}</strong> — ${date} [${m.source}] — ${esc(m.text)}`);
       }
-      lines.push(`<br><span style="color:#6bff8e;font-weight:bold">Total: $${Number(result.total_matched).toLocaleString()}</span>`);
+      lines.push(`<br><span style="color:#6bff8e;font-weight:bold">Total: $${Number(result.total_matched).toLocaleString('en-US')}</span>`);
     } else {
       lines.push(`<br><span style="color:#ff6b81;font-weight:bold">No payments to ${esc(result.recipient)} found.</span>`);
     }
@@ -1003,9 +1003,9 @@ document.getElementById('fetch-prices-btn').addEventListener('click', async () =
 
   try {
     const prices = await fetchMarketPrices(apiKey);
-    if (prices.xanax) document.getElementById('cfg-xanax-price').value = '$' + Number(prices.xanax.market_value).toLocaleString();
-    if (prices.edvd) document.getElementById('cfg-edvd-price').value = '$' + Number(prices.edvd.market_value).toLocaleString();
-    if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = '$' + Number(prices.ecstasy.market_value).toLocaleString();
+    if (prices.xanax) document.getElementById('cfg-xanax-price').value = '$' + Number(prices.xanax.market_value).toLocaleString('en-US');
+    if (prices.edvd) document.getElementById('cfg-edvd-price').value = '$' + Number(prices.edvd.market_value).toLocaleString('en-US');
+    if (prices.ecstasy) document.getElementById('cfg-ecstasy-price').value = '$' + Number(prices.ecstasy.market_value).toLocaleString('en-US');
     showToast('Prices updated from Torn market — click Save Config to apply', 'success');
   } catch (err) {
     showToast('Failed to fetch prices: ' + err.message, 'error');
