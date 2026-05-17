@@ -1004,6 +1004,14 @@ async function autoCloseExpired(supabase: any) {
     // Release locked reserve (atomic)
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
 
+    // If we just backfilled amount_paid on a legacy row, fold that revenue
+    // into the reserve too (forward-only — under the new rule, purchased rows
+    // already had their revenue folded in at purchase time, so this only
+    // catches rows that pre-date that logic).
+    if (closeUpdate.amount_paid && Number(txn.amount_paid || 0) === 0) {
+      await adjustReserve(supabase, Number(closeUpdate.amount_paid));
+    }
+
     if (txn.torn_id) {
       await syncClientStats(supabase, txn.torn_id);
     }
@@ -1734,6 +1742,12 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   const wasLocked = reserveLockedStates.includes(oldStatus);
   const willBeReleased = reserveReleasedStates.includes(new_status);
 
+  // Revenue tracking: states where client has paid and money belongs to the
+  // operator (folded into reserve). 'requested' and 'rejected' are pre-payment.
+  const paidStates = ['purchased', 'od_xanax', 'od_ecstasy', 'closed_clean', 'payout_sent'];
+  const wasPaid = paidStates.includes(oldStatus);
+  const willBePaid = paidStates.includes(new_status);
+
   if (new_status === 'closed_clean' || new_status === 'payout_sent' || new_status === 'rejected') {
     updates.closed_at = new Date().toISOString();
   }
@@ -1794,6 +1808,24 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
       console.log(`[admin-update-status] Reserve released: +${releaseAmount} for txn ${txn_id} (${oldStatus} → ${new_status})`);
     } catch (e) {
       console.error(`[admin-update-status] Reserve release failed for txn ${txn_id}:`, e?.message || e);
+    }
+  }
+
+  // Revenue tracking: fold amount_paid into reserve on first transition into a
+  // paid state; reverse it on rollback to a pre-payment state. Uses the new
+  // amount_paid value if the update is setting it (e.g. backfill on purchase).
+  const oldAmtPaid = wasPaid ? Number(txnRecord.amount_paid || 0) : 0;
+  const newAmtPaid = willBePaid
+    ? Number((updates.amount_paid as number | undefined) ?? txnRecord.amount_paid ?? 0)
+    : 0;
+  const revenueDelta = newAmtPaid - oldAmtPaid;
+  if (revenueDelta !== 0) {
+    try {
+      await adjustReserve(supabase, revenueDelta);
+      const verb = revenueDelta > 0 ? 'folded into' : 'removed from';
+      console.log(`[admin-update-status] Revenue ${verb} reserve: ${revenueDelta} for txn ${txn_id} (${oldStatus} → ${new_status})`);
+    } catch (e) {
+      console.error(`[admin-update-status] Revenue adjustment failed for txn ${txn_id}:`, e?.message || e);
     }
   }
 
@@ -1861,14 +1893,16 @@ async function handleAdminRejectAndBlock(req: Request, body: any) {
   // Find all pending (requested/purchased) transactions for this player
   const { data: pending } = await supabase
     .from('transactions')
-    .select('id, ecstasy_payout')
+    .select('id, status, ecstasy_payout, amount_paid')
     .eq('torn_id', String(torn_id))
     .in('status', ['requested', 'purchased']);
 
   const now = new Date().toISOString();
   let rejectedCount = 0;
 
-  // Reject each pending transaction and release reserve (atomic)
+  // Reject each pending transaction, release reserve, and refund any revenue
+  // that was already folded in (for 'purchased' rows — operator is presumed
+  // to be refunding the client out-of-band).
   for (const txn of (pending || [])) {
     await supabase
       .from('transactions')
@@ -1876,6 +1910,10 @@ async function handleAdminRejectAndBlock(req: Request, body: any) {
       .eq('id', txn.id);
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+
+    if (txn.status === 'purchased' && Number(txn.amount_paid || 0) > 0) {
+      await adjustReserve(supabase, -Number(txn.amount_paid));
+    }
     rejectedCount++;
   }
 
