@@ -1008,7 +1008,16 @@ async function countHappyItemsUsed(
   totalEntries: number;
   inWindowTotal: number;
   reachedCutoff: boolean;
-  itemUseSamples: Array<{ itemId: number; ts: number; matched: boolean; reason: string; narrative: string }>;
+  itemUseSamples: Array<{
+    itemId: number;
+    ts: number;
+    matched: boolean;
+    reason: string;
+    title: string;
+    category: string;
+    log_type: string;
+    data_json: string;
+  }>;
   debug: string[];
 }> {
   let toParam = '';
@@ -1017,7 +1026,16 @@ async function countHappyItemsUsed(
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
   const seenKeys = new Set<string>();
   const items: Record<string, { qty: number; sampleNarrative: string; firstTs: number; lastTs: number }> = {};
-  const itemUseSamples: Array<{ itemId: number; ts: number; matched: boolean; reason: string; narrative: string }> = [];
+  const itemUseSamples: Array<{
+    itemId: number;
+    ts: number;
+    matched: boolean;
+    reason: string;
+    title: string;
+    category: string;
+    log_type: string;
+    data_json: string;
+  }> = [];
   const debug: string[] = [];
   let pagesFetched = 0;
   let totalEntries = 0;
@@ -1053,18 +1071,24 @@ async function countHappyItemsUsed(
       inWindowTotal++;
 
       const verdict = entryHappyGainWithReason(entry);
-      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+      // `entry.log` is Torn's NUMERIC log-type code (e.g. 2020), not text —
+      // the human-readable string lives in `entry.title`. Prefer it.
+      const narrative = String(entry.title || entry.log || '').slice(0, 200);
 
       // Surface every item-use-shaped entry (numeric data.item) — matched or
-      // not — so the admin diagnostic can show what Torn actually returned and
-      // we can tune the matcher against real Choco-Jump logs.
+      // not — with its raw fields so the admin diagnostic can show exactly
+      // what Torn returned (where the happy signal lives, why beer/etc. skip)
+      // and we can tune the matcher against real Choco-Jump logs.
       if (verdict.itemId !== null && itemUseSamples.length < 60) {
         itemUseSamples.push({
           itemId: verdict.itemId,
           ts,
           matched: verdict.match,
           reason: verdict.reason || 'matched',
-          narrative,
+          title: String(entry.title ?? '').slice(0, 160),
+          category: String(entry.category ?? '').slice(0, 80),
+          log_type: String(entry.log ?? ''),
+          data_json: JSON.stringify(entry.data ?? {}).slice(0, 240),
         });
       }
 

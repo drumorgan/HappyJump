@@ -932,7 +932,8 @@ document.getElementById('diag-happy-btn')?.addEventListener('click', async () =>
           : `<span style="color:#e8a735">skip: ${esc(s.reason)}</span>`;
         const date = s.ts ? new Date(s.ts * 1000).toLocaleString() : '?';
         lines.push(
-          `<span style="color:#aaa;font-size:0.78rem">[${mark}] ${esc(s.name)} (id ${s.itemId}) · ${date} — "${esc(s.narrative)}"</span>`,
+          `<span style="color:#aaa;font-size:0.78rem">[${mark}] ${esc(s.name)} (id ${s.itemId}) · ${date}<br>` +
+          `&nbsp;&nbsp;title="${esc(s.title || '')}" · cat="${esc(s.category || '')}" · log=${esc(s.log_type || '')} · data=${esc(s.data_json || '')}</span>`,
         );
       });
     }
