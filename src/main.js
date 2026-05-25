@@ -139,7 +139,7 @@ function getPricing(config, margin, product) {
 function buildCoverageHTML(product, pricing, config) {
   const rehabBonus = $(Number(config.rehab_bonus));
   const xanPayout = `4x Xanax + ${rehabBonus} rehab bonus`;
-  const ecsPayout = `4x Xanax + 5x EDVD + 1x Ecstasy + ${rehabBonus} rehab bonus`;
+  const ecsPayout = `4x Xanax + every happiness item you used (Erotic DVDs, candy, etc.) + 1x Ecstasy + ${rehabBonus} rehab bonus`;
 
   let rows = '';
 
@@ -196,7 +196,8 @@ function buildCoverageHTML(product, pricing, config) {
   const xanaxClause = product === 'ecstasy_only'
     ? 'Xanax ODs are <strong>not covered</strong> by this policy.'
     : 'Any Xanax OD on pills 1&ndash;4 before the Ecstasy is covered too.';
-  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong>, max 3 days (72 hours) from purchase. <strong>Using your Ecstasy ends the policy</strong> &mdash; clean if you survive (you keep the profits), or paid out if you OD. ${xanaxClause} Report any covered OD within the 72-hour window and you're fully covered.</p>`;
+  html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong>, max 3 days (72 hours) from purchase. <strong>Using your Ecstasy ends the policy</strong> &mdash; clean if you survive (you keep the profits), or paid out if you OD. ${xanaxClause} Report any covered OD within the 72-hour window and you're fully covered.</p>
+    <p class="coverage-note">On an <strong>Ecstasy OD</strong> we replace the <strong>exact happiness-boosting items you actually used</strong> during the jump (Erotic DVDs, candy &mdash; whatever you consumed), valued at <strong>live Torn market prices</strong>, plus your 4 Xanax, 1 Ecstasy, and ${rehabBonus} rehab bonus. You're made whole for what you used.</p>`;
 
   return html;
 }
@@ -648,7 +649,7 @@ function renderActiveDeal(transactions) {
       const drugName = activeTxn.status === 'od_xanax' ? 'Xanax' : 'Ecstasy';
       const payoutDesc = activeTxn.status === 'od_xanax'
         ? '4x Xanax + $1M rehab bonus'
-        : '4x Xanax + 5x EDVD + 1x Ecstasy + $1M rehab bonus';
+        : '4x Xanax + the happiness items you used + 1x Ecstasy + $1M rehab bonus';
       body.innerHTML = `
         <div class="deal-status od-verified">OD on ${esc(drugName)} verified</div>
         <div class="deal-detail">Giro has been notified and will send your payout shortly.</div>
