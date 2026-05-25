@@ -197,7 +197,8 @@ function buildCoverageHTML(product, pricing, config) {
     ? 'Xanax ODs are <strong>not covered</strong> by this policy.'
     : 'Any Xanax OD on pills 1&ndash;4 before the Ecstasy is covered too.';
   html += `<p class="coverage-note">Coverage is valid for <strong style="color:#c8aa6e">one Happy Jump only</strong>, max 3 days (72 hours) from purchase. <strong>Using your Ecstasy ends the policy</strong> &mdash; clean if you survive (you keep the profits), or paid out if you OD. ${xanaxClause} Report any covered OD within the 72-hour window and you're fully covered.</p>
-    <p class="coverage-note">On an <strong>Ecstasy OD</strong> we replace the <strong>exact happiness-boosting items you actually used</strong> during the jump (Erotic DVDs, candy &mdash; whatever you consumed), valued at <strong>live Torn market prices</strong>, plus your 4 Xanax, 1 Ecstasy, and ${rehabBonus} rehab bonus. You're made whole for what you used.</p>`;
+    <p class="coverage-note">On an <strong>Ecstasy OD</strong> we replace the <strong>exact happiness-boosting items you actually used</strong> during the jump (Erotic DVDs, candy &mdash; whatever you consumed), valued at <strong>live Torn market prices</strong>, plus your 4 Xanax, 1 Ecstasy, and ${rehabBonus} rehab bonus. You're made whole for what you used.</p>
+    <p class="coverage-note" style="opacity:0.85"><strong>Note:</strong> non-transferable happy items <strong>cannot be replaced</strong> &mdash; anything we can't trade back to you (eggs, stock-benefit items, event/holiday items, and any item Torn marks non-tradeable) is <strong>not</strong> covered in the payout. Stick to Erotic DVDs for a fully-covered jump.</p>`;
 
   return html;
 }
