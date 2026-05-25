@@ -1290,16 +1290,31 @@ async function fetchLiveItemPrices(apiKey: string): Promise<{ xanax: number; edv
   }
 }
 
-// Fetch the full Torn item catalog as a map of id → { name, market_value }.
-// Used to resolve and price arbitrary consumed items (any happy item a client
-// used) for payout valuation. Returns null on failure so callers can fall
-// back to config prices. Cached briefly to avoid hammering the items endpoint.
-let _itemsMapCache: { at: number; map: Record<string, { name: string; market_value: number }> } | null = null;
+// Fetch the full Torn item catalog as a map of id → { name, market_value,
+// tradeable }. Used to resolve and price arbitrary consumed items (any happy
+// item a client used) for payout valuation, and to decide whether an item can
+// actually be traded back to the client on a payout. Returns null on failure
+// so callers can fall back to config prices. Cached briefly to avoid hammering
+// the items endpoint.
+type ItemMeta = { name: string; market_value: number; tradeable: boolean | null };
+let _itemsMapCache: { at: number; map: Record<string, ItemMeta> } | null = null;
 const ITEMS_MAP_TTL_MS = 15 * 60 * 1000; // 15 min, per CLAUDE.md market-cache policy
+
+// Torn's item payload field for tradeability has varied across API versions
+// (tradeable / tradable / is_tradable). Read all of them defensively and only
+// commit to true/false when one is actually present; null = "unknown", which
+// the exclusion logic treats as "do not auto-exclude" (safe default).
+function parseTradeable(info: any): boolean | null {
+  const v = info?.tradeable ?? info?.tradable ?? info?.is_tradable ?? info?.is_tradeable;
+  if (typeof v === 'boolean') return v;
+  if (v === 1 || v === '1' || v === 'true') return true;
+  if (v === 0 || v === '0' || v === 'false') return false;
+  return null;
+}
 
 async function fetchTornItemsMap(
   apiKey: string,
-): Promise<Record<string, { name: string; market_value: number }> | null> {
+): Promise<Record<string, ItemMeta> | null> {
   if (_itemsMapCache && Date.now() - _itemsMapCache.at < ITEMS_MAP_TTL_MS) {
     return _itemsMapCache.map;
   }
@@ -1309,11 +1324,12 @@ async function fetchTornItemsMap(
     if (!res.ok) return null;
     const data = await res.json();
     if (data?.error || !data?.items) return null;
-    const map: Record<string, { name: string; market_value: number }> = {};
+    const map: Record<string, ItemMeta> = {};
     for (const [id, info] of Object.entries(data.items as Record<string, any>)) {
       map[id] = {
         name: String(info?.name ?? `item ${id}`),
         market_value: Number(info?.market_value ?? 0),
+        tradeable: parseTradeable(info),
       };
     }
     _itemsMapCache = { at: Date.now(), map };
@@ -1321,6 +1337,28 @@ async function fetchTornItemsMap(
   } catch (_err) {
     return null;
   }
+}
+
+// Happiness items the operator cannot trade back to the client, so they are
+// NEVER counted toward an Ecstasy-OD payout (we can't replace what we can't
+// send). Two sources:
+//   1. Torn flags the item non-tradeable (meta.tradeable === false), and
+//   2. an explicit list for items that are technically tradeable but the
+//      operator still won't replace (eggs, stock-benefit items, event items).
+// Item IDs are added to the list once confirmed via the Detect Happy Items
+// diagnostic (which now surfaces each item's id + tradeable flag).
+const HAPPY_NON_TRANSFERABLE_ITEM_IDS = new Set<number>([
+  // Eggs — confirmed non-tradeable by the operator. IDs added after we read
+  // them off the diagnostic.
+]);
+
+function isNonTransferableHappyItem(
+  itemId: number,
+  meta: { tradeable: boolean | null } | undefined,
+): boolean {
+  if (HAPPY_NON_TRANSFERABLE_ITEM_IDS.has(itemId)) return true;
+  if (meta && meta.tradeable === false) return true;
+  return false;
 }
 
 // ── Encrypted auto-login actions ────────────────────────────────────
@@ -2209,7 +2247,7 @@ async function computeEcstasyConsumedPayout(
     return null;
   }
 
-  const happyItems = Object.entries(scan.items).map(([id, info]) => {
+  const allItems = Object.entries(scan.items).map(([id, info]) => {
     const meta = itemsMap![id];
     const unitValue = meta ? Number(meta.market_value) : 0;
     return {
@@ -2218,8 +2256,15 @@ async function computeEcstasyConsumedPayout(
       qty: info.qty,
       unit_value: unitValue,
       line_value: unitValue * info.qty,
+      transferable: !isNonTransferableHappyItem(Number(id), meta),
     };
-  }).sort((a, b) => b.line_value - a.line_value);
+  });
+
+  // Only transferable items count toward the payout — we can't replace eggs /
+  // stock-benefit / other non-tradeable items, so they're tracked separately
+  // for transparency but contribute $0.
+  const happyItems = allItems.filter((it) => it.transferable).sort((a, b) => b.line_value - a.line_value);
+  const excludedItems = allItems.filter((it) => !it.transferable).sort((a, b) => b.line_value - a.line_value);
 
   const happyValue = happyItems.reduce((s, it) => s + it.line_value, 0);
   const xanaxUnit = Number(itemsMap['206']?.market_value) || Number(config.xanax_price) || 0;
@@ -2233,6 +2278,7 @@ async function computeEcstasyConsumedPayout(
     payout: total,
     consumedItems: {
       happy_items: happyItems,
+      excluded_items: excludedItems,
       happy_value: happyValue,
       xanax: { qty: 4, unit_value: xanaxUnit, line_value: xanaxLine },
       ecstasy: { qty: 1, unit_value: ecstasyUnit, line_value: ecstasyLine },
@@ -2530,6 +2576,9 @@ async function handleReportOd(body: any) {
       }
       consumedLines.push(`  ${ci.ecstasy.qty}x Ecstasy — ${formatMoney(ci.ecstasy.line_value)}`);
       consumedLines.push(`  Rehab bonus — ${formatMoney(ci.rehab_bonus)}`);
+      if ((ci.excluded_items as any[])?.length) {
+        consumedLines.push(`  NOT replaced (non-transferable): ${(ci.excluded_items as any[]).map((it) => `${it.qty}x ${it.name}`).join(', ')}`);
+      }
     } else {
       consumedLines.push(``, `(Could not scan consumed items — Torn API blip. Payout uses the stored snapshot; verify the package manually.)`);
     }
@@ -2876,12 +2925,15 @@ async function handleAdminDetectHappyItems(req: Request, body: any) {
   const items = Object.entries(scan.items).map(([id, info]) => {
     const meta = itemsMap?.[id];
     const unitValue = meta ? Number(meta.market_value) : 0;
+    const transferable = !isNonTransferableHappyItem(Number(id), meta);
     return {
       item_id: Number(id),
       name: meta?.name || `item ${id}`,
       qty: info.qty,
       unit_value: unitValue,
       line_value: unitValue * info.qty,
+      tradeable: meta ? meta.tradeable : null,
+      transferable,
       sample_narrative: info.sampleNarrative,
       first_ts: info.firstTs,
       last_ts: info.lastTs,
@@ -2889,6 +2941,8 @@ async function handleAdminDetectHappyItems(req: Request, body: any) {
   }).sort((a, b) => b.line_value - a.line_value);
 
   const happyItemsValue = items.reduce((s, it) => s + it.line_value, 0);
+  const replaceableValue = items.filter((i) => i.transferable).reduce((s, it) => s + it.line_value, 0);
+  const excludedValue = items.filter((i) => !i.transferable).reduce((s, it) => s + it.line_value, 0);
 
   // Enrich the raw item-use samples with names so the operator can eyeball
   // exactly what was seen vs. matched.
@@ -2913,6 +2967,8 @@ async function handleAdminDetectHappyItems(req: Request, body: any) {
     items,
     happy_item_count: scan.totalQty,
     happy_items_value: happyItemsValue,
+    replaceable_value: replaceableValue,
+    excluded_value: excludedValue,
     scan: {
       pages: scan.pages,
       total_entries: scan.totalEntries,

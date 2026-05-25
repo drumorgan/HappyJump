@@ -303,6 +303,9 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       }
       lines.push(`<li>${ci.ecstasy?.qty ?? 1}x Ecstasy — ${$(ci.ecstasy?.line_value ?? 0)}</li>`);
       lines.push(`<li>Rehab bonus — ${$(ci.rehab_bonus ?? 0)}</li>`);
+      if (Array.isArray(ci.excluded_items) && ci.excluded_items.length) {
+        lines.push(`<li style="color:#ff6b81">Not replaced (non-transferable): ${ci.excluded_items.map((it) => `${Number(it.qty)}x ${esc(it.name)}`).join(', ')}</li>`);
+      }
       consumedHtml = `<details class="txn-consumed"><summary>Replacement package to send — ${$(ci.total)}</summary><ul>${lines.join('')}</ul></details>`;
     }
 
@@ -384,6 +387,11 @@ async function handleItemsUsed(txnId, btn) {
     );
     if (lines.length === 0) lines.push('<li class="items-used-none">No happiness items used yet</li>');
 
+    const excluded = ci.excluded_items || [];
+    const excludedHtml = excluded.length
+      ? `<div class="items-used-excluded">Not replaced (non-transferable): ${excluded.map((it) => `${Number(it.qty)}x ${esc(it.name)}`).join(', ')}</div>`
+      : '';
+
     if (resultEl) {
       const xanaxLine = res.xanax_used != null
         ? `<div class="items-used-xanax">Xanax used: <strong>${Number(res.xanax_used)}</strong> <span class="items-used-dim">of 4 covered</span></div>`
@@ -392,8 +400,9 @@ async function handleItemsUsed(txnId, btn) {
         <div class="items-used-box">
           <div class="items-used-head">Used since purchase</div>
           ${xanaxLine}
-          <div class="items-used-subhead">Happiness items — ${$(ci.happy_value || 0)}</div>
+          <div class="items-used-subhead">Happiness items (replaceable) — ${$(ci.happy_value || 0)}</div>
           <ul>${lines.join('')}</ul>
+          ${excludedHtml}
           <div class="items-used-foot">If they OD'd on Ecstasy now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>
         </div>`;
     }
@@ -996,15 +1005,23 @@ document.getElementById('diag-happy-btn')?.addEventListener('click', async () =>
     if (result.items && result.items.length) {
       lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Happy items detected:</span>');
       result.items.forEach((it) => {
+        // Transferability badge: what we'll actually replace vs. what we can't.
+        const tradeFlag = it.tradeable === false ? 'Torn: non-tradeable'
+          : it.tradeable === true ? 'Torn: tradeable'
+          : 'Torn: tradeable flag unknown';
+        const badge = it.transferable
+          ? `<span style="color:#6bff8e">&#10003; replaceable</span>`
+          : `<span style="color:#ff6b81">&#10007; NOT replaced (non-transferable)</span>`;
         lines.push(
-          `<span style="color:#6bff8e">&#10003;</span> <strong>${it.qty}×</strong> ${esc(it.name)} ` +
+          `${badge} <strong>${it.qty}×</strong> ${esc(it.name)} ` +
           `<span style="color:#888">[id ${it.item_id}]</span> — ` +
-          `${money(it.unit_value)} ea = <strong>${money(it.line_value)}</strong>`,
+          `${money(it.unit_value)} ea = <strong>${money(it.line_value)}</strong> ` +
+          `<span style="color:#888;font-size:0.78rem">(${tradeFlag})</span>`,
         );
       });
       lines.push(
-        `<br><span style="color:#c8aa6e;font-weight:bold">Total: ${result.happy_item_count} items` +
-        ` worth <span style="color:#6bff8e">${money(result.happy_items_value)}</span></span>`,
+        `<br><span style="color:#c8aa6e;font-weight:bold">Replaceable: ${money(result.replaceable_value)}` +
+        `${result.excluded_value ? ` · <span style="color:#ff6b81">Non-transferable (not paid): ${money(result.excluded_value)}</span>` : ''}</span>`,
       );
     } else {
       lines.push('<br><span style="color:#ff6b81">No happiness-boosting item uses matched in this window.</span>');
