@@ -2923,6 +2923,63 @@ async function handleAdminDetectHappyItems(req: Request, body: any) {
   });
 }
 
+// Admin-only: for a single active (purchased) transaction, scan the client's
+// log for the happiness-boosting items they've consumed since purchase and
+// value them live — i.e. the running Ecstasy-OD liability if they OD'd right
+// now. Uses the client's own server-stored key (player_secrets); if they never
+// signed in we have no key to scan, so we say so plainly rather than showing
+// a misleading $0. Read-only: never mutates the transaction.
+async function handleAdminActiveConsumed(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: txn } = await supabase
+    .from('transactions')
+    .select('id, torn_id, torn_name, purchased_at, status')
+    .eq('id', txn_id)
+    .maybeSingle();
+  if (!txn) return json({ error: 'Transaction not found' }, 404);
+  if (!txn.purchased_at) return json({ has_key: false, reason: 'not_purchased' });
+
+  const tornIdNum = Number(txn.torn_id);
+  if (!Number.isFinite(tornIdNum)) return json({ error: 'Invalid torn_id' }, 400);
+
+  const { data: secret } = await supabase
+    .from('player_secrets')
+    .select('api_key_enc, api_key_iv')
+    .eq('torn_player_id', tornIdNum)
+    .maybeSingle();
+  if (!secret) return json({ has_key: false, reason: 'no_stored_key' });
+
+  const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+  if (!apiKey) return json({ has_key: false, reason: 'decrypt_failed' });
+
+  // Probe first so a paused/revoked key reads as an error rather than "0 used".
+  const probeRes = await fetch(`${TORN_API}/user/?selections=basic&key=${apiKey}`);
+  const probe = await probeRes.json().catch(() => ({}));
+  if (probe?.error) {
+    return json({ has_key: true, key_error: probe.error.error, torn_error_code: probe.error.code });
+  }
+
+  const { data: cfg } = await supabase.from('config').select('*').single();
+  const fromTs = Math.floor(new Date(txn.purchased_at).getTime() / 1000);
+  const untilTs = Math.floor(Date.now() / 1000);
+  const computed = await computeEcstasyConsumedPayout(apiKey, cfg || {}, fromTs, untilTs);
+  if (!computed) return json({ has_key: true, scan_failed: true });
+
+  return json({
+    has_key: true,
+    consumed: computed.consumedItems,
+    projected_ecstasy_payout: computed.payout,
+    from_ts: fromTs,
+    until_ts: untilTs,
+  });
+}
+
 async function handleVerifyPayment(body: any) {
   const { txn_id } = body;
   if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
@@ -5125,6 +5182,8 @@ serve(async (req) => {
         return await handleAdminTestOdVerify(req, body);
       case 'admin-detect-happy-items':
         return await handleAdminDetectHappyItems(req, body);
+      case 'admin-active-consumed':
+        return await handleAdminActiveConsumed(req, body);
       case 'create-faction-event':
         return await handleCreateFactionEvent(body);
       case 'get-faction-event':
