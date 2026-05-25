@@ -480,6 +480,61 @@ function entryMatchesDrugUse(entry: any, drugName: string, itemId: number): bool
   return entryMatchesDrugUseWithReason(entry, drugName, itemId).match;
 }
 
+// Item IDs whose use is NOT counted as a "happy item" because they're already
+// covered by the fixed recipe quantities in the payout: 4× Xanax (energy/happy
+// stack) and 1× Ecstasy (the OD trigger itself). Every OTHER happiness-gaining
+// item-use (Erotic DVD, candy/Choco-Jump items, etc.) is what we replace.
+const HAPPY_EXCLUDED_ITEM_IDS = new Set<number>([XANAX_ITEM_ID, ECSTASY_ITEM_ID]);
+
+// Decide whether a single Torn user-log entry is a "client consumed a
+// happiness-boosting item" event. Dynamic by design (per operator decision):
+// instead of an allow-list of candy IDs, we match ANY item-use entry that
+// shows a happiness GAIN, then identify the item by its structured
+// `data.item` ID (authoritative — needed to value it later). Reuses the same
+// buy/trade/overdose exclusions as the drug-use matcher so purchases, bazaar
+// pulls, and ODs never count as a use.
+//
+// Returns the resolved itemId (null if no numeric item ID present, in which
+// case we can't value it so it can't be a happy-item match) plus a reason for
+// non-matches so the admin diagnostic can surface false negatives.
+function entryHappyGainWithReason(
+  entry: any,
+): { match: boolean; itemId: number | null; reason?: string } {
+  const parts: string[] = [];
+  if (entry.title) parts.push(String(entry.title));
+  if (entry.log) parts.push(String(entry.log));
+  if (entry.category) parts.push(String(entry.category));
+  if (entry.data) parts.push(JSON.stringify(entry.data));
+  if (entry.params) parts.push(JSON.stringify(entry.params));
+  const hay = parts.join(' ').toLowerCase();
+
+  // Structured item ID is required — it's how we identify and later value the
+  // item. Narrative-only happiness gains we can't price, so skip them.
+  const itemField = entry.data?.item;
+  let itemId: number | null = null;
+  if (typeof itemField === 'number') itemId = itemField;
+  else if (typeof itemField === 'string' && /^\d+$/.test(itemField)) itemId = Number(itemField);
+  if (itemId === null) return { match: false, itemId: null, reason: 'no numeric data.item' };
+
+  if (hay.includes('overdos')) return { match: false, itemId, reason: 'overdose' };
+  const exclusionMatch = /\b(buy|bought|buying|purchase|purchased|sold|sell|sent|received|dumped|bazaar|market|trade|traded|gift|abroad)\b/.exec(hay);
+  if (exclusionMatch) return { match: false, itemId, reason: `excluded keyword: "${exclusionMatch[1]}"` };
+
+  if (HAPPY_EXCLUDED_ITEM_IDS.has(itemId)) {
+    return { match: false, itemId, reason: 'xanax/ecstasy (handled by fixed recipe)' };
+  }
+
+  if (!hay.includes('happ')) return { match: false, itemId, reason: 'no happiness mention' };
+  // Reject happiness LOSS narratives (some items reduce happy).
+  if (/\b(lost|losing|lose|reduc|decreas)\b/.test(hay)) {
+    return { match: false, itemId, reason: 'happiness loss, not gain' };
+  }
+  const gainSignal = hay.includes('gain') || hay.includes('used') || hay.includes('use ') || hay.includes('item use');
+  if (!gainSignal) return { match: false, itemId, reason: 'no gain/use verb' };
+
+  return { match: true, itemId };
+}
+
 async function findEcstasyUsageInLog(
   apiKey: string,
   sinceTimestamp?: number, // only find usage after this time (e.g. purchased_at)
@@ -933,6 +988,115 @@ async function countItemUseInLog(
   };
 }
 
+// Scan the Torn user log for every happiness-boosting item the client
+// consumed in a window, grouped by item ID with quantities. This is the
+// foundation for the Choco-Jump fix: instead of paying a fixed 5× EDVD on an
+// Ecstasy OD, we replace exactly the happy items they actually used (EDVDs,
+// candy, or any mix). Pagination / dedupe / termination are identical to
+// countItemUseInLog — the production-proven scanner. The difference is the
+// per-entry predicate (entryHappyGainWithReason) and that we group by
+// data.item rather than counting one target item.
+async function countHappyItemsUsed(
+  apiKey: string,
+  sinceTimestamp?: number,
+  untilTimestamp?: number,
+  maxPages = 200,
+): Promise<{
+  items: Record<string, { qty: number; sampleNarrative: string; firstTs: number; lastTs: number }>;
+  totalQty: number;
+  pages: number;
+  totalEntries: number;
+  inWindowTotal: number;
+  reachedCutoff: boolean;
+  itemUseSamples: Array<{ itemId: number; ts: number; matched: boolean; reason: string; narrative: string }>;
+  debug: string[];
+}> {
+  let toParam = '';
+  const cutoff = sinceTimestamp || 0;
+  const upper = untilTimestamp || Number.POSITIVE_INFINITY;
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  const seenKeys = new Set<string>();
+  const items: Record<string, { qty: number; sampleNarrative: string; firstTs: number; lastTs: number }> = {};
+  const itemUseSamples: Array<{ itemId: number; ts: number; matched: boolean; reason: string; narrative: string }> = [];
+  const debug: string[] = [];
+  let pagesFetched = 0;
+  let totalEntries = 0;
+  let inWindowTotal = 0;
+  let lastOldestTs = Infinity;
+  let reachedCutoff = false;
+  let totalQty = 0;
+  function dbg(line: string) { debug.push(line); console.log(line); }
+
+  dbg(`[countHappyItemsUsed] START cutoff=${cutoff} upper=${upper}`);
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) {
+      dbg(`[countHappyItemsUsed] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
+
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) {
+      dbg(`[countHappyItemsUsed] page=${page} empty page, stopping`);
+      break;
+    }
+    pagesFetched++;
+    totalEntries += entriesKv.length;
+
+    for (const [key, entry] of entriesKv) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff) continue;
+      if (ts > upper) continue;
+      inWindowTotal++;
+
+      const verdict = entryHappyGainWithReason(entry);
+      const narrative = String(entry.log || entry.title || '').slice(0, 200);
+
+      // Surface every item-use-shaped entry (numeric data.item) — matched or
+      // not — so the admin diagnostic can show what Torn actually returned and
+      // we can tune the matcher against real Choco-Jump logs.
+      if (verdict.itemId !== null && itemUseSamples.length < 60) {
+        itemUseSamples.push({
+          itemId: verdict.itemId,
+          ts,
+          matched: verdict.match,
+          reason: verdict.reason || 'matched',
+          narrative,
+        });
+      }
+
+      if (!verdict.match || verdict.itemId === null) continue;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+
+      const id = String(verdict.itemId);
+      const qty = Number(entry.data?.qty) > 0 ? Number(entry.data.qty) : 1;
+      if (!items[id]) {
+        items[id] = { qty: 0, sampleNarrative: narrative, firstTs: ts, lastTs: ts };
+      }
+      items[id].qty += qty;
+      items[id].firstTs = Math.min(items[id].firstTs, ts);
+      items[id].lastTs = Math.max(items[id].lastTs, ts);
+      totalQty += qty;
+    }
+
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) {
+      reachedCutoff = true;
+      break;
+    }
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) break;
+    lastOldestTs = oldestTs;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  dbg(`[countHappyItemsUsed] FINAL distinctItems=${Object.keys(items).length} totalQty=${totalQty} pages=${pagesFetched} inWindow=${inWindowTotal} reachedCutoff=${reachedCutoff}`);
+  return { items, totalQty, pages: pagesFetched, totalEntries, inWindowTotal, reachedCutoff, itemUseSamples, debug };
+}
+
 // ── Auto-close expired transactions ──────────────────────────────────
 
 let lastAutoCloseRun = 0;
@@ -1097,6 +1261,39 @@ async function fetchLiveItemPrices(apiKey: string): Promise<{ xanax: number; edv
     const ecstasy = Number(data.items?.[197]?.market_value);
     if (!xanax || !edvd || !ecstasy) return null;
     return { xanax, edvd, ecstasy };
+  } catch (_err) {
+    return null;
+  }
+}
+
+// Fetch the full Torn item catalog as a map of id → { name, market_value }.
+// Used to resolve and price arbitrary consumed items (any happy item a client
+// used) for payout valuation. Returns null on failure so callers can fall
+// back to config prices. Cached briefly to avoid hammering the items endpoint.
+let _itemsMapCache: { at: number; map: Record<string, { name: string; market_value: number }> } | null = null;
+const ITEMS_MAP_TTL_MS = 15 * 60 * 1000; // 15 min, per CLAUDE.md market-cache policy
+
+async function fetchTornItemsMap(
+  apiKey: string,
+): Promise<Record<string, { name: string; market_value: number }> | null> {
+  if (_itemsMapCache && Date.now() - _itemsMapCache.at < ITEMS_MAP_TTL_MS) {
+    return _itemsMapCache.map;
+  }
+  try {
+    const url = `${TORN_API}/torn/?selections=items&key=${apiKey}`;
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const data = await res.json();
+    if (data?.error || !data?.items) return null;
+    const map: Record<string, { name: string; market_value: number }> = {};
+    for (const [id, info] of Object.entries(data.items as Record<string, any>)) {
+      map[id] = {
+        name: String(info?.name ?? `item ${id}`),
+        market_value: Number(info?.market_value ?? 0),
+      };
+    }
+    _itemsMapCache = { at: Date.now(), map };
+    return map;
   } catch (_err) {
     return null;
   }
@@ -2510,6 +2707,89 @@ async function handleAdminTestOdVerify(req: Request, body: any) {
       timestamp: finalTs,
       timestamp_iso: finalTs ? new Date(finalTs * 1000).toISOString() : null,
     },
+  });
+}
+
+// Admin-only: scan an API key's log for happiness-boosting item uses in a
+// window and value them live, without touching any transaction. Lets the
+// operator ingest some EDVDs / candy on their own account and confirm the
+// detector captures them correctly before we wire this into the payout path.
+async function handleAdminDetectHappyItems(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { api_key, from_ts, until_ts } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}` }, 400);
+
+  // Default to the last 24h if no window given, so the scan is bounded.
+  let fromTs: number;
+  let windowDefaulted = false;
+  if (from_ts && Number.isFinite(Number(from_ts)) && Number(from_ts) > 0) {
+    fromTs = Number(from_ts);
+  } else {
+    fromTs = Math.floor(Date.now() / 1000) - 24 * 3600;
+    windowDefaulted = true;
+  }
+  const untilTs = until_ts && Number.isFinite(Number(until_ts)) && Number(until_ts) > 0
+    ? Number(until_ts)
+    : undefined;
+
+  const [scan, itemsMap] = await Promise.all([
+    countHappyItemsUsed(api_key, fromTs, untilTs),
+    fetchTornItemsMap(api_key),
+  ]);
+
+  const items = Object.entries(scan.items).map(([id, info]) => {
+    const meta = itemsMap?.[id];
+    const unitValue = meta ? Number(meta.market_value) : 0;
+    return {
+      item_id: Number(id),
+      name: meta?.name || `item ${id}`,
+      qty: info.qty,
+      unit_value: unitValue,
+      line_value: unitValue * info.qty,
+      sample_narrative: info.sampleNarrative,
+      first_ts: info.firstTs,
+      last_ts: info.lastTs,
+    };
+  }).sort((a, b) => b.line_value - a.line_value);
+
+  const happyItemsValue = items.reduce((s, it) => s + it.line_value, 0);
+
+  // Enrich the raw item-use samples with names so the operator can eyeball
+  // exactly what was seen vs. matched.
+  const itemUseSamples = scan.itemUseSamples.map((s) => ({
+    ...s,
+    name: itemsMap?.[String(s.itemId)]?.name || `item ${s.itemId}`,
+  }));
+
+  return json({
+    player: {
+      name: identData.name,
+      id: String(identData.player_id),
+      level: identData.level || null,
+      status: identData.status?.description || null,
+    },
+    from_ts: fromTs,
+    from_iso: new Date(fromTs * 1000).toISOString(),
+    until_ts: untilTs ?? null,
+    until_iso: untilTs ? new Date(untilTs * 1000).toISOString() : null,
+    window_defaulted: windowDefaulted,
+    prices_available: !!itemsMap,
+    items,
+    happy_item_count: scan.totalQty,
+    happy_items_value: happyItemsValue,
+    scan: {
+      pages: scan.pages,
+      total_entries: scan.totalEntries,
+      in_window_total: scan.inWindowTotal,
+      reached_cutoff: scan.reachedCutoff,
+    },
+    item_use_samples: itemUseSamples,
   });
 }
 
@@ -4713,6 +4993,8 @@ serve(async (req) => {
         return await handleAdminTestDrugCheck(req, body);
       case 'admin-test-od-verify':
         return await handleAdminTestOdVerify(req, body);
+      case 'admin-detect-happy-items':
+        return await handleAdminDetectHappyItems(req, body);
       case 'create-faction-event':
         return await handleCreateFactionEvent(body);
       case 'get-faction-event':

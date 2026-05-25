@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -859,6 +859,91 @@ document.getElementById('diag-drug-btn')?.addEventListener('click', async () => 
 
   btn.disabled = false;
   btn.textContent = 'Test Xanax/Ecstasy Count';
+});
+
+// Detect Happy Items — scans the API key's log for ANY happiness-boosting
+// item use (EDVD, candy, etc.) in the window and values them live. Lets the
+// operator ingest some items on their own account and confirm the Choco-Jump
+// detector captures them before it drives real payouts.
+document.getElementById('diag-happy-btn')?.addEventListener('click', async () => {
+  const keyInput = document.getElementById('diag-api-key');
+  const fromInput = document.getElementById('diag-drug-from');
+  const resultsEl = document.getElementById('diag-results');
+  const btn = document.getElementById('diag-happy-btn');
+  const apiKey = keyInput.value.trim();
+  const fromValue = fromInput?.value;
+
+  if (!apiKey) {
+    resultsEl.innerHTML = '<span style="color:#ff6b81">Enter your Torn API key in the field above first.</span>';
+    return;
+  }
+
+  let fromTs;
+  if (fromValue) {
+    const ms = new Date(fromValue).getTime();
+    if (!Number.isFinite(ms)) {
+      resultsEl.innerHTML = '<span style="color:#ff6b81">Invalid date/time.</span>';
+      return;
+    }
+    fromTs = Math.floor(ms / 1000);
+  }
+
+  btn.disabled = true;
+  btn.textContent = 'Scanning...';
+  resultsEl.textContent = '';
+
+  try {
+    const result = await adminDetectHappyItems({ apiKey, fromTs });
+    const money = (n) => '$' + Number(n || 0).toLocaleString('en-US');
+    const lines = [];
+
+    lines.push(`<strong>${esc(result.player?.name || '?')} [${esc(result.player?.id || '?')}]</strong>`);
+    lines.push(
+      `<span style="color:#888;font-size:0.8rem">window: ${esc(result.from_iso || '?')}` +
+      `${result.window_defaulted ? ' (defaulted to last 24h)' : ''}` +
+      `${result.until_iso ? ` → ${esc(result.until_iso)}` : ''} · ` +
+      `pages: ${result.scan?.pages} · in-window entries: ${result.scan?.in_window_total}` +
+      `${result.prices_available ? '' : ' · ⚠ live prices unavailable (values shown as $0)'}</span>`,
+    );
+
+    if (result.items && result.items.length) {
+      lines.push('<br><span style="color:#c8aa6e;font-weight:bold">Happy items detected:</span>');
+      result.items.forEach((it) => {
+        lines.push(
+          `<span style="color:#6bff8e">&#10003;</span> <strong>${it.qty}×</strong> ${esc(it.name)} ` +
+          `<span style="color:#888">[id ${it.item_id}]</span> — ` +
+          `${money(it.unit_value)} ea = <strong>${money(it.line_value)}</strong>`,
+        );
+      });
+      lines.push(
+        `<br><span style="color:#c8aa6e;font-weight:bold">Total: ${result.happy_item_count} items` +
+        ` worth <span style="color:#6bff8e">${money(result.happy_items_value)}</span></span>`,
+      );
+    } else {
+      lines.push('<br><span style="color:#ff6b81">No happiness-boosting item uses matched in this window.</span>');
+    }
+
+    // Raw item-use samples — shows what was seen vs. matched, for tuning.
+    if (result.item_use_samples && result.item_use_samples.length) {
+      lines.push('<br><span style="color:#888;font-weight:bold;font-size:0.8rem">All item-use entries seen (for tuning):</span>');
+      result.item_use_samples.forEach((s) => {
+        const mark = s.matched
+          ? '<span style="color:#6bff8e">match</span>'
+          : `<span style="color:#e8a735">skip: ${esc(s.reason)}</span>`;
+        const date = s.ts ? new Date(s.ts * 1000).toLocaleString() : '?';
+        lines.push(
+          `<span style="color:#aaa;font-size:0.78rem">[${mark}] ${esc(s.name)} (id ${s.itemId}) · ${date} — "${esc(s.narrative)}"</span>`,
+        );
+      });
+    }
+
+    resultsEl.innerHTML = lines.join('<br>');
+  } catch (e) {
+    resultsEl.innerHTML = `<span style="color:#ff6b81">Detection failed: ${esc(e.message)}</span>`;
+  }
+
+  btn.disabled = false;
+  btn.textContent = 'Detect Happy Items';
 });
 
 // Test OD Verification — runs the full report-od logic (events scan + log
