@@ -281,6 +281,17 @@ export async function adminDetectHappyItems({ apiKey, fromTs, untilTs }) {
 }
 
 /**
+ * Admin: for one active (purchased) transaction, scan the client's log for the
+ * happiness items they've consumed since purchase and value them live — the
+ * running Ecstasy-OD liability. Uses the client's server-stored key. Returns
+ * { has_key, consumed, projected_ecstasy_payout, ... } or { has_key: false,
+ * reason } when no scannable key is on file.
+ */
+export async function adminActiveConsumed(txnId) {
+  return gateway('admin-active-consumed', { txn_id: txnId });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {

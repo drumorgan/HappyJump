@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -276,7 +276,8 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         actionsHtml = `
           <button class="btn-od-xan" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_xanax">Xanax OD</button>
           <button class="btn-od-ecs" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_ecstasy">Ecstasy OD</button>
-          <button class="btn-close" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="closed_clean">Close Clean</button>`;
+          <button class="btn-close" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="closed_clean">Close Clean</button>
+          <button class="btn-items-used" data-id="${t.id}">Items Used So Far</button>`;
         break;
       case 'od_xanax':
       case 'od_ecstasy':
@@ -324,6 +325,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       </div>
       ${consumedHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
+      ${t.status === 'purchased' ? `<div class="items-used-result" id="items-used-${t.id}"></div>` : ''}
     </div>`;
   }).join('');
 
@@ -337,8 +339,65 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     btn.addEventListener('click', () => handleRejectAndBlock(btn.dataset.tornId, btn));
   });
 
+  // Bind "Items Used So Far" buttons (active-policy consumed-item tally)
+  txnList.querySelectorAll('.btn-items-used').forEach((btn) => {
+    btn.addEventListener('click', () => handleItemsUsed(btn.dataset.id, btn));
+  });
+
   // Start expiry countdown timers for requested transactions
   startExpiryTimers();
+}
+
+// Scan an active policy's client log for happiness items used since purchase
+// and render the running tally + projected Ecstasy-OD liability inline.
+async function handleItemsUsed(txnId, btn) {
+  const resultEl = document.getElementById(`items-used-${txnId}`);
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Scanning…';
+  if (resultEl) resultEl.innerHTML = '<div class="items-used-msg">Scanning client log…</div>';
+
+  try {
+    const res = await adminActiveConsumed(txnId);
+
+    if (!res.has_key) {
+      const reasons = {
+        no_stored_key: 'Client has never signed in on the site, so there is no stored key to scan their log.',
+        not_purchased: 'Policy is not in the purchased window yet.',
+        decrypt_failed: 'Stored key could not be decrypted — ask the client to sign in again.',
+      };
+      if (resultEl) resultEl.innerHTML = `<div class="items-used-msg">${esc(reasons[res.reason] || 'No key available to scan.')}</div>`;
+      return;
+    }
+    if (res.key_error) {
+      if (resultEl) resultEl.innerHTML = `<div class="items-used-msg">Client key error: ${esc(res.key_error)}</div>`;
+      return;
+    }
+    if (res.scan_failed) {
+      if (resultEl) resultEl.innerHTML = '<div class="items-used-msg">Could not scan the client log right now (Torn API blip). Try again.</div>';
+      return;
+    }
+
+    const ci = res.consumed;
+    const lines = (ci.happy_items || []).map(
+      (it) => `<li>${Number(it.qty)}x ${esc(it.name)} — ${$(it.line_value)}</li>`,
+    );
+    if (lines.length === 0) lines.push('<li class="items-used-none">No happiness items used yet</li>');
+
+    if (resultEl) {
+      resultEl.innerHTML = `
+        <div class="items-used-box">
+          <div class="items-used-head">Happiness items used since purchase — ${$(ci.happy_value || 0)}</div>
+          <ul>${lines.join('')}</ul>
+          <div class="items-used-foot">If they OD'd on Ecstasy now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>
+        </div>`;
+    }
+  } catch (e) {
+    if (resultEl) resultEl.innerHTML = `<div class="items-used-msg">Error: ${esc(e.message)}</div>`;
+  } finally {
+    btn.disabled = false;
+    btn.textContent = orig;
+  }
 }
 
 async function handleAction(txnId, tornId, newStatus, btn) {
