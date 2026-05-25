@@ -196,6 +196,31 @@
   white-space: nowrap;
 }
 
+.txn-consumed {
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+  background: rgba(255, 255, 255, 0.03);
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 6px;
+  padding: 0.5rem 0.75rem;
+}
+
+.txn-consumed summary {
+  cursor: pointer;
+  color: #d7b46a;
+  font-weight: 600;
+}
+
+.txn-consumed ul {
+  margin: 0.5rem 0 0;
+  padding-left: 1.25rem;
+  color: #ccc;
+}
+
+.txn-consumed li {
+  margin: 0.15rem 0;
+}
+
 .txn-actions {
   display: flex;
   gap: 0.5rem;

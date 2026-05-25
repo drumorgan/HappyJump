@@ -85,7 +85,7 @@ async function autoCloseExpired() {
 async function loadStats() {
   const { data: txns, error } = await supabase
     .from('transactions')
-    .select('status, suggested_price, package_cost, payout_amount, xanax_payout, ecstasy_payout');
+    .select('status, suggested_price, package_cost, payout_amount, xanax_payout, ecstasy_payout, consumed_items');
 
   if (error) {
     showToast('Failed to load stats: ' + error.message, 'error');
@@ -99,8 +99,12 @@ async function loadStats() {
   let xanOd = txns.filter((t) => t.status === 'od_xanax').length;
   let ecsOd = txns.filter((t) => t.status === 'od_ecstasy').length;
   txns.filter((t) => t.status === 'payout_sent' && t.payout_amount).forEach((t) => {
-    if (t.payout_amount === t.xanax_payout) xanOd++;
-    else if (t.payout_amount === t.ecstasy_payout) ecsOd++;
+    // New-style Ecstasy ODs carry a consumed_items breakdown (payout no longer
+    // equals the ecstasy_payout snapshot, so we can't infer type by amount).
+    // Fall back to the amount heuristic for legacy snapshot-based payouts.
+    if (t.consumed_items) ecsOd++;
+    else if (t.payout_amount === t.xanax_payout) xanOd++;
+    else ecsOd++;
   });
 
   const closedStatuses = ['closed_clean', 'payout_sent'];
@@ -283,6 +287,24 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     const payoutInfo = t.payout_amount ? ` | Payout: ${$(t.payout_amount)}` : '';
     const closesInfo = t.closes_at ? ` | Closes: ${new Date(t.closes_at).toLocaleDateString()}` : '';
 
+    // Ecstasy-OD payouts carry the exact consumed-item breakdown so the operator
+    // knows what to send in-game (4x Xanax + the happiness items the client
+    // actually used + 1x Ecstasy + rehab bonus), live-valued at payout time.
+    let consumedHtml = '';
+    const ci = t.consumed_items;
+    if (ci && Array.isArray(ci.happy_items)) {
+      const lines = [`<li>${ci.xanax?.qty ?? 4}x Xanax — ${$(ci.xanax?.line_value ?? 0)}</li>`];
+      for (const it of ci.happy_items) {
+        lines.push(`<li>${Number(it.qty)}x ${esc(it.name)} — ${$(it.line_value)}</li>`);
+      }
+      if (ci.happy_items.length === 0) {
+        lines.push('<li style="color:#888">No happiness items found in policy window</li>');
+      }
+      lines.push(`<li>${ci.ecstasy?.qty ?? 1}x Ecstasy — ${$(ci.ecstasy?.line_value ?? 0)}</li>`);
+      lines.push(`<li>Rehab bonus — ${$(ci.rehab_bonus ?? 0)}</li>`);
+      consumedHtml = `<details class="txn-consumed"><summary>Replacement package to send — ${$(ci.total)}</summary><ul>${lines.join('')}</ul></details>`;
+    }
+
     return `<div class="txn-card">
       <div class="txn-top">
         <div>
@@ -300,6 +322,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         <span>Price: ${$(t.suggested_price)}</span>
         <span>${date}${closesInfo}${payoutInfo}</span>
       </div>
+      ${consumedHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
     </div>`;
   }).join('');
