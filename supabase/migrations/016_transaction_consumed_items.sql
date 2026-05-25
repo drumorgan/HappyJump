@@ -1,0 +1,20 @@
+-- Choco-Jump fix: store the exact happiness-boosting items a client consumed
+-- on an Ecstasy OD, valued live at payout time, so the operator knows what to
+-- send in-game and the payout is auditable. Replaces the old fixed 5x EDVD
+-- assumption that let clients consume cheap candy and claim a full DVD payout.
+--
+-- Shape (jsonb), written by the gateway's report-od ecstasy branch:
+--   {
+--     "happy_items": [{ "item_id", "name", "qty", "unit_value", "line_value" }],
+--     "happy_value": <sum of happy line_values>,
+--     "xanax":   { "qty": 4, "unit_value", "line_value" },
+--     "ecstasy": { "qty": 1, "unit_value", "line_value" },
+--     "rehab_bonus": <bigint>,
+--     "total": <payout_amount>,
+--     "prices_live": true,
+--     "window": { "from_ts", "until_ts" },
+--     "priced_at": "<iso>"
+--   }
+-- NULL on Xanax ODs, clean closes, and Ecstasy ODs that fell back to the
+-- stored ecstasy_payout snapshot (Torn price/scan blip).
+ALTER TABLE transactions ADD COLUMN IF NOT EXISTS consumed_items jsonb;

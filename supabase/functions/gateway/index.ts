@@ -2180,6 +2180,71 @@ async function handleUpdateConfig(req: Request, body: any) {
   return json(data);
 }
 
+// Compute the real Ecstasy-OD payout: instead of a fixed 5x EDVD, replace
+// exactly the happiness-boosting items the client actually consumed in the
+// policy window, valued live, plus the fixed 4x Xanax + 1x Ecstasy + rehab
+// bonus. This is the core of the Choco-Jump fix. Returns null if the log scan
+// or price lookup fails so the caller can fall back to the stored
+// ecstasy_payout snapshot — a Torn API blip must never block a payout.
+async function computeEcstasyConsumedPayout(
+  apiKey: string,
+  config: any,
+  fromTs: number,
+  untilTs: number,
+): Promise<{ payout: number; consumedItems: Record<string, unknown> } | null> {
+  let scan: Awaited<ReturnType<typeof countHappyItemsUsed>>;
+  let itemsMap: Awaited<ReturnType<typeof fetchTornItemsMap>>;
+  try {
+    [scan, itemsMap] = await Promise.all([
+      countHappyItemsUsed(apiKey, fromTs, untilTs),
+      fetchTornItemsMap(apiKey),
+    ]);
+  } catch (e) {
+    console.error(`[computeEcstasyConsumedPayout] scan/price failed: ${e?.message || e}`);
+    return null;
+  }
+  // Without a price map we can't value the happy items — fall back to snapshot.
+  if (!itemsMap) {
+    console.warn('[computeEcstasyConsumedPayout] itemsMap unavailable, falling back to snapshot');
+    return null;
+  }
+
+  const happyItems = Object.entries(scan.items).map(([id, info]) => {
+    const meta = itemsMap![id];
+    const unitValue = meta ? Number(meta.market_value) : 0;
+    return {
+      item_id: Number(id),
+      name: meta?.name || `item ${id}`,
+      qty: info.qty,
+      unit_value: unitValue,
+      line_value: unitValue * info.qty,
+    };
+  }).sort((a, b) => b.line_value - a.line_value);
+
+  const happyValue = happyItems.reduce((s, it) => s + it.line_value, 0);
+  const xanaxUnit = Number(itemsMap['206']?.market_value) || Number(config.xanax_price) || 0;
+  const ecstasyUnit = Number(itemsMap['197']?.market_value) || Number(config.ecstasy_price) || 0;
+  const rehab = Number(config.rehab_bonus) || 0;
+  const xanaxLine = 4 * xanaxUnit;
+  const ecstasyLine = 1 * ecstasyUnit;
+  const total = Math.round(xanaxLine + happyValue + ecstasyLine + rehab);
+
+  return {
+    payout: total,
+    consumedItems: {
+      happy_items: happyItems,
+      happy_value: happyValue,
+      xanax: { qty: 4, unit_value: xanaxUnit, line_value: xanaxLine },
+      ecstasy: { qty: 1, unit_value: ecstasyUnit, line_value: ecstasyLine },
+      rehab_bonus: rehab,
+      total,
+      prices_live: true,
+      window: { from_ts: fromTs, until_ts: untilTs },
+      priced_at: new Date().toISOString(),
+    },
+  };
+}
+
 async function handleReportOd(body: any) {
   const { txn_id } = body;
   if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
@@ -2416,10 +2481,29 @@ async function handleReportOd(body: any) {
 
   // Verified — update the transaction
   const odStatus = odDrug === 'xanax' ? 'od_xanax' : 'od_ecstasy';
-  const payoutAmount = odDrug === 'xanax' ? txn.xanax_payout : txn.ecstasy_payout;
 
-  const updatePayload: any = { status: odStatus, payout_amount: payoutAmount };
+  const updatePayload: any = { status: odStatus };
   if (odEventTimestamp) updatePayload.od_event_timestamp = odEventTimestamp;
+
+  // Compute the payout. Xanax ODs are flat (4x Xanax + rehab, already snapshot
+  // in xanax_payout). Ecstasy ODs replace exactly the happiness-boosting items
+  // the client actually consumed (Choco-Jump fix) — scan the log + value live,
+  // falling back to the stored snapshot if Torn is unreachable so a blip never
+  // blocks a payout.
+  let payoutAmount = Number(odDrug === 'xanax' ? txn.xanax_payout : txn.ecstasy_payout);
+  let consumedPayout: Awaited<ReturnType<typeof computeEcstasyConsumedPayout>> = null;
+  if (odDrug === 'ecstasy') {
+    const { data: cfg } = await supabase.from('config').select('*').single();
+    const odWindowEnd = odEventTimestamp || Math.floor(Date.now() / 1000);
+    consumedPayout = (fromTs != null)
+      ? await computeEcstasyConsumedPayout(api_key, cfg || {}, fromTs, odWindowEnd)
+      : null;
+    if (consumedPayout) {
+      payoutAmount = consumedPayout.payout;
+      updatePayload.consumed_items = consumedPayout.consumedItems;
+    }
+  }
+  updatePayload.payout_amount = payoutAmount;
 
   const { error: updateErr } = await supabase
     .from('transactions')
@@ -2429,6 +2513,27 @@ async function handleReportOd(body: any) {
   if (updateErr) return json({ error: updateErr.message }, 500);
 
   const drugLabel = odDrug === 'xanax' ? 'Xanax' : 'Ecstasy';
+
+  // For an Ecstasy OD, spell out exactly what to send in-game: 4x Xanax + the
+  // happiness items the client actually consumed + 1x Ecstasy + rehab bonus.
+  const consumedLines: string[] = [];
+  if (odDrug === 'ecstasy') {
+    if (consumedPayout) {
+      const ci: any = consumedPayout.consumedItems;
+      consumedLines.push(``, `Replacement package to send (live-valued):`);
+      consumedLines.push(`  ${ci.xanax.qty}x Xanax — ${formatMoney(ci.xanax.line_value)}`);
+      for (const it of (ci.happy_items as any[])) {
+        consumedLines.push(`  ${it.qty}x ${it.name} — ${formatMoney(it.line_value)}`);
+      }
+      if ((ci.happy_items as any[]).length === 0) {
+        consumedLines.push(`  (no happiness items found in policy window)`);
+      }
+      consumedLines.push(`  ${ci.ecstasy.qty}x Ecstasy — ${formatMoney(ci.ecstasy.line_value)}`);
+      consumedLines.push(`  Rehab bonus — ${formatMoney(ci.rehab_bonus)}`);
+    } else {
+      consumedLines.push(``, `(Could not scan consumed items — Torn API blip. Payout uses the stored snapshot; verify the package manually.)`);
+    }
+  }
 
   // Must await — Edge Functions terminate the isolate after response is sent,
   // so un-awaited promises get killed before the SMTP send completes.
@@ -2440,6 +2545,7 @@ async function handleReportOd(body: any) {
       `Player: ${identData.name} [${tornId}]`,
       `OD Type: ${drugLabel}`,
       `Payout Amount: ${formatMoney(Number(payoutAmount))}`,
+      ...consumedLines,
       ``,
       `Transaction ID: ${txn_id}`,
       ``,
