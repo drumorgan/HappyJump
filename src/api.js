@@ -267,6 +267,20 @@ export async function adminTestOdVerify({ apiKey, txnId, fromTs }) {
 }
 
 /**
+ * Admin: scan an API key's log for happiness-boosting item uses (EDVD, candy,
+ * etc.) in a window and value them live. Used to verify the Choco-Jump
+ * detection against a real account before wiring it into payouts. Pass a
+ * from_ts (unix seconds); omit it to default to the last 24h.
+ */
+export async function adminDetectHappyItems({ apiKey, fromTs, untilTs }) {
+  return gateway('admin-detect-happy-items', {
+    api_key: apiKey,
+    from_ts: fromTs || undefined,
+    until_ts: untilTs || undefined,
+  });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {
