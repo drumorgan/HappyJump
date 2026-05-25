@@ -245,6 +245,26 @@
   margin-bottom: 0.35rem;
 }
 
+.items-used-xanax {
+  color: #ccc;
+  margin-bottom: 0.4rem;
+}
+
+.items-used-xanax strong {
+  color: #fbbf24;
+}
+
+.items-used-dim {
+  color: #888;
+  font-size: 0.8rem;
+}
+
+.items-used-subhead {
+  color: #bbb;
+  font-weight: 600;
+  margin: 0.3rem 0 0.2rem;
+}
+
 .items-used-box ul {
   margin: 0;
   padding-left: 1.25rem;

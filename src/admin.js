@@ -385,9 +385,14 @@ async function handleItemsUsed(txnId, btn) {
     if (lines.length === 0) lines.push('<li class="items-used-none">No happiness items used yet</li>');
 
     if (resultEl) {
+      const xanaxLine = res.xanax_used != null
+        ? `<div class="items-used-xanax">Xanax used: <strong>${Number(res.xanax_used)}</strong> <span class="items-used-dim">of 4 covered</span></div>`
+        : '';
       resultEl.innerHTML = `
         <div class="items-used-box">
-          <div class="items-used-head">Happiness items used since purchase — ${$(ci.happy_value || 0)}</div>
+          <div class="items-used-head">Used since purchase</div>
+          ${xanaxLine}
+          <div class="items-used-subhead">Happiness items — ${$(ci.happy_value || 0)}</div>
           <ul>${lines.join('')}</ul>
           <div class="items-used-foot">If they OD'd on Ecstasy now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>
         </div>`;

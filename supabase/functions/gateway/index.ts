@@ -2968,13 +2968,17 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   const { data: cfg } = await supabase.from('config').select('*').single();
   const fromTs = Math.floor(new Date(txn.purchased_at).getTime() / 1000);
   const untilTs = Math.floor(Date.now() / 1000);
-  const computed = await computeEcstasyConsumedPayout(apiKey, cfg || {}, fromTs, untilTs);
-  if (!computed) return json({ has_key: true, scan_failed: true });
+  const [computed, xanaxResult] = await Promise.all([
+    computeEcstasyConsumedPayout(apiKey, cfg || {}, fromTs, untilTs),
+    countXanaxUsageInLog(apiKey, fromTs),
+  ]);
+  if (!computed) return json({ has_key: true, scan_failed: true, xanax_used: xanaxResult?.count ?? null });
 
   return json({
     has_key: true,
     consumed: computed.consumedItems,
     projected_ecstasy_payout: computed.payout,
+    xanax_used: xanaxResult.count,
     from_ts: fromTs,
     until_ts: untilTs,
   });
