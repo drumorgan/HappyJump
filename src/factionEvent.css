@@ -151,6 +151,30 @@
   font-size: 0.8rem;
 }
 
+.recent-row .recent-delete-btn {
+  background: transparent;
+  color: #a02020;
+  border: 1px solid #5a2020;
+  border-radius: 4px;
+  width: 1.8rem;
+  height: 1.8rem;
+  font-size: 1rem;
+  line-height: 1;
+  cursor: pointer;
+  margin-left: 0.6rem;
+  padding: 0;
+}
+
+.recent-row .recent-delete-btn:hover {
+  background: #5a2020;
+  color: #fff;
+}
+
+.recent-row .recent-delete-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
 .ev-drug-inline {
   color: #e8c84a;
   font-weight: 600;

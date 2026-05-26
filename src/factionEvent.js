@@ -511,6 +511,7 @@ async function loadRecentEvents() {
       return;
     }
     const now = Date.now();
+    const myTornId = feSession?.torn_id || null;
     body.innerHTML = events.map((ev) => {
       const startsMs = new Date(ev.starts_at).getTime();
       const endsMs = new Date(ev.ends_at).getTime();
@@ -518,6 +519,12 @@ async function loadRecentEvents() {
       if (now < startsMs) status = `starts in ${fmtRelative(startsMs - now)}`;
       else if (now < endsMs) status = `live — ${fmtRelative(endsMs - now)} left`;
       else status = `ended ${fmtRelative(now - endsMs)} ago`;
+      // Delete affordance: creator (FE torn_id matches) OR HJ admin.
+      // Gateway re-authorizes regardless — this is just UI gating.
+      const canDelete = isHjAdmin || (myTornId && String(ev.creator_torn_id) === String(myTornId));
+      const delBtn = canDelete
+        ? `<button type="button" class="recent-delete-btn" data-event-id="${esc(ev.id)}" data-event-title="${esc(ev.title)}" title="Delete this event">×</button>`
+        : '';
       return `
         <div class="recent-row">
           <div>
@@ -525,9 +532,29 @@ async function loadRecentEvents() {
             <div class="recent-meta">${esc(ev.event_type === 'attacks' ? 'Attacks' : (ev.drug_name || ''))} · ${esc(status)}</div>
           </div>
           <div class="recent-meta">${fmtDateTime(ev.starts_at)}</div>
+          ${delBtn}
         </div>
       `;
     }).join('');
+    body.querySelectorAll('.recent-delete-btn').forEach((btn) => {
+      btn.addEventListener('click', async (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const eventId = btn.dataset.eventId;
+        const title = btn.dataset.eventTitle || 'this event';
+        if (!eventId) return;
+        if (!confirm(`Delete "${title}"?\n\nThis removes the event and every participant row. Cannot be undone.`)) return;
+        btn.disabled = true;
+        try {
+          await deleteFactionEvent({ eventId, auth: feAuth() });
+          toast('Event deleted', 'success');
+          loadRecentEvents();
+        } catch (err) {
+          toast(err.message || 'Delete failed');
+          btn.disabled = false;
+        }
+      });
+    });
   } catch (err) {
     body.innerHTML = `<p class="form-intro" style="color:#e94560">Failed to load: ${esc(err.message || String(err))}</p>`;
   }
