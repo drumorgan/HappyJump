@@ -92,6 +92,25 @@ function dateInputToStartIso(dateStr) {
   return `${dateStr}T${pad2(EVENT_START_HOUR_TCT)}:00:00.000Z`;
 }
 
+// "YYYY-MM-DD" + "HH:MM" (TCT) → ISO. Used for attack events where the
+// creator picks the exact start time rather than anchoring at 10:00 TCT.
+function dateAndTimeToStartIso(dateStr, timeStr) {
+  if (!dateStr || !timeStr) return null;
+  const md = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dateStr);
+  const mt = /^(\d{1,2}):(\d{2})$/.exec(timeStr);
+  if (!md || !mt) return null;
+  return `${dateStr}T${pad2(Number(mt[1]))}:${pad2(Number(mt[2]))}:00.000Z`;
+}
+
+// ISO → "HH:MM" in UTC (TCT). Used to seed the time inputs from an
+// existing event's starts_at.
+function isoToTimeInput(iso) {
+  if (!iso) return '';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '';
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())}`;
+}
+
 // "YYYY-MM-DD" (UTC) + duration in hours → ISO at start + duration.
 function dateInputToEndIso(dateStr, durationHours = DEFAULT_EVENT_DURATION_HOURS) {
   const startIso = dateInputToStartIso(dateStr);
@@ -360,14 +379,21 @@ function wireCreateForm() {
   const eventTypeSel = document.getElementById('ce-event-type');
   const drugRow = document.getElementById('ce-drug-row');
   const attacksHelp = document.getElementById('ce-attacks-help');
+  const timeRow = document.getElementById('ce-time-row');
+  const drugWindowHelp = document.getElementById('ce-window-help-drug');
+  const attacksWindowHelp = document.getElementById('ce-window-help-attacks');
 
-  // Toggle drug picker visibility based on event_type. Attacks events
-  // don't carry a drug, so hide the row entirely to avoid the "what does
-  // 'pick one' even mean here?" question.
+  // Toggle drug picker + start-time picker based on event_type. Attacks
+  // events don't carry a drug AND have a creator-set exact start time
+  // (no per-participant slot pickers later), so we show the time input
+  // here and hide the drug row.
   function syncEventTypeUi() {
     const isAttacks = eventTypeSel.value === 'attacks';
     if (drugRow) drugRow.style.display = isAttacks ? 'none' : '';
     if (attacksHelp) attacksHelp.style.display = isAttacks ? '' : 'none';
+    if (timeRow) timeRow.style.display = isAttacks ? '' : 'none';
+    if (drugWindowHelp) drugWindowHelp.style.display = isAttacks ? 'none' : '';
+    if (attacksWindowHelp) attacksWindowHelp.style.display = isAttacks ? '' : 'none';
   }
   if (eventTypeSel) {
     eventTypeSel.addEventListener('change', syncEventTypeUi);
@@ -418,9 +444,19 @@ function wireCreateForm() {
       return;
     }
 
-    const startsAtIso = dateInputToStartIso(dateStr);
-    const endsAtIso = dateInputToEndIso(dateStr, durationHours);
-    if (!startsAtIso || !endsAtIso) { toast('Invalid event date or duration'); return; }
+    // Attack events let the creator set an exact start time (in TCT);
+    // drug events anchor at 10:00 TCT and the slot picker handles
+    // per-participant offsets.
+    const timeStr = event_type === 'attacks'
+      ? (document.getElementById('ce-starts-time').value || '10:00')
+      : null;
+    const startsAtIso = timeStr
+      ? dateAndTimeToStartIso(dateStr, timeStr)
+      : dateInputToStartIso(dateStr);
+    const endsAtIso = startsAtIso
+      ? new Date(new Date(startsAtIso).getTime() + durationHours * 60 * 60 * 1000).toISOString()
+      : null;
+    if (!startsAtIso || !endsAtIso) { toast('Invalid event date, time, or duration'); return; }
 
     setLoading(true);
     try {
@@ -1205,6 +1241,13 @@ function renderJoinOrMe(event, participants) {
       document.getElementById('me-meta').textContent =
         `${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
     }
+    // "Change my start time" is meaningless on attack events — everyone
+    // shares the event window. Hide the button + collapse the inline
+    // editor so a previously-open form doesn't get orphaned.
+    const changeStartBtn = document.getElementById('me-change-start');
+    const changeStartForm = document.getElementById('me-change-start-form');
+    if (changeStartBtn) changeStartBtn.style.display = event.event_type === 'attacks' ? 'none' : '';
+    if (changeStartForm && event.event_type === 'attacks') changeStartForm.classList.add('hidden');
     // Refresh button only works while signed in (server needs the key).
     const refreshBtn = document.getElementById('me-refresh');
     refreshBtn.disabled = !feSession;
@@ -1213,9 +1256,25 @@ function renderJoinOrMe(event, participants) {
     joinCard.classList.remove('hidden');
     meCard.classList.add('hidden');
 
-    // Slot picker reflects this event's window.
+    // Slot picker + calendar pull are drug-event specific: attack events
+    // use the global event window for everyone, so there's no per-player
+    // start time to choose.
+    const isAttacks = event.event_type === 'attacks';
     const slotSel = document.getElementById('join-personal-start');
-    fillSlotPicker(slotSel, event.starts_at, event.ends_at, slotSel.value || null);
+    const slotLabel = slotSel?.closest('.fe-label');
+    const slotRow = slotSel?.closest('.fe-row') || slotLabel;
+    const calBtn = document.getElementById('join-fetch-calendar');
+    if (slotRow) slotRow.style.display = isAttacks ? 'none' : '';
+    if (calBtn) calBtn.style.display = isAttacks ? 'none' : '';
+    if (slotSel) {
+      // A hidden `required` select would block form submit; clear it
+      // for attacks events.
+      if (isAttacks) slotSel.removeAttribute('required');
+      else slotSel.setAttribute('required', '');
+    }
+    if (!isAttacks) {
+      fillSlotPicker(slotSel, event.starts_at, event.ends_at, slotSel.value || null);
+    }
 
     // Hide the API key row when the user is FE-signed-in. The join handler
     // will use the FE session instead of asking for a key.
@@ -1223,13 +1282,15 @@ function renderJoinOrMe(event, participants) {
       keyRow.classList.add('hidden');
       apiInput.required = false;
       apiInput.value = '';
-      document.getElementById('join-intro').textContent =
-        'Pick your personal start time below — we already have your encrypted key.';
+      document.getElementById('join-intro').textContent = isAttacks
+        ? "Click Join — we'll start tracking your attacks for this event's window."
+        : 'Pick your personal start time below — we already have your encrypted key.';
     } else {
       keyRow.classList.remove('hidden');
       apiInput.required = true;
-      document.getElementById('join-intro').textContent =
-        'Sign in above with your Torn API key, then pick your personal start time below. We only read your name, faction, log, and calendar.';
+      document.getElementById('join-intro').textContent = isAttacks
+        ? 'Sign in above with your Torn API key, then click Join. We only read your name, faction, log, and attacks.'
+        : 'Sign in above with your Torn API key, then pick your personal start time below. We only read your name, faction, log, and calendar.';
     }
   }
 }
@@ -1275,10 +1336,19 @@ function wireEditPencils(eventId) {
 
   document.getElementById('ev-edit-window-btn').onclick = () => {
     if (currentEvent) {
+      const isAttacks = currentEvent.event_type === 'attacks';
       document.getElementById('ev-edit-starts-at').value = isoToDateInput(currentEvent.starts_at);
       document.getElementById('ev-edit-duration-hours').value = String(
         durationHoursFromIsos(currentEvent.starts_at, currentEvent.ends_at),
       );
+      const timeRow = document.getElementById('ev-edit-time-row');
+      const timeInput = document.getElementById('ev-edit-starts-time');
+      if (timeRow) timeRow.style.display = isAttacks ? '' : 'none';
+      if (timeInput) timeInput.value = isoToTimeInput(currentEvent.starts_at) || '10:00';
+      const drugHelp = document.getElementById('ev-edit-window-help-drug');
+      const attacksHelp = document.getElementById('ev-edit-window-help-attacks');
+      if (drugHelp) drugHelp.style.display = isAttacks ? 'none' : '';
+      if (attacksHelp) attacksHelp.style.display = isAttacks ? '' : 'none';
     }
     openEditForm('window');
   };
@@ -1340,9 +1410,17 @@ function wireEditPencils(eventId) {
       toast(`Duration must be 1–${MAX_EVENT_DURATION_HOURS} hours`);
       return;
     }
-    const starts_at = dateInputToStartIso(dateStr);
-    const ends_at = dateInputToEndIso(dateStr, durationHours);
-    if (!starts_at || !ends_at) { toast('Invalid event date or duration'); return; }
+    const isAttacks = currentEvent?.event_type === 'attacks';
+    const timeStr = isAttacks
+      ? (document.getElementById('ev-edit-starts-time').value || '10:00')
+      : null;
+    const starts_at = timeStr
+      ? dateAndTimeToStartIso(dateStr, timeStr)
+      : dateInputToStartIso(dateStr);
+    const ends_at = starts_at
+      ? new Date(new Date(starts_at).getTime() + durationHours * 60 * 60 * 1000).toISOString()
+      : null;
+    if (!starts_at || !ends_at) { toast('Invalid event date, time, or duration'); return; }
 
     setLoading(true);
     try {
@@ -1460,8 +1538,16 @@ function wireEventControls(eventId) {
 
   document.getElementById('join-form').onsubmit = async (e) => {
     e.preventDefault();
-    const slotIso = document.getElementById('join-personal-start').value;
-    if (!slotIso) { toast('Pick your personal start time'); return; }
+    const isAttacks = currentEvent?.event_type === 'attacks';
+    let slotIso;
+    if (isAttacks) {
+      // Attack events share the global window — gateway ignores
+      // personal_start_at and pins to event.starts_at server-side.
+      slotIso = currentEvent.starts_at;
+    } else {
+      slotIso = document.getElementById('join-personal-start').value;
+      if (!slotIso) { toast('Pick your personal start time'); return; }
+    }
 
     let auth;
     if (feSession) {

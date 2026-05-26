@@ -96,10 +96,15 @@
               <input type="date" id="ce-starts-at" required />
             </label>
 
+            <label class="fe-label" id="ce-time-row" style="display:none">Start time (TCT, game time)
+              <input type="time" id="ce-starts-time" value="10:00" step="60" />
+            </label>
+
             <label class="fe-label">Duration (hours)
               <input type="number" id="ce-duration-hours" min="1" max="720" step="1" value="48" required />
             </label>
-            <p class="key-note">Events start at 10:00 TCT (game time) on the date you pick and run for the duration in hours. Default 48h; cap 720h (30 days). After creating, you (and every joiner) pick your own personal start time from the leaderboard page.</p>
+            <p class="key-note" id="ce-window-help-drug">Events start at 10:00 TCT (game time) on the date you pick and run for the duration in hours. Default 48h; cap 720h (30 days). After creating, you (and every joiner) pick your own personal start time from the leaderboard page.</p>
+            <p class="key-note" id="ce-window-help-attacks" style="display:none">Attack events run from the exact start time you set, in TCT (game time), for the chosen duration. Every participant shares the same window — there's no per-player slot picker.</p>
 
             <button type="submit" class="submit-btn-alt">Create Event</button>
           </form>
@@ -164,10 +169,14 @@
             <label class="fe-label">Event date
               <input type="date" id="ev-edit-starts-at" />
             </label>
+            <label class="fe-label" id="ev-edit-time-row" style="display:none">Start time (TCT)
+              <input type="time" id="ev-edit-starts-time" step="60" />
+            </label>
             <label class="fe-label">Duration (hours)
               <input type="number" id="ev-edit-duration-hours" min="1" max="720" step="1" />
             </label>
-            <p class="key-note">Events start at 10:00 TCT on the chosen date and run for the duration in hours (cap 720h / 30 days). Saving invalidates everyone's count and re-anchors each participant's personal start time to the new window — their TIME-OF-DAY is preserved, so a date shift moves their start by the same amount.</p>
+            <p class="key-note" id="ev-edit-window-help-drug">Events start at 10:00 TCT on the chosen date and run for the duration in hours (cap 720h / 30 days). Saving invalidates everyone's count and re-anchors each participant's personal start time to the new window — their TIME-OF-DAY is preserved, so a date shift moves their start by the same amount.</p>
+            <p class="key-note" id="ev-edit-window-help-attacks" style="display:none">Attack events run from the exact start time you set, in TCT, for the chosen duration. Saving invalidates everyone's count and re-pins every participant to the new window.</p>
             <div class="fe-edit-actions">
               <button type="button" id="ev-edit-window-save" class="submit-btn-alt">Save</button>
               <button type="button" data-cancel="window" class="submit-btn-alt fe-secondary fe-edit-cancel">Cancel</button>
