@@ -1063,7 +1063,15 @@ async function countAttacksInWindow(
       if (attackerId !== myId) continue;
       if (ts < fromSec || ts > untilSec) continue;
       count++;
-      const respect = Number(a.respect_gain ?? a.respect ?? 0) || 0;
+      // Strip the chain-bonus portion of respect so milestone hits
+      // (100/250/500/1000/2500/5000/10000/25000/50000/100000 chain
+      // bonuses) don't dominate the leaderboard. `modifiers.chain_bonus`
+      // is a multiplier baked into respect_gain — divide it out to
+      // recover the base respect the hit would have earned without
+      // the bonus. Normal hits have chain_bonus=1 → no change.
+      const respectRaw = Number(a.respect_gain ?? a.respect ?? 0) || 0;
+      const chainBonus = Number(a?.modifiers?.chain_bonus ?? 1) || 1;
+      const respect = chainBonus > 1 ? respectRaw / chainBonus : respectRaw;
       respect_total += respect;
       if (respect > best_single) best_single = respect;
     }
@@ -5536,26 +5544,40 @@ async function handleFeTestCountAttacks(body: any) {
   let stalemates = 0;
   let losses_offensive = 0;
   let wins_offensive = 0;
-  let respect_total_all = 0;
-  let respect_total_offensive = 0;
-  let respect_total_defensive = 0;
+  // Raw = respect_gain as Torn reports it. Base = respect_gain with the
+  // chain_bonus multiplier stripped (so a 3-respect hit boosted to 103
+  // by a milestone chain bonus contributes 3, not 103). Production
+  // scanner uses Base; we surface both so the operator can validate.
+  let respect_total_all_raw = 0;
+  let respect_total_offensive_raw = 0;
+  let respect_total_offensive_base = 0;
+  let respect_total_defensive_raw = 0;
+  let chain_bonus_hits = 0;
+  let chain_bonus_max = 1;
   const result_field_histogram = new Map<string, number>();
 
   for (const a of records) {
     const attackerId = Number(a.attacker_id);
     const defenderId = Number(a.defender_id);
-    const respect = Number(a.respect_gain ?? a.respect ?? 0) || 0;
-    respect_total_all += respect;
+    const respectRaw = Number(a.respect_gain ?? a.respect ?? 0) || 0;
+    const chainBonus = Number(a?.modifiers?.chain_bonus ?? 1) || 1;
+    const respectBase = chainBonus > 1 ? respectRaw / chainBonus : respectRaw;
+    if (chainBonus > 1) {
+      chain_bonus_hits++;
+      if (chainBonus > chain_bonus_max) chain_bonus_max = chainBonus;
+    }
+    respect_total_all_raw += respectRaw;
     const result = String(a.result || '');
     result_field_histogram.set(result, (result_field_histogram.get(result) || 0) + 1);
     if (attackerId === myId) {
       offensive++;
-      respect_total_offensive += respect;
+      respect_total_offensive_raw += respectRaw;
+      respect_total_offensive_base += respectBase;
       if (/loss|lost/i.test(result)) losses_offensive++;
       else if (/^attacked|mugged|hospitalized|left|special|assist/i.test(result)) wins_offensive++;
     } else if (defenderId === myId) {
       defensive++;
-      respect_total_defensive += respect;
+      respect_total_defensive_raw += respectRaw;
     }
     if (result === 'Assist') assists_by_result++;
     if (result === 'Stalemate') stalemates++;
@@ -5582,10 +5604,14 @@ async function handleFeTestCountAttacks(body: any) {
       losses_offensive,
       assists_by_result_field: assists_by_result,
       stalemates,
-      respect_total_all,
-      respect_total_offensive,
-      respect_total_defensive,
-      avg_respect_per_offensive: offensive ? respect_total_offensive / offensive : 0,
+      respect_total_all_raw,
+      respect_total_offensive_raw,
+      respect_total_offensive_base,
+      respect_total_defensive_raw,
+      avg_respect_per_offensive_raw: offensive ? respect_total_offensive_raw / offensive : 0,
+      avg_respect_per_offensive_base: offensive ? respect_total_offensive_base / offensive : 0,
+      chain_bonus_hits,
+      chain_bonus_max,
     },
     result_field_histogram: Array.from(result_field_histogram.entries())
       .sort((a, b) => b[1] - a[1])
