@@ -552,3 +552,34 @@ export async function scrapeNextPending({ eventId, auth }) {
   });
 }
 
+/**
+ * FE diagnostic — run the production drug-use scanner against a caller-
+ * supplied Torn API key + window. No DB writes. Returns the full debug
+ * payload from countItemUseInLog so we can verify the data shape before
+ * wiring a new metric into the live app.
+ */
+export async function feTestCountDrugs({ apiKey, drugItemId, drugName, fromTs, toTs }) {
+  return gateway('fe-test-count-drugs', {
+    api_key: apiKey,
+    drug_item_id: drugItemId,
+    drug_name: drugName,
+    from_ts: fromTs ?? null,
+    to_ts: toTs ?? null,
+  });
+}
+
+/**
+ * FE diagnostic — hit Torn's `attacks` selection for the caller's key
+ * over an optional window and return the raw payload plus a best-effort
+ * computed summary (offensive vs defensive, respect totals, result-field
+ * histogram). Lets us see how attacks / assists / respect data is shaped
+ * before committing schema.
+ */
+export async function feTestCountAttacks({ apiKey, fromTs, toTs }) {
+  return gateway('fe-test-count-attacks', {
+    api_key: apiKey,
+    from_ts: fromTs ?? null,
+    to_ts: toTs ?? null,
+  });
+}
+

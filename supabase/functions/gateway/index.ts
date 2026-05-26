@@ -5175,6 +5175,172 @@ async function handleFetchTornEventStart(body: any) {
   });
 }
 
+// ── Faction Event test bench (diagnostic, no DB writes) ─────────────
+// Lets the operator paste a raw Torn API key and run the same scanners
+// the live FE app uses (or will use), so we can verify the data shape
+// before rolling new metrics into the app proper. No auth — the key
+// being scanned IS the auth.
+
+async function handleFeTestCountDrugs(body: any) {
+  const { api_key, drug_item_id, drug_name, from_ts, to_ts } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+  const itemId = Number(drug_item_id);
+  if (!Number.isFinite(itemId) || itemId <= 0) {
+    return json({ error: 'Missing or invalid drug_item_id' }, 400);
+  }
+  const drugName = typeof drug_name === 'string' ? drug_name.trim() : '';
+  if (!drugName) return json({ error: 'Missing drug_name' }, 400);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}`, code: identData.error.code }, 400);
+
+  const fromSec = from_ts ? Number(from_ts) : undefined;
+  const toSec = to_ts ? Number(to_ts) : undefined;
+  if (from_ts && (!Number.isFinite(fromSec) || fromSec! <= 0)) {
+    return json({ error: 'from_ts must be a positive unix timestamp in seconds' }, 400);
+  }
+  if (to_ts && (!Number.isFinite(toSec) || toSec! <= 0)) {
+    return json({ error: 'to_ts must be a positive unix timestamp in seconds' }, 400);
+  }
+
+  const result = await countItemUseInLog(api_key, itemId, drugName, fromSec, toSec);
+
+  return json({
+    player: {
+      name: identData.name,
+      id: String(identData.player_id),
+      level: identData.level || null,
+      faction: identData.faction?.faction_name || null,
+    },
+    drug: { id: itemId, name: drugName },
+    window: {
+      from_ts: fromSec ?? null,
+      to_ts: toSec ?? null,
+      from_iso: fromSec ? new Date(fromSec * 1000).toISOString() : null,
+      to_iso: toSec ? new Date(toSec * 1000).toISOString() : null,
+    },
+    count: result.count,
+    pages_fetched: result.pages,
+    total_entries_scanned: result.totalEntries,
+    in_window_total: result.inWindowTotal,
+    reached_cutoff: result.reachedCutoff,
+    matched_items: result.matchedItems,
+    details: result.details,
+    log_type_histogram: result.logTypeHistogram,
+    data_item_histogram: result.dataItemHistogram,
+    interesting_rejections: result.interestingRejections,
+    rejected_samples: result.rejectedSamples.slice(0, 20),
+    debug: result.debug,
+  });
+}
+
+// Hits Torn's v1 `attacks` selection (full per-attack records, last ~100)
+// over an optional from/to window and returns the raw payload plus a
+// best-effort computed summary so we can see WHICH fields carry attacks,
+// assists and respect_gain before committing to a schema. Defenses are
+// also separated out for sanity-checking.
+async function handleFeTestCountAttacks(body: any) {
+  const { api_key, from_ts, to_ts } = body;
+  if (!api_key) return json({ error: 'Missing api_key' }, 400);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic,profile&key=${api_key}`);
+  const identData = await identRes.json();
+  if (identData.error) return json({ error: `Torn API: ${identData.error.error}`, code: identData.error.code }, 400);
+
+  const myId = Number(identData.player_id);
+  const fromSec = from_ts ? Number(from_ts) : undefined;
+  const toSec = to_ts ? Number(to_ts) : undefined;
+  if (from_ts && (!Number.isFinite(fromSec) || fromSec! <= 0)) {
+    return json({ error: 'from_ts must be a positive unix timestamp in seconds' }, 400);
+  }
+  if (to_ts && (!Number.isFinite(toSec) || toSec! <= 0)) {
+    return json({ error: 'to_ts must be a positive unix timestamp in seconds' }, 400);
+  }
+
+  const fromParam = fromSec ? `&from=${fromSec}` : '';
+  const toParam = toSec ? `&to=${toSec}` : '';
+  const url = `${TORN_API}/user/?selections=attacks${fromParam}${toParam}&key=${api_key}`;
+  const r = await fetch(url);
+  const data = await r.json();
+
+  if (data.error) {
+    return json({
+      player: { name: identData.name, id: String(identData.player_id) },
+      torn_error: data.error,
+      hint: data.error.code === 16
+        ? 'Your API key does not have Attacks access. Mint a Custom Key on Torn with at least "attacks" enabled to use this metric.'
+        : null,
+    });
+  }
+
+  const records: any[] = data.attacks ? Object.values(data.attacks) : [];
+
+  let offensive = 0;
+  let defensive = 0;
+  let assists_by_result = 0;
+  let stalemates = 0;
+  let losses_offensive = 0;
+  let wins_offensive = 0;
+  let respect_total_all = 0;
+  let respect_total_offensive = 0;
+  let respect_total_defensive = 0;
+  const result_field_histogram = new Map<string, number>();
+
+  for (const a of records) {
+    const attackerId = Number(a.attacker_id);
+    const defenderId = Number(a.defender_id);
+    const respect = Number(a.respect_gain ?? a.respect ?? 0) || 0;
+    respect_total_all += respect;
+    const result = String(a.result || '');
+    result_field_histogram.set(result, (result_field_histogram.get(result) || 0) + 1);
+    if (attackerId === myId) {
+      offensive++;
+      respect_total_offensive += respect;
+      if (/loss|lost/i.test(result)) losses_offensive++;
+      else if (/^attacked|mugged|hospitalized|left|special|assist/i.test(result)) wins_offensive++;
+    } else if (defenderId === myId) {
+      defensive++;
+      respect_total_defensive += respect;
+    }
+    if (result === 'Assist') assists_by_result++;
+    if (result === 'Stalemate') stalemates++;
+  }
+
+  return json({
+    player: {
+      name: identData.name,
+      id: String(identData.player_id),
+      level: identData.level || null,
+      faction: identData.faction?.faction_name || null,
+    },
+    window: {
+      from_ts: fromSec ?? null,
+      to_ts: toSec ?? null,
+      from_iso: fromSec ? new Date(fromSec * 1000).toISOString() : null,
+      to_iso: toSec ? new Date(toSec * 1000).toISOString() : null,
+    },
+    total_records: records.length,
+    summary: {
+      offensive,
+      defensive,
+      wins_offensive,
+      losses_offensive,
+      assists_by_result_field: assists_by_result,
+      stalemates,
+      respect_total_all,
+      respect_total_offensive,
+      respect_total_defensive,
+      avg_respect_per_offensive: offensive ? respect_total_offensive / offensive : 0,
+    },
+    result_field_histogram: Array.from(result_field_histogram.entries())
+      .sort((a, b) => b[1] - a[1])
+      .map(([key, count]) => ({ key, count })),
+    sample_records: records.slice(0, 5),
+    raw_response_keys: Object.keys(data),
+  });
+}
+
 // ── Main router ──────────────────────────────────────────────────────
 
 serve(async (req) => {
@@ -5274,6 +5440,10 @@ serve(async (req) => {
         return await handleScrapeNextPending(req, body);
       case 'fetch-torn-event-start':
         return await handleFetchTornEventStart(body);
+      case 'fe-test-count-drugs':
+        return await handleFeTestCountDrugs(body);
+      case 'fe-test-count-attacks':
+        return await handleFeTestCountAttacks(body);
       default:
         return json({ error: `Unknown action: ${action}` }, 400);
     }

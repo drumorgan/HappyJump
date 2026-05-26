@@ -275,6 +275,52 @@
       </div>
     </div><!-- /#tab-racing -->
 
+    <!-- Dev test bench — hidden by default; visible only when the page is
+         loaded with ?test=1. Lets the operator paste a Torn API key and
+         run the production scanners (drug-use, attacks) directly against
+         the gateway so we can verify data shape before rolling new
+         metrics into the live FE app. -->
+    <section id="fe-test-bench" class="hidden">
+      <div class="card">
+        <div class="card-header">
+          <span>Test Bench (dev only)</span>
+        </div>
+        <div class="card-body">
+          <p class="form-intro">Paste a Torn API key and run the gateway scanners directly. No data is saved. Add <code>?test=1</code> to the URL to keep this visible.</p>
+
+          <label class="fe-label">Torn API key
+            <input type="text" id="tb-api-key" placeholder="Any Torn key (Custom Key for attacks)" autocomplete="off" />
+          </label>
+
+          <div class="fe-row" style="gap:1rem;flex-wrap:wrap">
+            <label class="fe-label" style="flex:1;min-width:220px">From (local)
+              <input type="datetime-local" id="tb-from" />
+            </label>
+            <label class="fe-label" style="flex:1;min-width:220px">To (local, optional)
+              <input type="datetime-local" id="tb-to" />
+            </label>
+          </div>
+          <p class="key-note">Window is optional — leave empty to scan the whole available log. Torn's v1 <code>attacks</code> selection returns at most the last ~100 attacks regardless of window.</p>
+
+          <div class="fe-row" style="gap:0.5rem;flex-wrap:wrap;align-items:center">
+            <label class="fe-label" style="flex:1;min-width:200px">Drug
+              <select id="tb-drug-preset">
+                <option value="196|Cannabis">Cannabis</option>
+                <option value="197|Ecstasy">Ecstasy</option>
+                <option value="206|Xanax">Xanax</option>
+                <option value="180|Bottle of Beer">Bottle of Beer</option>
+              </select>
+            </label>
+            <button type="button" id="tb-count-drugs" class="submit-btn-alt">Count Drugs</button>
+            <button type="button" id="tb-count-attacks" class="submit-btn-alt">Count Attacks</button>
+          </div>
+
+          <div id="tb-status" class="price-note" style="margin-top:0.6rem">Idle.</div>
+          <pre id="tb-output" style="margin-top:0.6rem;background:#0e0e0e;color:#cfe9ff;border:1px solid #222;border-radius:6px;padding:0.7rem;max-height:520px;overflow:auto;font-size:0.8rem;white-space:pre-wrap;word-break:break-word">(no result yet)</pre>
+        </div>
+      </div>
+    </section>
+
     <div id="loading" class="loading hidden">Loading...</div>
 
     <div class="crosslink-box">
