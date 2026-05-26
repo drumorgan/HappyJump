@@ -4080,7 +4080,7 @@ async function handleGetFactionEvent(body: any) {
 //   3. Anonymous — empty list (events are not browseable without identity).
 async function handleListFactionEvents(req: Request, body: any) {
   const supabase = serviceClient();
-  const baseSelect = 'id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, created_at';
+  const baseSelect = 'id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, created_at, creator_torn_id';
 
   const adminUser = await requireAuth(req);
   if (adminUser) {
