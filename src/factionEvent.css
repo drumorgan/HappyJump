@@ -151,6 +151,35 @@
   font-size: 0.8rem;
 }
 
+.fe-faction-list {
+  max-height: 220px;
+  overflow-y: auto;
+  background: #1a1a1a;
+  border: 1px solid #333;
+  border-radius: 4px;
+  padding: 0.4rem 0.6rem;
+  margin-top: 0.3rem;
+}
+
+.fe-faction-row {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.3rem 0;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.fe-faction-row input[type='checkbox'] {
+  width: auto;
+  margin: 0;
+}
+
+.fe-faction-row .recent-meta {
+  margin-left: auto;
+  font-size: 0.8rem;
+}
+
 .recent-row .recent-delete-btn {
   background: transparent;
   color: #a02020;

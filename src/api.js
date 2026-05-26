@@ -360,9 +360,10 @@ export async function createFactionEvent({
   starts_at,
   ends_at,
   personalStartAt,
+  autoSeedFactionIds,
   auth,
 }) {
-  return gateway('create-faction-event', {
+  const payload = {
     title,
     event_type: event_type || 'drug_use',
     drug_item_id,
@@ -371,7 +372,21 @@ export async function createFactionEvent({
     ends_at,
     personal_start_at: personalStartAt,
     ...authPayload(auth),
-  });
+  };
+  if (Array.isArray(autoSeedFactionIds)) {
+    payload.auto_seed_faction_ids = autoSeedFactionIds.map((id) => Number(id));
+  }
+  return gateway('create-faction-event', payload);
+}
+
+/**
+ * List distinct factions among FE-signed-in users so the create-event
+ * form can render an "Auto-seed factions" multi-select. When called
+ * with an FE session, the caller's own faction is flagged `mine: true`
+ * so the UI can pre-check it.
+ */
+export async function listFeFactions(auth) {
+  return gateway('list-fe-factions', authPayload(auth));
 }
 
 export async function getFactionEvent(eventId) {
