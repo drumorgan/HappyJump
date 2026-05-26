@@ -22,6 +22,8 @@ import {
   forceRefreshAllParticipants,
   startBulkRefresh,
   scrapeNextPending,
+  feTestCountDrugs,
+  feTestCountAttacks,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
@@ -1565,6 +1567,7 @@ async function boot() {
   wireIdentityBar();
   wireRefreshAllButton();
   wireTabs();
+  wireTestBench();
 
   const id = getEventIdFromUrl();
   if (id) {
@@ -1596,6 +1599,89 @@ function wireTabs() {
         panel.classList.toggle('hidden', name !== which);
       });
     });
+  });
+}
+
+// ── Dev test bench (hidden unless ?test=1) ──────────────────────────
+// Lets the operator paste a Torn API key and run the gateway scanners
+// directly so we can verify data shape before adding new metrics to the
+// live app. No DB writes; no FE session needed.
+function wireTestBench() {
+  const bench = document.getElementById('fe-test-bench');
+  if (!bench) return;
+  const params = new URLSearchParams(window.location.search);
+  if (params.get('test') !== '1') return;
+  bench.classList.remove('hidden');
+
+  const keyInput = document.getElementById('tb-api-key');
+  const fromInput = document.getElementById('tb-from');
+  const toInput = document.getElementById('tb-to');
+  const drugSel = document.getElementById('tb-drug-preset');
+  const drugBtn = document.getElementById('tb-count-drugs');
+  const attackBtn = document.getElementById('tb-count-attacks');
+  const statusEl = document.getElementById('tb-status');
+  const outputEl = document.getElementById('tb-output');
+
+  // datetime-local strings are interpreted as the operator's LOCAL clock;
+  // convert to unix seconds via Date so the gateway gets a stable epoch.
+  function localInputToUnix(value) {
+    if (!value) return null;
+    const ms = new Date(value).getTime();
+    if (!Number.isFinite(ms)) return null;
+    return Math.floor(ms / 1000);
+  }
+
+  function render(label, payload) {
+    statusEl.textContent = label;
+    try {
+      outputEl.textContent = JSON.stringify(payload, null, 2);
+    } catch {
+      outputEl.textContent = String(payload);
+    }
+  }
+
+  drugBtn.addEventListener('click', async () => {
+    const apiKey = keyInput.value.trim();
+    if (!apiKey) { statusEl.textContent = 'Paste an API key first.'; return; }
+    const presetVal = drugSel.value || '';
+    const [idStr, ...nameParts] = presetVal.split('|');
+    const drugItemId = Number(idStr);
+    const drugName = nameParts.join('|').trim();
+    if (!drugItemId || !drugName) { statusEl.textContent = 'Pick a drug.'; return; }
+    statusEl.textContent = `Counting ${drugName} uses…`;
+    outputEl.textContent = '(running — this can take 5-20 seconds per page of log)';
+    const t0 = Date.now();
+    try {
+      const result = await feTestCountDrugs({
+        apiKey,
+        drugItemId,
+        drugName,
+        fromTs: localInputToUnix(fromInput.value),
+        toTs: localInputToUnix(toInput.value),
+      });
+      render(`Done in ${Date.now() - t0} ms — ${drugName} count: ${result.count ?? '?'}`, result);
+    } catch (err) {
+      render('Error', { error: err.message || String(err) });
+    }
+  });
+
+  attackBtn.addEventListener('click', async () => {
+    const apiKey = keyInput.value.trim();
+    if (!apiKey) { statusEl.textContent = 'Paste an API key first.'; return; }
+    statusEl.textContent = 'Fetching attacks…';
+    outputEl.textContent = '(running)';
+    const t0 = Date.now();
+    try {
+      const result = await feTestCountAttacks({
+        apiKey,
+        fromTs: localInputToUnix(fromInput.value),
+        toTs: localInputToUnix(toInput.value),
+      });
+      const total = result.total_records ?? (result.torn_error ? 'torn error' : '?');
+      render(`Done in ${Date.now() - t0} ms — records: ${total}`, result);
+    } catch (err) {
+      render('Error', { error: err.message || String(err) });
+    }
   });
 }
 
