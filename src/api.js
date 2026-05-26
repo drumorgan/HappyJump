@@ -354,6 +354,7 @@ export async function feRevokeSession(playerId, sessionToken) {
  */
 export async function createFactionEvent({
   title,
+  event_type,
   drug_item_id,
   drug_name,
   starts_at,
@@ -363,6 +364,7 @@ export async function createFactionEvent({
 }) {
   return gateway('create-faction-event', {
     title,
+    event_type: event_type || 'drug_use',
     drug_item_id,
     drug_name,
     starts_at,

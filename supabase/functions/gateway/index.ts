@@ -988,6 +988,98 @@ async function countItemUseInLog(
   };
 }
 
+// Faction-events scanner for the `attacks` event type. Hits Torn v1
+// user/?selections=attacks, paginates older by clamping `to` to the oldest
+// timestamp seen, and aggregates the three metrics the leaderboard shows:
+// total offensive attacks, total respect gained, single best-respect hit.
+//
+// Only attacks where attacker_id == myId count — defended-against records
+// share the same payload but belong to the OTHER player's stats. Records
+// outside [fromSec, untilSec] are skipped (defensive double-check; the
+// from/to query params should already filter them).
+//
+// v1 attacks returns at most ~100 records per call. With pagination we
+// cap at maxPages * 100 = 3000 attacks, which is far more than any sane
+// FE participant in a 30-day window.
+async function countAttacksInWindow(
+  apiKey: string,
+  myId: number,
+  fromSec: number,
+  untilSec: number,
+  maxPages = 30,
+): Promise<{
+  count: number;
+  respect_total: number;
+  best_single: number;
+  pages: number;
+  totalRecords: number;
+  reachedCutoff: boolean;
+  scopeError: boolean;
+  tornError: { code: number; message: string } | null;
+  debug: string[];
+}> {
+  const debug: string[] = [];
+  let pages = 0;
+  let totalRecords = 0;
+  let count = 0;
+  let respect_total = 0;
+  let best_single = 0;
+  let toCursor = untilSec;
+  let reachedCutoff = false;
+  let scopeError = false;
+  let tornError: { code: number; message: string } | null = null;
+  const seenCodes = new Set<string>();
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=attacks&from=${fromSec}&to=${toCursor}&key=${apiKey}`;
+    const r = await fetch(url);
+    const data = await r.json();
+    pages++;
+    if (data.error) {
+      const code = Number(data.error.code);
+      tornError = { code, message: String(data.error.error || '') };
+      // Code 16 = "Access level of this key is not high enough" — the
+      // participant needs to widen their Custom Key scope to include
+      // `attacks`. Surface it explicitly so the caller can leave their
+      // last_count untouched rather than clobbering it with 0.
+      if (code === 16) scopeError = true;
+      debug.push(`page=${page} torn-error code=${code} msg="${data.error.error}"`);
+      break;
+    }
+    const recs: any[] = data.attacks ? Object.values(data.attacks) : [];
+    totalRecords += recs.length;
+    debug.push(`page=${page} to=${toCursor} records=${recs.length}`);
+    if (recs.length === 0) break;
+    let oldestTs = Infinity;
+    let newOnThisPage = 0;
+    for (const a of recs) {
+      const ts = Number(a.timestamp_ended ?? a.timestamp_started ?? 0);
+      if (Number.isFinite(ts) && ts < oldestTs) oldestTs = ts;
+      const code = String(a.code || `${a.attacker_id}-${ts}`);
+      if (seenCodes.has(code)) continue;
+      seenCodes.add(code);
+      newOnThisPage++;
+      const attackerId = Number(a.attacker_id);
+      if (attackerId !== myId) continue;
+      if (ts < fromSec || ts > untilSec) continue;
+      count++;
+      const respect = Number(a.respect_gain ?? a.respect ?? 0) || 0;
+      respect_total += respect;
+      if (respect > best_single) best_single = respect;
+    }
+    if (recs.length < 100) { reachedCutoff = true; break; }
+    if (newOnThisPage === 0) break;
+    if (Number.isFinite(oldestTs) && oldestTs <= fromSec) { reachedCutoff = true; break; }
+    toCursor = oldestTs - 1;
+  }
+
+  debug.push(`FINAL count=${count} respect_total=${respect_total.toFixed(2)} best_single=${best_single.toFixed(2)} pages=${pages} records=${totalRecords}`);
+  return {
+    count, respect_total, best_single, pages, totalRecords, reachedCutoff,
+    scopeError, tornError, debug,
+  };
+}
+
 // Scan the Torn user log for every happiness-boosting item the client
 // consumed in a window, grouped by item ID with quantities. This is the
 // foundation for the Choco-Jump fix: instead of paying a fixed 5× EDVD on an
@@ -3709,16 +3801,20 @@ function parseFactionEventTimestamp(s: any, label: string): { ts: Date | null; e
 
 async function handleCreateFactionEvent(body: any) {
   const title = typeof body.title === 'string' ? body.title.trim() : '';
+  const event_type = body.event_type === 'attacks' ? 'attacks' : 'drug_use';
   const drug_item_id = Number(body.drug_item_id);
   const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : '';
 
   if (!title) return json({ error: 'Title is required' }, 400);
   if (title.length > 120) return json({ error: 'Title too long' }, 400);
-  if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
-    return json({ error: 'drug_item_id must be a positive integer' }, 400);
+  // Drug fields are only meaningful for drug_use events.
+  if (event_type === 'drug_use') {
+    if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
+      return json({ error: 'drug_item_id must be a positive integer' }, 400);
+    }
+    if (!drug_name) return json({ error: 'drug_name is required' }, 400);
+    if (drug_name.length > 60) return json({ error: 'drug_name too long' }, 400);
   }
-  if (!drug_name) return json({ error: 'drug_name is required' }, 400);
-  if (drug_name.length > 60) return json({ error: 'drug_name too long' }, 400);
 
   const startsParsed = parseFactionEventTimestamp(body.starts_at, 'starts_at');
   if (startsParsed.err) return json({ error: startsParsed.err }, 400);
@@ -3818,19 +3914,34 @@ async function handleCreateFactionEvent(body: any) {
     { starts_at: starts_at.toISOString(), ends_at: ends_at.toISOString() },
     clampedStartIso,
   );
-  let creatorCount = 0;
-  if (untilSec > fromSec) {
-    const result = await countItemUseInLog(api_key, drug_item_id, drug_name, fromSec, untilSec);
-    creatorCount = result.count;
+  const seedEventShape = {
+    event_type,
+    drug_item_id: event_type === 'drug_use' ? drug_item_id : null,
+    drug_name: event_type === 'drug_use' ? drug_name : null,
+  };
+  const seedScan = await runEventScanner(
+    api_key,
+    seedEventShape,
+    creatorTornId,
+    fromSec,
+    untilSec,
+  );
+  if (event_type === 'attacks' && seedScan.skipReason === 'scope_error') {
+    return json({
+      error: "Your API key doesn't have Attacks access. Re-sign in with a Custom Key that includes the 'attacks' scope, then try again.",
+      torn_error_code: 16,
+    }, 400);
   }
+  const creatorCount = seedScan.count;
 
   // Insert event first.
   const { data: eventRow, error: evtErr } = await supabase
     .from('faction_events')
     .insert({
       title,
-      drug_item_id,
-      drug_name,
+      event_type,
+      drug_item_id: event_type === 'drug_use' ? drug_item_id : null,
+      drug_name: event_type === 'drug_use' ? drug_name : null,
       starts_at: starts_at.toISOString(),
       ends_at: ends_at.toISOString(),
       creator_torn_id: creatorTornId,
@@ -3852,7 +3963,10 @@ async function handleCreateFactionEvent(body: any) {
       torn_faction: creatorTornFaction,
       personal_start_at: clampedStartIso,
       last_count: creatorCount,
+      last_respect_total: seedScan.respect_total,
+      last_best_single_respect: seedScan.best_single_respect,
       last_checked_at: checkedAt,
+      last_diag_json: seedScan.diag,
     })
     .select()
     .single();
@@ -3928,11 +4042,17 @@ async function handleGetFactionEvent(body: any) {
   if (evtErr) return json({ error: evtErr.message }, 500);
   if (!event) return json({ error: 'Event not found' }, 404);
 
+  // For attack events, default sort is total respect gained (most
+  // cross-level-fair metric). The client can re-sort by column locally
+  // but the initial server order matches what the leaderboard highlights.
+  const eventType = event.event_type === 'attacks' ? 'attacks' : 'drug_use';
+  const orderColumn = eventType === 'attacks' ? 'last_respect_total' : 'last_count';
+
   const { data: participants, error: partErr } = await supabase
     .from('faction_event_participants')
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, created_at, scrape_status')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, created_at, scrape_status')
     .eq('event_id', event_id)
-    .order('last_count', { ascending: false });
+    .order(orderColumn, { ascending: false, nullsFirst: false });
 
   if (partErr) return json({ error: partErr.message }, 500);
 
@@ -3946,7 +4066,7 @@ async function handleGetFactionEvent(body: any) {
 //   3. Anonymous — empty list (events are not browseable without identity).
 async function handleListFactionEvents(req: Request, body: any) {
   const supabase = serviceClient();
-  const baseSelect = 'id, title, drug_name, drug_item_id, starts_at, ends_at, created_at';
+  const baseSelect = 'id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, created_at';
 
   const adminUser = await requireAuth(req);
   if (adminUser) {
@@ -4136,6 +4256,12 @@ async function handleUpdateFactionEvent(body: any) {
   }
 
   if (body.drug_item_id !== undefined || typeof body.drug_name === 'string') {
+    // Drug edits only apply to drug_use events. Reject silently with an
+    // error for attacks events so the UI can't accidentally repaint with
+    // a meaningless drug label.
+    if (event.event_type === 'attacks') {
+      return json({ error: 'Drug cannot be changed on an attacks event' }, 400);
+    }
     const drug_item_id = Number(body.drug_item_id ?? event.drug_item_id);
     const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : event.drug_name;
     if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
@@ -4206,10 +4332,15 @@ async function handleUpdateFactionEvent(body: any) {
       .eq('event_id', event_id);
 
     if (parts && parts.length > 0) {
-      // First, blanket-invalidate counts.
+      // First, blanket-invalidate counts (drug + attack metrics both).
       await supabase
         .from('faction_event_participants')
-        .update({ last_checked_at: null, last_count: 0 })
+        .update({
+          last_checked_at: null,
+          last_count: 0,
+          last_respect_total: null,
+          last_best_single_respect: null,
+        })
         .eq('event_id', event_id);
 
       if (windowChanged) {
@@ -4251,6 +4382,9 @@ async function handleUpdateFactionEvent(body: any) {
 // returned to the calling user from `refresh-faction-event` so the
 // modal-mode display can use one renderer for stored + fresh scrapes.
 type ScrapeDiag = {
+  // 'drug_use' (default for legacy rows) or 'attacks'. Determines which
+  // optional fields are populated.
+  kind?: 'drug_use' | 'attacks';
   from_sec: number;
   until_sec: number;
   window_seconds: number;
@@ -4272,7 +4406,98 @@ type ScrapeDiag = {
   scraped_at?: string;
   drug_name?: string;
   drug_item_id?: number;
+  // attacks-only fields
+  attack_count?: number;
+  respect_total?: number;
+  best_single_respect?: number;
+  records_scanned?: number;
+  scope_error?: boolean;
+  torn_error?: { code: number; message: string } | null;
 };
+
+// Run the right scanner for an event's type and return a normalized
+// result plus a ScrapeDiag the caller can persist verbatim into
+// faction_event_participants.last_diag_json. Centralizes the branching so
+// every refresh/create/join path stays event-type agnostic.
+async function runEventScanner(
+  apiKey: string,
+  event: { event_type?: string | null; drug_item_id?: number | null; drug_name?: string | null },
+  myTornId: string | number,
+  fromSec: number,
+  untilSec: number,
+): Promise<{
+  count: number;
+  respect_total: number | null;
+  best_single_respect: number | null;
+  diag: ScrapeDiag;
+  // Set when the scanner couldn't compute a fresh result (e.g. the
+  // participant's key lacks `attacks` scope). Callers should skip
+  // overwriting last_count when this is non-null.
+  skipReason: 'scope_error' | null;
+}> {
+  const kind = event.event_type === 'attacks' ? 'attacks' : 'drug_use';
+  const window_seconds = Math.max(0, untilSec - fromSec);
+  const scrapedAt = new Date().toISOString();
+
+  if (untilSec <= fromSec) {
+    return {
+      count: 0,
+      respect_total: kind === 'attacks' ? 0 : null,
+      best_single_respect: kind === 'attacks' ? 0 : null,
+      diag: {
+        kind,
+        from_sec: fromSec,
+        until_sec: untilSec,
+        window_seconds,
+        scraped_at: scrapedAt,
+        skipped_reason: `untilSec (${untilSec}) <= fromSec (${fromSec}) — count window is zero-length, scanner not called`,
+        ...(kind === 'drug_use'
+          ? { drug_name: String(event.drug_name || ''), drug_item_id: Number(event.drug_item_id || 0) }
+          : {}),
+      },
+      skipReason: null,
+    };
+  }
+
+  if (kind === 'attacks') {
+    const myId = Number(myTornId);
+    const r = await countAttacksInWindow(apiKey, myId, fromSec, untilSec);
+    return {
+      count: r.count,
+      respect_total: r.respect_total,
+      best_single_respect: r.best_single,
+      diag: {
+        kind: 'attacks',
+        from_sec: fromSec,
+        until_sec: untilSec,
+        window_seconds,
+        scraped_at: scrapedAt,
+        pages: r.pages,
+        records_scanned: r.totalRecords,
+        reached_cutoff: r.reachedCutoff,
+        attack_count: r.count,
+        respect_total: r.respect_total,
+        best_single_respect: r.best_single,
+        debug: r.debug,
+        scope_error: r.scopeError,
+        torn_error: r.tornError,
+      },
+      skipReason: r.scopeError ? 'scope_error' : null,
+    };
+  }
+
+  // drug_use
+  const drugItemId = Number(event.drug_item_id);
+  const drugName = String(event.drug_name || '');
+  const result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
+  return {
+    count: result.count,
+    respect_total: null,
+    best_single_respect: null,
+    diag: { kind: 'drug_use', ...buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result) },
+    skipReason: null,
+  };
+}
 
 // Per-participant count window. Each participant gets the FULL event
 // duration anchored to their own personal_start_at — so a late joiner
@@ -4387,16 +4612,13 @@ async function handleJoinFactionEvent(body: any) {
 
   // Run the count over [personal_start, min(now, personal_start + duration)].
   const { fromSec, untilSec } = participantCountWindow(event, clampedStartIso);
-
-  let count = 0;
-  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
-  if (untilSec > fromSec) {
-    result = await countItemUseInLog(api_key, drugItemId, drugName, fromSec, untilSec);
-    count = result.count;
+  const scan = await runEventScanner(api_key, event, tornId, fromSec, untilSec);
+  if (scan.skipReason === 'scope_error') {
+    return json({
+      error: "Your API key doesn't have Attacks access. Re-sign in with a Custom Key that includes the 'attacks' scope, then try joining again.",
+      torn_error_code: 16,
+    }, 400);
   }
-  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
   const checkedAt = new Date().toISOString();
 
@@ -4410,9 +4632,11 @@ async function handleJoinFactionEvent(body: any) {
         torn_name: tornName,
         torn_faction: tornFaction,
         personal_start_at: clampedStartIso,
-        last_count: count,
+        last_count: scan.count,
+        last_respect_total: scan.respect_total,
+        last_best_single_respect: scan.best_single_respect,
         last_checked_at: checkedAt,
-        last_diag_json: diag,
+        last_diag_json: scan.diag,
       },
       { onConflict: 'event_id,torn_id' },
     )
@@ -4423,7 +4647,7 @@ async function handleJoinFactionEvent(body: any) {
 
   return json({
     participant: upserted,
-    count,
+    count: scan.count,
     event,
   });
 }
@@ -4463,7 +4687,7 @@ async function handleGetParticipantScrapeLog(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .select('id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
     .eq('id', event_id)
     .maybeSingle();
   if (evtErr) return json({ error: evtErr.message }, 500);
@@ -4500,7 +4724,7 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .select('id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
     .eq('id', event_id)
     .maybeSingle();
   if (evtErr) return json({ error: evtErr.message }, 500);
@@ -4557,31 +4781,34 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
   }
 
   const { fromSec, untilSec } = participantCountWindow(event, participant.personal_start_at);
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
-
-  let count = 0;
-  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-  if (untilSec > fromSec) {
-    result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
-    count = result.count;
+  const scan = await runEventScanner(apiKey, event, participant.torn_id, fromSec, untilSec);
+  if (scan.skipReason === 'scope_error') {
+    return json({
+      error: "Participant's key doesn't have Attacks access — count left unchanged. They need to re-sign in with a Custom Key that includes 'attacks'.",
+      torn_error_code: 16,
+    }, 503);
   }
-  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
+
+  const updateFields: Record<string, unknown> = {
+    last_count: scan.count,
+    last_checked_at: new Date().toISOString(),
+    last_diag_json: scan.diag,
+  };
+  if (event.event_type === 'attacks') {
+    updateFields.last_respect_total = scan.respect_total;
+    updateFields.last_best_single_respect = scan.best_single_respect;
+  }
 
   const { data: updated, error: updErr } = await supabase
     .from('faction_event_participants')
-    .update({
-      last_count: count,
-      last_checked_at: new Date().toISOString(),
-      last_diag_json: diag,
-    })
+    .update(updateFields)
     .eq('id', participant.id)
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, last_diag_json')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, last_diag_json')
     .single();
   if (updErr) return json({ error: updErr.message }, 500);
 
-  console.log(`[admin-rescrape-participant] event=${event_id} torn_id=${torn_id} count=${count} authorizedBy=${authResult}`);
-  return json({ participant: updated, count, event, diag, authorized_by: authResult });
+  console.log(`[admin-rescrape-participant] event=${event_id} torn_id=${torn_id} count=${scan.count} authorizedBy=${authResult}`);
+  return json({ participant: updated, count: scan.count, event, diag: scan.diag, authorized_by: authResult });
 }
 
 // Force-refresh every participant in an event in a single call. Unlike
@@ -4606,7 +4833,7 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .select('id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
     .eq('id', event_id)
     .maybeSingle();
   if (evtErr) return json({ error: evtErr.message }, 500);
@@ -4627,9 +4854,6 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
   if (!rows || rows.length === 0) {
     return json({ refreshed: 0, deleted: 0, skipped: 0, transient: 0, total: 0, picked: 0 });
   }
-
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
 
   let refreshed = 0;
   let deleted = 0;
@@ -4682,18 +4906,25 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
     }
 
     const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
-
-    let count = 0;
-    let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-    if (untilSec > fromSec) {
-      result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
-      count = result.count;
+    const scan = await runEventScanner(apiKey, event, row.torn_id, fromSec, untilSec);
+    if (scan.skipReason === 'scope_error') {
+      transient++;
+      transientNames.push(`${row.torn_name || row.torn_id} (no attacks scope)`);
+      continue;
     }
-    const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
+    const updateFields: Record<string, unknown> = {
+      last_count: scan.count,
+      last_checked_at: new Date().toISOString(),
+      last_diag_json: scan.diag,
+    };
+    if (event.event_type === 'attacks') {
+      updateFields.last_respect_total = scan.respect_total;
+      updateFields.last_best_single_respect = scan.best_single_respect;
+    }
     await supabase
       .from('faction_event_participants')
-      .update({ last_count: count, last_checked_at: new Date().toISOString(), last_diag_json: diag })
+      .update(updateFields)
       .eq('id', row.id);
     refreshed++;
   }
@@ -4727,7 +4958,7 @@ async function handleStartBulkRefresh(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .select('id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
     .eq('id', event_id)
     .maybeSingle();
   if (evtErr) return json({ error: evtErr.message }, 500);
@@ -4767,7 +4998,7 @@ async function handleScrapeNextPending(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
     .from('faction_events')
-    .select('id, title, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
+    .select('id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, creator_torn_id')
     .eq('id', event_id)
     .maybeSingle();
   if (evtErr) return json({ error: evtErr.message }, 500);
@@ -4860,36 +5091,46 @@ async function handleScrapeNextPending(req: Request, body: any) {
   }
 
   const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
+  const scan = await runEventScanner(apiKey, event, row.torn_id, fromSec, untilSec);
 
-  let count = 0;
-  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-  if (untilSec > fromSec) {
-    result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
-    count = result.count;
+  // Attack-event scope errors leave last_count untouched — same posture
+  // as transient errors — so a participant who hasn't widened their key
+  // doesn't get zeroed out on every sweep.
+  if (scan.skipReason === 'scope_error') {
+    await clearStatus();
+    return await respondWithRemaining(supabase, event_id, {
+      status: 'transient_error',
+      participant: row,
+      message: 'Key missing attacks scope — count left unchanged. Ask the participant to re-sign in with a wider Custom Key.',
+      torn_error_code: 16,
+    });
   }
-  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
+
+  const updateFields: Record<string, unknown> = {
+    last_count: scan.count,
+    last_checked_at: new Date().toISOString(),
+    last_diag_json: scan.diag,
+    scrape_status: null,
+  };
+  if (event.event_type === 'attacks') {
+    updateFields.last_respect_total = scan.respect_total;
+    updateFields.last_best_single_respect = scan.best_single_respect;
+  }
 
   const { data: updated, error: updErr } = await supabase
     .from('faction_event_participants')
-    .update({
-      last_count: count,
-      last_checked_at: new Date().toISOString(),
-      last_diag_json: diag,
-      scrape_status: null,
-    })
+    .update(updateFields)
     .eq('id', row.id)
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_checked_at, scrape_status')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, scrape_status')
     .single();
   if (updErr) return json({ error: updErr.message }, 500);
 
-  console.log(`[scrape-next-pending] event=${event_id} torn_id=${row.torn_id} count=${count} authorizedBy=${authResult}`);
+  console.log(`[scrape-next-pending] event=${event_id} torn_id=${row.torn_id} count=${scan.count} authorizedBy=${authResult}`);
   return await respondWithRemaining(supabase, event_id, {
     status: 'refreshed',
     participant: updated,
-    count,
-    diag,
+    count: scan.count,
+    diag: scan.diag,
   });
 }
 
@@ -4948,33 +5189,36 @@ async function handleRefreshFactionEventParticipant(body: any) {
   if (!existing) return json({ error: 'You have not joined this event yet' }, 404);
 
   const { fromSec, untilSec } = participantCountWindow(event, existing.personal_start_at);
-
-  let count = 0;
-  let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
-  if (untilSec > fromSec) {
-    result = await countItemUseInLog(api_key, drugItemId, drugName, fromSec, untilSec);
-    count = result.count;
+  const scan = await runEventScanner(api_key, event, tornId, fromSec, untilSec);
+  if (scan.skipReason === 'scope_error') {
+    return json({
+      error: "Your API key doesn't have Attacks access. Re-sign in with a Custom Key that includes the 'attacks' scope, then refresh again.",
+      torn_error_code: 16,
+    }, 400);
   }
-  const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
   const checkedAt = new Date().toISOString();
+  const updateFields: Record<string, unknown> = {
+    last_count: scan.count,
+    last_checked_at: checkedAt,
+    last_diag_json: scan.diag,
+    torn_name: String(identData.name || existing.torn_name),
+    torn_faction: identData.faction?.faction_name ?? existing.torn_faction,
+  };
+  if (event.event_type === 'attacks') {
+    updateFields.last_respect_total = scan.respect_total;
+    updateFields.last_best_single_respect = scan.best_single_respect;
+  }
+
   const { data: updated, error: updErr } = await supabase
     .from('faction_event_participants')
-    .update({
-      last_count: count,
-      last_checked_at: checkedAt,
-      last_diag_json: diag,
-      torn_name: String(identData.name || existing.torn_name),
-      torn_faction: identData.faction?.faction_name ?? existing.torn_faction,
-    })
+    .update(updateFields)
     .eq('id', existing.id)
     .select()
     .single();
 
   if (updErr) return json({ error: updErr.message }, 500);
-  return json({ participant: updated, count, event, diag });
+  return json({ participant: updated, count: scan.count, event, diag: scan.diag });
 }
 
 // Public sweep called in the background by every viewer of an event page so
@@ -5045,9 +5289,6 @@ async function handleRefreshStaleParticipants(body: any) {
     return json({ refreshed: 0, deleted: 0, skipped: 0 });
   }
 
-  const drugItemId = Number(event.drug_item_id);
-  const drugName = String(event.drug_name);
-
   let refreshed = 0;
   let deleted = 0;
   let skipped = 0;
@@ -5101,18 +5342,31 @@ async function handleRefreshStaleParticipants(body: any) {
     }
 
     const { fromSec, untilSec } = participantCountWindow(event, row.personal_start_at);
-
-    let count = 0;
-    let result: Awaited<ReturnType<typeof countItemUseInLog>> | null = null;
-    if (untilSec > fromSec) {
-      result = await countItemUseInLog(apiKey, drugItemId, drugName, fromSec, untilSec);
-      count = result.count;
+    const scan = await runEventScanner(apiKey, event, row.torn_id, fromSec, untilSec);
+    if (scan.skipReason === 'scope_error') {
+      // Key is alive but missing attacks scope. Touch last_checked_at so
+      // we don't re-pick this row every sweep; the participant needs to
+      // re-sign in with a wider Custom Key before counts resume.
+      await supabase
+        .from('faction_event_participants')
+        .update({ last_checked_at: new Date().toISOString() })
+        .eq('id', row.id);
+      skipped++;
+      continue;
     }
-    const diag = buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result);
 
+    const updateFields: Record<string, unknown> = {
+      last_count: scan.count,
+      last_checked_at: new Date().toISOString(),
+      last_diag_json: scan.diag,
+    };
+    if (event.event_type === 'attacks') {
+      updateFields.last_respect_total = scan.respect_total;
+      updateFields.last_best_single_respect = scan.best_single_respect;
+    }
     await supabase
       .from('faction_event_participants')
-      .update({ last_count: count, last_checked_at: new Date().toISOString(), last_diag_json: diag })
+      .update(updateFields)
       .eq('id', row.id);
     refreshed++;
   }
