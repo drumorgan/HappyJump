@@ -139,6 +139,15 @@ function fmtDateTime(iso) {
   return new Date(iso).toLocaleString();
 }
 
+// Compact "HH:MM TCT" for leaderboard cells. The event's full start
+// date is already in the header, so showing it on every row just
+// burns horizontal space (especially on iPad with 4 attack columns).
+function fmtSlotShort(iso) {
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${pad2(d.getUTCHours())}:${pad2(d.getUTCMinutes())} TCT`;
+}
+
 function fmtSlotLabel(d) {
   // Time-only label in TCT, e.g. "10:15 TCT". All slots are on the event's
   // start date — no need to disambiguate by day.
@@ -655,7 +664,7 @@ function renderLeaderboard(event, participants) {
             <strong>${esc(p.torn_name)}</strong>
             <div class="recent-meta">${esc(p.torn_faction || 'No faction')}</div>
           </td>
-          <td class="recent-meta">since ${fmtDateTime(p.personal_start_at)}</td>
+          <td class="recent-meta lb-started">${fmtSlotShort(p.personal_start_at)}</td>
           <td class="recent-meta">${checkedCell}</td>
           <td class="lb-count">${attacks}</td>
           <td class="lb-count">${respect.toFixed(2)}</td>
@@ -673,7 +682,7 @@ function renderLeaderboard(event, participants) {
           <strong>${esc(p.torn_name)}</strong>
           <div class="recent-meta">${esc(p.torn_faction || 'No faction')}</div>
         </td>
-        <td class="recent-meta">since ${fmtDateTime(p.personal_start_at)}</td>
+        <td class="recent-meta lb-started">${fmtSlotShort(p.personal_start_at)}</td>
         <td class="recent-meta">${checkedCell}</td>
         <td class="lb-count">${Number(p.last_count) || 0}</td>
         ${scrapeBtn}
@@ -695,20 +704,22 @@ function renderLeaderboard(event, participants) {
   const drugHeader = `<th style="text-align:right">${esc(event.drug_name || '')}</th>`;
 
   body.innerHTML = `
-    <table class="lb-table">
-      <thead>
-        <tr>
-          <th>#</th>
-          <th>Player</th>
-          <th>Started</th>
-          <th>Last refresh</th>
-          ${isAttacks ? attackHeaders : drugHeader}
-          ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
-          ${showRemove ? '<th class="lb-remove" title="Remove participant"></th>' : ''}
-        </tr>
-      </thead>
-      <tbody>${rows}</tbody>
-    </table>
+    <div class="lb-scroll">
+      <table class="lb-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th>Player</th>
+            <th>Started</th>
+            <th>Last refresh</th>
+            ${isAttacks ? attackHeaders : drugHeader}
+            ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
+            ${showRemove ? '<th class="lb-remove" title="Remove participant"></th>' : ''}
+          </tr>
+        </thead>
+        <tbody>${rows}</tbody>
+      </table>
+    </div>
   `;
 
   if (isAttacks) {

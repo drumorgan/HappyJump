@@ -94,6 +94,19 @@
   color: #e8c84a;
 }
 
+.lb-table td.lb-started {
+  white-space: nowrap;
+  width: 5rem;
+}
+
+/* Safety net: when the leaderboard has many columns (attack events
+   show 4 metric columns plus scrape log + remove), let the table
+   scroll horizontally inside the card rather than overflow it. */
+.lb-scroll {
+  overflow-x: auto;
+  -webkit-overflow-scrolling: touch;
+}
+
 .lb-table tr.me-row {
   background: rgba(233, 69, 96, 0.08);
 }
