@@ -3990,22 +3990,36 @@ async function handleCreateFactionEvent(body: any) {
     return json({ error: `Failed to seed creator participant: ${partErr.message}` }, 500);
   }
 
-  // Auto-add every other player whose stored FE session puts them in the
-  // same Torn faction as the creator. Saves the creator from asking each
-  // faction-mate to log in and join manually for every new event. The
-  // self-healing leaderboard sweep (refresh-stale-participants) picks
-  // these rows up on the next event-view load and runs the count using
-  // their server-stored key — no creator-side scraping here.
+  // Auto-add every other player whose stored FE session puts them in
+  // one of the faction(s) the creator chose to seed from. Defaults to
+  // just the creator's own faction (legacy behaviour) when the client
+  // doesn't supply `auto_seed_faction_ids`. Caller can pass a list of
+  // Torn faction_ids to invite multiple factions at once (cross-faction
+  // events). Saves the creator from asking each faction-mate to log in
+  // and join manually. The self-healing leaderboard sweep
+  // (refresh-stale-participants) picks these rows up on the next
+  // event-view load and runs the count using their server-stored key —
+  // no creator-side scraping here.
   //
-  // Skipped silently when the creator has no faction (faction_id is NULL),
-  // when no torn_name has been cached for a member (rows from before
-  // migration 015), or when an insert collides with an existing row.
+  // Skipped silently when the selected faction list is empty, when no
+  // torn_name has been cached for a member (rows from before migration
+  // 015), or when an insert collides with an existing row.
+  const requestedFactionIds = Array.isArray(body.auto_seed_faction_ids)
+    ? body.auto_seed_faction_ids
+        .map((v: any) => Number(v))
+        .filter((n: number) => Number.isFinite(n) && n > 0)
+    : null;
+  const autoSeedFactionIds =
+    requestedFactionIds !== null
+      ? requestedFactionIds
+      : (creatorFactionId ? [creatorFactionId] : []);
+
   let autoAdded = 0;
-  if (creatorFactionId) {
+  if (autoSeedFactionIds.length > 0) {
     const { data: factionMates = [] } = await supabase
       .from('faction_event_player_secrets')
       .select('torn_player_id, torn_name, torn_faction_name')
-      .eq('torn_faction_id', creatorFactionId)
+      .in('torn_faction_id', autoSeedFactionIds)
       .neq('torn_player_id', Number(creatorTornId));
 
     const seedRows = (factionMates || [])
@@ -4078,6 +4092,64 @@ async function handleGetFactionEvent(body: any) {
 //   2. FE-signed-in user — sees only events they created OR have a
 //      participant row in.
 //   3. Anonymous — empty list (events are not browseable without identity).
+// Distinct factions among FE-signed-in users, with member counts.
+// Drives the create-event "Auto-seed factions" checkbox list.
+// Marks the calling user's faction with mine=true (defaults to first
+// in the sort) when an FE session is supplied; otherwise no flag.
+async function handleListFeFactions(body: any) {
+  const supabase = serviceClient();
+
+  let myFactionId: number | null = null;
+  if (body && body.player_id && body.session_token) {
+    const resolved = await resolveFactionEventApiKey(body);
+    if (!(resolved instanceof Response) && resolved.torn_id) {
+      const { data: secret } = await supabase
+        .from('faction_event_player_secrets')
+        .select('torn_faction_id')
+        .eq('torn_player_id', Number(resolved.torn_id))
+        .maybeSingle();
+      if (secret?.torn_faction_id) myFactionId = Number(secret.torn_faction_id);
+    }
+  }
+
+  const { data: rows = [], error } = await supabase
+    .from('faction_event_player_secrets')
+    .select('torn_faction_id, torn_faction_name')
+    .not('torn_faction_id', 'is', null)
+    .not('torn_faction_name', 'is', null);
+  if (error) return json({ error: error.message }, 500);
+
+  const factionMap = new Map<number, {
+    torn_faction_id: number;
+    torn_faction_name: string;
+    member_count: number;
+    mine: boolean;
+  }>();
+  for (const r of rows || []) {
+    const id = Number((r as any).torn_faction_id);
+    if (!Number.isFinite(id) || id <= 0) continue;
+    const existing = factionMap.get(id);
+    if (existing) existing.member_count++;
+    else
+      factionMap.set(id, {
+        torn_faction_id: id,
+        torn_faction_name: String((r as any).torn_faction_name),
+        member_count: 1,
+        mine: id === myFactionId,
+      });
+  }
+
+  // Sort: caller's faction first, then by member_count desc, then by name.
+  const factions = Array.from(factionMap.values()).sort((a, b) => {
+    if (a.mine && !b.mine) return -1;
+    if (!a.mine && b.mine) return 1;
+    if (b.member_count !== a.member_count) return b.member_count - a.member_count;
+    return a.torn_faction_name.localeCompare(b.torn_faction_name);
+  });
+
+  return json({ factions });
+}
+
 async function handleListFactionEvents(req: Request, body: any) {
   const supabase = serviceClient();
   const baseSelect = 'id, title, event_type, drug_name, drug_item_id, starts_at, ends_at, created_at, creator_torn_id';
@@ -5729,6 +5801,8 @@ serve(async (req) => {
         return await handleGetFactionEvent(body);
       case 'list-faction-events':
         return await handleListFactionEvents(req, body);
+      case 'list-fe-factions':
+        return await handleListFeFactions(body);
       case 'update-faction-event':
         return await handleUpdateFactionEvent(body);
       case 'delete-faction-event':

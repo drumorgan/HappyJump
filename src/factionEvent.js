@@ -24,6 +24,7 @@ import {
   scrapeNextPending,
   feTestCountDrugs,
   feTestCountAttacks,
+  listFeFactions,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
 import { esc, showToast as _showToast } from './utils.js';
@@ -404,6 +405,11 @@ function wireCreateForm() {
   const startsInput = document.getElementById('ce-starts-at');
   if (!startsInput.value) startsInput.value = todayTctDateInput();
 
+  // Populate the auto-seed faction list. Caller's own faction is
+  // pre-checked when an FE session is present (the `mine: true` flag);
+  // others are unchecked but selectable.
+  loadFactionPicker();
+
   document.getElementById('create-event-form').onsubmit = async (e) => {
     e.preventDefault();
 
@@ -463,6 +469,9 @@ function wireCreateForm() {
       // No personal_start_at on create — backend defaults the creator's
       // personal start to event_start. Creator picks their slot from the
       // me-card's "Change my start time" UI after the event exists.
+      const autoSeedFactionIds = Array.from(
+        document.querySelectorAll('.ce-faction-cb:checked'),
+      ).map((cb) => Number(cb.value)).filter((n) => Number.isFinite(n) && n > 0);
       const res = await createFactionEvent({
         title,
         event_type,
@@ -470,6 +479,7 @@ function wireCreateForm() {
         drug_name,
         starts_at: startsAtIso,
         ends_at: endsAtIso,
+        autoSeedFactionIds,
         auth: feAuth(),
       });
       saveJoinedTornId(res.event.id, res.participant.torn_id);
@@ -488,6 +498,34 @@ function wireCreateForm() {
       setLoading(false);
     }
   };
+}
+
+// Render the "Auto-seed factions" checkbox list under the create form.
+// Caller's own faction (mine=true from the gateway) is pre-checked;
+// other factions are listed with member counts but unchecked. If no
+// FE secrets exist yet, falls back to an info message.
+async function loadFactionPicker() {
+  const list = document.getElementById('ce-faction-list');
+  if (!list) return;
+  try {
+    const { factions } = await listFeFactions(feAuth());
+    if (!factions || factions.length === 0) {
+      list.innerHTML = '<p class="recent-meta">No faction members signed in yet — share the event link manually after creating.</p>';
+      return;
+    }
+    list.innerHTML = factions.map((f) => {
+      const fid = String(f.torn_faction_id);
+      const checked = f.mine ? 'checked' : '';
+      const mineTag = f.mine ? ' <span class="recent-meta">(your faction)</span>' : '';
+      return `<label class="fe-faction-row">
+        <input type="checkbox" class="ce-faction-cb" value="${esc(fid)}" ${checked} />
+        <span>${esc(f.torn_faction_name)}${mineTag}</span>
+        <span class="recent-meta">${f.member_count} signed in</span>
+      </label>`;
+    }).join('');
+  } catch (err) {
+    list.innerHTML = `<p class="recent-meta">Failed to load factions: ${esc(err.message || String(err))}</p>`;
+  }
 }
 
 async function loadRecentEvents() {
