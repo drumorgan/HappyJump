@@ -469,9 +469,9 @@ function wireCreateForm() {
       // No personal_start_at on create — backend defaults the creator's
       // personal start to event_start. Creator picks their slot from the
       // me-card's "Change my start time" UI after the event exists.
-      const autoSeedFactionIds = Array.from(
-        document.querySelectorAll('.ce-faction-cb:checked'),
-      ).map((cb) => Number(cb.value)).filter((n) => Number.isFinite(n) && n > 0);
+      const autoSeedFactionIds = Array.from(factionPicker.selectedIds)
+        .map((id) => Number(id))
+        .filter((n) => Number.isFinite(n) && n > 0);
       const res = await createFactionEvent({
         title,
         event_type,
@@ -500,32 +500,122 @@ function wireCreateForm() {
   };
 }
 
-// Render the "Auto-seed factions" checkbox list under the create form.
-// Caller's own faction (mine=true from the gateway) is pre-checked;
-// other factions are listed with member counts but unchecked. If no
-// FE secrets exist yet, falls back to an info message.
+// Auto-seed factions picker: typeahead chip-based selector. Keeps the
+// list scalable past ~20 factions (the original checkbox list got
+// unwieldy). State lives on the closure so multiple form open/closes
+// retain selections within the same page load.
+const factionPicker = {
+  all: [], // [{ torn_faction_id, torn_faction_name, member_count, mine }]
+  selectedIds: new Set(), // string ids of chosen factions
+  loaded: false,
+};
+
 async function loadFactionPicker() {
-  const list = document.getElementById('ce-faction-list');
-  if (!list) return;
-  try {
-    const { factions } = await listFeFactions(feAuth());
-    if (!factions || factions.length === 0) {
-      list.innerHTML = '<p class="recent-meta">No faction members signed in yet — share the event link manually after creating.</p>';
+  const chipRow = document.getElementById('ce-faction-chips');
+  const search = document.getElementById('ce-faction-search');
+  const results = document.getElementById('ce-faction-results');
+  if (!chipRow || !search || !results) return;
+
+  if (!factionPicker.loaded) {
+    try {
+      const { factions } = await listFeFactions(feAuth());
+      factionPicker.all = factions || [];
+      // Pre-select caller's own faction.
+      const mine = factionPicker.all.find((f) => f.mine);
+      if (mine) factionPicker.selectedIds.add(String(mine.torn_faction_id));
+      factionPicker.loaded = true;
+    } catch (err) {
+      results.removeAttribute('hidden');
+      results.innerHTML = `<p class="fe-faction-empty">Failed to load factions: ${esc(err.message || String(err))}</p>`;
       return;
     }
-    list.innerHTML = factions.map((f) => {
-      const fid = String(f.torn_faction_id);
-      const checked = f.mine ? 'checked' : '';
-      const mineTag = f.mine ? ' <span class="recent-meta">(your faction)</span>' : '';
-      return `<label class="fe-faction-row">
-        <input type="checkbox" class="ce-faction-cb" value="${esc(fid)}" ${checked} />
-        <span>${esc(f.torn_faction_name)}${mineTag}</span>
-        <span class="recent-meta">${f.member_count} signed in</span>
-      </label>`;
-    }).join('');
-  } catch (err) {
-    list.innerHTML = `<p class="recent-meta">Failed to load factions: ${esc(err.message || String(err))}</p>`;
   }
+
+  renderFactionChips();
+  // Wire input only once per page; the input element is stable.
+  if (!search.dataset.wired) {
+    search.dataset.wired = '1';
+    search.addEventListener('focus', () => renderFactionResults(search.value));
+    search.addEventListener('input', () => renderFactionResults(search.value));
+    search.addEventListener('blur', () => {
+      // Small delay so result-button clicks register before we hide.
+      setTimeout(() => {
+        if (!search.value.trim()) results.setAttribute('hidden', '');
+      }, 150);
+    });
+  }
+}
+
+function renderFactionChips() {
+  const chipRow = document.getElementById('ce-faction-chips');
+  if (!chipRow) return;
+  const ids = Array.from(factionPicker.selectedIds);
+  if (ids.length === 0) {
+    chipRow.innerHTML = '<span class="recent-meta">No factions selected — only you will be on the leaderboard until people join the share link.</span>';
+    return;
+  }
+  chipRow.innerHTML = ids
+    .map((id) => {
+      const f = factionPicker.all.find((x) => String(x.torn_faction_id) === String(id));
+      if (!f) return '';
+      const klass = f.mine ? 'fe-chip fe-chip-mine' : 'fe-chip';
+      return `<span class="${klass}">
+        ${esc(f.torn_faction_name)}
+        <button type="button" class="fe-chip-x" data-id="${esc(String(f.torn_faction_id))}" aria-label="Remove ${esc(f.torn_faction_name)}">×</button>
+      </span>`;
+    })
+    .join('');
+  chipRow.querySelectorAll('.fe-chip-x').forEach((btn) => {
+    btn.addEventListener('click', () => {
+      factionPicker.selectedIds.delete(btn.dataset.id);
+      renderFactionChips();
+      const search = document.getElementById('ce-faction-search');
+      renderFactionResults(search?.value || '');
+    });
+  });
+}
+
+function renderFactionResults(query) {
+  const results = document.getElementById('ce-faction-results');
+  const search = document.getElementById('ce-faction-search');
+  if (!results) return;
+  const q = (query || '').trim().toLowerCase();
+  const matches = factionPicker.all
+    .filter((f) => !factionPicker.selectedIds.has(String(f.torn_faction_id)))
+    .filter((f) => !q || f.torn_faction_name.toLowerCase().includes(q))
+    .slice(0, 20);
+
+  // Hide entirely when there's no query AND no focus reason to show.
+  if (!q && document.activeElement !== search) {
+    results.setAttribute('hidden', '');
+    return;
+  }
+  results.removeAttribute('hidden');
+
+  if (matches.length === 0) {
+    results.innerHTML = `<p class="fe-faction-empty">${q ? 'No matching factions.' : 'No more factions signed in.'}</p>`;
+    return;
+  }
+  results.innerHTML = matches
+    .map(
+      (f) => `<button type="button" class="fe-faction-result" data-id="${esc(String(f.torn_faction_id))}">
+        <span>${esc(f.torn_faction_name)}</span>
+        <span class="recent-meta">${f.member_count} signed in</span>
+      </button>`,
+    )
+    .join('');
+  results.querySelectorAll('.fe-faction-result').forEach((btn) => {
+    btn.addEventListener('mousedown', (e) => {
+      // mousedown (not click) so blur on the input doesn't fire first
+      // and tear down the dropdown before we add the chip.
+      e.preventDefault();
+      factionPicker.selectedIds.add(btn.dataset.id);
+      if (search) search.value = '';
+      renderFactionChips();
+      renderFactionResults('');
+      if (search) search.focus();
+    });
+  });
 }
 
 async function loadRecentEvents() {
