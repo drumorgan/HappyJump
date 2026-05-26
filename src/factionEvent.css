@@ -1,5 +1,13 @@
 /* Faction Events — page-specific tweaks layered on top of style.css */
 
+/* Override the global 640px container — FE leaderboards are tables with
+   up to 4 metric columns + scrape-log + remove buttons, which doesn't
+   fit in 640px. 1100px fills an iPad portrait viewport and still leaves
+   breathing room on a desktop. */
+.container {
+  max-width: 1100px;
+}
+
 .fe-label {
   display: block;
   margin: 0.75rem 0;
