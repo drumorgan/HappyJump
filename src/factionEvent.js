@@ -595,8 +595,12 @@ function renderLeaderboard(event, participants) {
       const A = leaderboardAttackStats(a);
       const B = leaderboardAttackStats(b);
       const key = lbSortKey || 'respect';
-      const av = key === 'attacks' ? A.attacks : key === 'avg' ? A.avg : A.respect;
-      const bv = key === 'attacks' ? B.attacks : key === 'avg' ? B.avg : B.respect;
+      const pick = (s) => key === 'attacks' ? s.attacks
+        : key === 'avg' ? s.avg
+        : key === 'best' ? s.best
+        : s.respect;
+      const av = pick(A);
+      const bv = pick(B);
       if (bv !== av) return bv - av;
       return new Date(a.personal_start_at).getTime() - new Date(b.personal_start_at).getTime();
     }
@@ -655,7 +659,8 @@ function renderLeaderboard(event, participants) {
           <td class="recent-meta">${checkedCell}</td>
           <td class="lb-count">${attacks}</td>
           <td class="lb-count">${respect.toFixed(2)}</td>
-          <td class="lb-count">${avg.toFixed(2)}${best > 0 ? `<div class="recent-meta">best ${best.toFixed(2)}</div>` : ''}</td>
+          <td class="lb-count">${avg.toFixed(2)}</td>
+          <td class="lb-count">${best.toFixed(2)}</td>
           ${scrapeBtn}
           ${removeBtn}
         </tr>
@@ -677,10 +682,15 @@ function renderLeaderboard(event, participants) {
     `;
   }).join('');
 
+  const sortMarker = (key, label) => {
+    const active = lbSortKey === key;
+    return `<th class="lb-sort-th" data-sort="${key}" style="text-align:right${active ? ';color:#9ad' : ''}">${label}${active ? ' ▼' : ''}</th>`;
+  };
   const attackHeaders = `
-    <th class="lb-sort-th" data-sort="attacks" style="text-align:right${lbSortKey === 'attacks' ? ';color:#9ad' : ''}">Attacks</th>
-    <th class="lb-sort-th" data-sort="respect" style="text-align:right${lbSortKey === 'respect' ? ';color:#9ad' : ''}">Respect ▼</th>
-    <th class="lb-sort-th" data-sort="avg" style="text-align:right${lbSortKey === 'avg' ? ';color:#9ad' : ''}">Avg / Best</th>
+    ${sortMarker('attacks', 'Attacks')}
+    ${sortMarker('respect', 'Respect')}
+    ${sortMarker('avg', 'Avg Respect')}
+    ${sortMarker('best', 'Best Hit')}
   `;
   const drugHeader = `<th style="text-align:right">${esc(event.drug_name || '')}</th>`;
 
