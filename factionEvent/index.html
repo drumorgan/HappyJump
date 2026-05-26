@@ -44,7 +44,7 @@
             </label>
             <button type="submit" class="submit-btn-alt">Sign in</button>
           </form>
-          <p class="key-note">No key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,log,calendar&title=FactionEvents" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only needs your name, level, faction, log, and calendar. Your key is encrypted server-side and tied only to Faction Events; signing out deletes it.</p>
+          <p class="key-note">No key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,log,calendar,attacks&title=FactionEvents" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only needs your name, level, faction, log, calendar, and attacks. Your key is encrypted server-side and tied only to Faction Events; signing out deletes it. Attack-tracking events need the <code>attacks</code> scope; if you minted a key before that was added, just create a new one with the link above.</p>
           <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" class="find-key-btn">Already made a Faction Events key? Find it on Torn &rarr;</a>
         </div>
       </div>
@@ -67,14 +67,21 @@
           <span>Create a New Event</span>
         </div>
         <div class="card-body">
-          <p class="form-intro">Set the drug, the start date and how long the event runs. You'll get a shareable link to send to your faction.</p>
+          <p class="form-intro">Pick what you're tracking, set the start date and how long the event runs. You'll get a shareable link to send to your faction.</p>
           <form id="create-event-form">
             <label class="fe-label">Event title
               <input type="text" id="ce-title" placeholder="e.g. Spring Beer Bash" required maxlength="120" />
             </label>
 
-            <label class="fe-label">What are we counting?
-              <select id="ce-drug-preset" required>
+            <label class="fe-label">Event type
+              <select id="ce-event-type" required>
+                <option value="drug_use">Drug use — count one item per player</option>
+                <option value="attacks">Attacks — # attacks, respect gained, best single hit</option>
+              </select>
+            </label>
+
+            <label class="fe-label" id="ce-drug-row">What are we counting?
+              <select id="ce-drug-preset">
                 <option value="">— pick one —</option>
                 <option value="196|Cannabis">Cannabis</option>
                 <option value="197|Ecstasy">Ecstasy</option>
@@ -82,6 +89,8 @@
                 <option value="180|Bottle of Beer">Bottle of Beer</option>
               </select>
             </label>
+
+            <p class="key-note" id="ce-attacks-help" style="display:none">Attack events show three columns per player: <strong># Attacks</strong>, <strong>Respect Gained</strong> (default sort) and <strong>Avg Respect / Attack</strong>, plus the single best-respect hit. Requires every participant's Custom Key to include the <code>attacks</code> scope — anyone without it stays at 0 until they re-mint.</p>
 
             <label class="fe-label">Event date
               <input type="date" id="ce-starts-at" required />

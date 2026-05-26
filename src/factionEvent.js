@@ -348,6 +348,22 @@ function showPickerView() {
 
 function wireCreateForm() {
   const presetSel = document.getElementById('ce-drug-preset');
+  const eventTypeSel = document.getElementById('ce-event-type');
+  const drugRow = document.getElementById('ce-drug-row');
+  const attacksHelp = document.getElementById('ce-attacks-help');
+
+  // Toggle drug picker visibility based on event_type. Attacks events
+  // don't carry a drug, so hide the row entirely to avoid the "what does
+  // 'pick one' even mean here?" question.
+  function syncEventTypeUi() {
+    const isAttacks = eventTypeSel.value === 'attacks';
+    if (drugRow) drugRow.style.display = isAttacks ? 'none' : '';
+    if (attacksHelp) attacksHelp.style.display = isAttacks ? '' : 'none';
+  }
+  if (eventTypeSel) {
+    eventTypeSel.addEventListener('change', syncEventTypeUi);
+    syncEventTypeUi();
+  }
 
   // Default date = today in TCT.
   const startsInput = document.getElementById('ce-starts-at');
@@ -362,23 +378,26 @@ function wireCreateForm() {
     }
 
     const title = document.getElementById('ce-title').value.trim();
-    const presetVal = presetSel.value;
+    const event_type = eventTypeSel ? eventTypeSel.value : 'drug_use';
     let drug_item_id, drug_name;
-    if (presetVal && presetVal.includes('|')) {
-      const [idStr, name] = presetVal.split('|');
-      drug_item_id = Number(idStr);
-      drug_name = name;
-    } else {
-      toast('Pick what to count');
-      return;
-    }
-    if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
-      toast('Item ID must be a positive number');
-      return;
-    }
-    if (!drug_name) {
-      toast('Drug / item name is required');
-      return;
+    if (event_type === 'drug_use') {
+      const presetVal = presetSel.value;
+      if (presetVal && presetVal.includes('|')) {
+        const [idStr, name] = presetVal.split('|');
+        drug_item_id = Number(idStr);
+        drug_name = name;
+      } else {
+        toast('Pick what to count');
+        return;
+      }
+      if (!Number.isFinite(drug_item_id) || drug_item_id <= 0) {
+        toast('Item ID must be a positive number');
+        return;
+      }
+      if (!drug_name) {
+        toast('Drug / item name is required');
+        return;
+      }
     }
 
     const dateStr = document.getElementById('ce-starts-at').value;
@@ -401,6 +420,7 @@ function wireCreateForm() {
       // me-card's "Change my start time" UI after the event exists.
       const res = await createFactionEvent({
         title,
+        event_type,
         drug_item_id,
         drug_name,
         starts_at: startsAtIso,
@@ -457,7 +477,7 @@ async function loadRecentEvents() {
         <div class="recent-row">
           <div>
             <a href="?id=${encodeURIComponent(ev.id)}">${esc(ev.title)}</a>
-            <div class="recent-meta">${esc(ev.drug_name)} · ${esc(status)}</div>
+            <div class="recent-meta">${esc(ev.event_type === 'attacks' ? 'Attacks' : (ev.drug_name || ''))} · ${esc(status)}</div>
           </div>
           <div class="recent-meta">${fmtDateTime(ev.starts_at)}</div>
         </div>
@@ -507,7 +527,10 @@ function isCreator(event) {
 
 function renderEventHeader(event) {
   document.getElementById('ev-title').textContent = event.title;
-  document.getElementById('ev-drug').textContent = event.drug_name;
+  const isAttacks = event.event_type === 'attacks';
+  document.getElementById('ev-drug').textContent = isAttacks
+    ? 'Attacks · Respect Gained · Avg Respect'
+    : (event.drug_name || '—');
   document.getElementById('ev-window').textContent =
     `${fmtDateTime(event.starts_at)} → ${fmtDateTime(event.ends_at)}`;
 
@@ -520,11 +543,13 @@ function renderEventHeader(event) {
   else status = `Ended ${fmtRelative(now - endsMs)} ago — final leaderboard`;
   document.getElementById('ev-status').textContent = status;
 
-  // Edit pencils only visible to the creator.
+  // Edit pencils only visible to the creator. Drug pencil is hidden for
+  // attack events since the gateway rejects drug changes on those.
   const showPencils = isCreator(event);
-  for (const id of ['ev-edit-title-btn', 'ev-edit-drug-btn', 'ev-edit-window-btn']) {
+  for (const id of ['ev-edit-title-btn', 'ev-edit-window-btn']) {
     document.getElementById(id).classList.toggle('hidden', !showPencils);
   }
+  document.getElementById('ev-edit-drug-btn').classList.toggle('hidden', !showPencils || isAttacks);
   // Hide any open edit forms when auth changes (e.g. sign-out).
   if (!showPencils) {
     for (const id of ['ev-edit-title-form', 'ev-edit-drug-form', 'ev-edit-window-form']) {
@@ -542,13 +567,39 @@ function renderEventHeader(event) {
   document.getElementById('ev-share-link').value = shareUrl;
 }
 
+// Per-event leaderboard sort: which column drives the order. Persists in
+// memory only — clicking a header re-sorts without a server round trip.
+let lbSortKey = null; // for attacks: 'attacks' | 'respect' | 'avg'
+
+function leaderboardAttackStats(p) {
+  const attacks = Number(p.last_count) || 0;
+  const respect = Number(p.last_respect_total) || 0;
+  const avg = attacks > 0 ? respect / attacks : 0;
+  const best = Number(p.last_best_single_respect) || 0;
+  return { attacks, respect, avg, best };
+}
+
 function renderLeaderboard(event, participants) {
   const body = document.getElementById('leaderboard-body');
   if (participants.length === 0) {
     body.innerHTML = '<p class="form-intro" style="color:#888">No participants yet — share the link to get started.</p>';
     return;
   }
+  const isAttacks = event.event_type === 'attacks';
+  // Default sort key per event type. Attacks default to respect gained
+  // (most cross-level-fair metric); drug events use their single count.
+  if (isAttacks && lbSortKey === null) lbSortKey = 'respect';
+
   const sorted = [...participants].sort((a, b) => {
+    if (isAttacks) {
+      const A = leaderboardAttackStats(a);
+      const B = leaderboardAttackStats(b);
+      const key = lbSortKey || 'respect';
+      const av = key === 'attacks' ? A.attacks : key === 'avg' ? A.avg : A.respect;
+      const bv = key === 'attacks' ? B.attacks : key === 'avg' ? B.avg : B.respect;
+      if (bv !== av) return bv - av;
+      return new Date(a.personal_start_at).getTime() - new Date(b.personal_start_at).getTime();
+    }
     const ac = Number(a.last_count) || 0;
     const bc = Number(b.last_count) || 0;
     if (bc !== ac) return bc - ac;
@@ -590,6 +641,26 @@ function renderLeaderboard(event, participants) {
     const removeBtn = showRemove
       ? `<td class="lb-remove"><button type="button" class="lb-remove-btn" data-torn-id="${esc(String(p.torn_id))}" data-torn-name="${esc(String(p.torn_name))}" title="Remove from this event">×</button></td>`
       : '';
+
+    if (isAttacks) {
+      const { attacks, respect, avg, best } = leaderboardAttackStats(p);
+      return `
+        <tr class="${rowClasses.join(' ')}">
+          <td class="lb-rank">${i + 1}</td>
+          <td>
+            <strong>${esc(p.torn_name)}</strong>
+            <div class="recent-meta">${esc(p.torn_faction || 'No faction')}</div>
+          </td>
+          <td class="recent-meta">since ${fmtDateTime(p.personal_start_at)}</td>
+          <td class="recent-meta">${checkedCell}</td>
+          <td class="lb-count">${attacks}</td>
+          <td class="lb-count">${respect.toFixed(2)}</td>
+          <td class="lb-count">${avg.toFixed(2)}${best > 0 ? `<div class="recent-meta">best ${best.toFixed(2)}</div>` : ''}</td>
+          ${scrapeBtn}
+          ${removeBtn}
+        </tr>
+      `;
+    }
     return `
       <tr class="${rowClasses.join(' ')}">
         <td class="lb-rank">${i + 1}</td>
@@ -606,6 +677,13 @@ function renderLeaderboard(event, participants) {
     `;
   }).join('');
 
+  const attackHeaders = `
+    <th class="lb-sort-th" data-sort="attacks" style="text-align:right${lbSortKey === 'attacks' ? ';color:#9ad' : ''}">Attacks</th>
+    <th class="lb-sort-th" data-sort="respect" style="text-align:right${lbSortKey === 'respect' ? ';color:#9ad' : ''}">Respect ▼</th>
+    <th class="lb-sort-th" data-sort="avg" style="text-align:right${lbSortKey === 'avg' ? ';color:#9ad' : ''}">Avg / Best</th>
+  `;
+  const drugHeader = `<th style="text-align:right">${esc(event.drug_name || '')}</th>`;
+
   body.innerHTML = `
     <table class="lb-table">
       <thead>
@@ -614,7 +692,7 @@ function renderLeaderboard(event, participants) {
           <th>Player</th>
           <th>Started</th>
           <th>Last refresh</th>
-          <th style="text-align:right">${esc(event.drug_name)}</th>
+          ${isAttacks ? attackHeaders : drugHeader}
           ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
           ${showRemove ? '<th class="lb-remove" title="Remove participant"></th>' : ''}
         </tr>
@@ -622,6 +700,16 @@ function renderLeaderboard(event, participants) {
       <tbody>${rows}</tbody>
     </table>
   `;
+
+  if (isAttacks) {
+    body.querySelectorAll('.lb-sort-th').forEach((th) => {
+      th.style.cursor = 'pointer';
+      th.addEventListener('click', () => {
+        lbSortKey = th.dataset.sort;
+        renderLeaderboard(event, participants);
+      });
+    });
+  }
   document.getElementById('lb-refreshed').textContent = `updated ${new Date().toLocaleTimeString()}`;
 
   // Refresh-all button shares the same admin/creator gating as the per-row
@@ -1011,7 +1099,7 @@ function populateScrapeLogModal({ participant, event, diagSourceLabel }) {
     ? new Date(participant.last_checked_at).toISOString()
     : 'never';
   meta.textContent =
-    `Event: ${event.title} (${event.drug_name})\n` +
+    `Event: ${event.title} (${event.event_type === 'attacks' ? 'Attacks' : (event.drug_name || '')})\n` +
     `Count stored: ${Number(participant.last_count) || 0}\n` +
     `Last refresh: ${checkedAt}\n` +
     `Personal start: ${new Date(participant.personal_start_at).toISOString()}\n` +
@@ -1085,9 +1173,17 @@ function renderJoinOrMe(event, participants) {
   if (myRow) {
     joinCard.classList.add('hidden');
     meCard.classList.remove('hidden');
-    document.getElementById('me-count').textContent = Number(myRow.last_count) || 0;
-    document.getElementById('me-meta').textContent =
-      `${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
+    if (event.event_type === 'attacks') {
+      const { attacks, respect, avg, best } = leaderboardAttackStats(myRow);
+      document.getElementById('me-count').innerHTML =
+        `${respect.toFixed(2)} <span class="recent-meta" style="font-size:0.45em">respect</span>`;
+      document.getElementById('me-meta').textContent =
+        `${attacks} attacks · avg ${avg.toFixed(2)}${best > 0 ? ` · best ${best.toFixed(2)}` : ''} · ${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
+    } else {
+      document.getElementById('me-count').textContent = Number(myRow.last_count) || 0;
+      document.getElementById('me-meta').textContent =
+        `${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
+    }
     // Refresh button only works while signed in (server needs the key).
     const refreshBtn = document.getElementById('me-refresh');
     refreshBtn.disabled = !feSession;
@@ -1381,7 +1477,10 @@ function wireEventControls(eventId) {
           }).catch(() => {});
         }
       }
-      toast(`Joined — ${res.count} ${res.event.drug_name} found so far`, 'success');
+      const joinedMsg = res.event.event_type === 'attacks'
+        ? `Joined — ${res.count} attacks counted so far`
+        : `Joined — ${res.count} ${res.event.drug_name} found so far`;
+      toast(joinedMsg, 'success');
       await refreshEventView(eventId);
     } catch (err) {
       toast(err.message || 'Failed to join');
