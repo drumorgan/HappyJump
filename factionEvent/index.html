@@ -107,11 +107,11 @@
             <p class="key-note" id="ce-window-help-attacks" style="display:none">Attack events run from the exact start time you set, in TCT (game time), for the chosen duration. Every participant shares the same window — there's no per-player slot picker.</p>
 
             <label class="fe-label">Auto-seed factions
-              <div id="ce-faction-list" class="fe-faction-list">
-                <p class="recent-meta">Loading factions…</p>
-              </div>
+              <div id="ce-faction-chips" class="fe-chip-row"></div>
+              <input type="text" id="ce-faction-search" class="fe-faction-search" placeholder="Type a faction name to add…" autocomplete="off" />
+              <div id="ce-faction-results" class="fe-faction-results" hidden></div>
             </label>
-            <p class="key-note">Members of these factions who've signed in to Faction Events get added automatically — they don't have to visit the share link themselves. Your own faction is pre-selected; tick others to invite their signed-in members too.</p>
+            <p class="key-note">Members of these factions who've signed in to Faction Events get added automatically — they don't have to visit the share link themselves. Your own faction is pre-added; type to search for and add more.</p>
 
             <button type="submit" class="submit-btn-alt">Create Event</button>
           </form>
