@@ -3911,15 +3911,21 @@ async function handleCreateFactionEvent(body: any) {
 
   // Floor the creator's personal start to event_start (you can't begin
   // counting before the event has started). No upper clamp: each
-  // participant's count window is [personal_start, personal_start +
-  // duration], so a late personal_start just shifts the whole window
-  // later — it doesn't get truncated by event.ends_at.
-  const clampedStartMs = Math.max(personalStart.getTime(), starts_at.getTime());
+  // drug_use participant's count window is [personal_start,
+  // personal_start + duration], so a late personal_start just shifts
+  // the whole window later — it doesn't get truncated by event.ends_at.
+  //
+  // Attack events ignore personal_start_at entirely (everyone shares
+  // event.starts_at → event.ends_at), so we just nail it to event_start
+  // for those rows. The column is still NOT NULL.
+  const clampedStartMs = event_type === 'attacks'
+    ? starts_at.getTime()
+    : Math.max(personalStart.getTime(), starts_at.getTime());
   const clampedStartIso = new Date(clampedStartMs).toISOString();
 
   // Initial count for the creator over their personal duration window.
   const { fromSec, untilSec } = participantCountWindow(
-    { starts_at: starts_at.toISOString(), ends_at: ends_at.toISOString() },
+    { event_type, starts_at: starts_at.toISOString(), ends_at: ends_at.toISOString() },
     clampedStartIso,
   );
   const seedEventShape = {
@@ -4352,30 +4358,42 @@ async function handleUpdateFactionEvent(body: any) {
         .eq('event_id', event_id);
 
       if (windowChanged) {
-        // Re-anchor each participant's personal-start time to the new event
-        // date, keeping the same UTC time-of-day. Floor at the new event
-        // start (you can't begin counting before the event has started);
-        // no upper bound — a late personal_start just shifts the
-        // [personal_start, personal_start + duration] window later, it's
-        // never truncated by event.ends_at.
-        const newDateStr = newStartsAt.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
-        for (const p of parts) {
-          const oldPs = new Date(p.personal_start_at);
-          const oldTimeStr = oldPs.toISOString().slice(11); // "HH:MM:SS.sssZ"
-          const reAnchoredMs = new Date(`${newDateStr}T${oldTimeStr}`).getTime();
-          let finalMs: number;
-          if (Number.isNaN(reAnchoredMs) || reAnchoredMs < startMs) {
-            // Old time-of-day predates the new event start — snap to
-            // event start so the participant still has a valid window.
-            finalMs = startMs;
-          } else {
-            finalMs = reAnchoredMs;
-          }
-          if (finalMs !== oldPs.getTime()) {
-            await supabase
-              .from('faction_event_participants')
-              .update({ personal_start_at: new Date(finalMs).toISOString() })
-              .eq('id', p.id);
+        if (event.event_type === 'attacks') {
+          // Attack events use the global event window for everyone —
+          // re-pin every participant's personal_start_at to the new
+          // event start. No time-of-day preservation since each
+          // participant doesn't have an individual slot here.
+          await supabase
+            .from('faction_event_participants')
+            .update({ personal_start_at: newStartsAt.toISOString() })
+            .eq('event_id', event_id);
+        } else {
+          // Drug events: re-anchor each participant's personal-start
+          // time to the new event date, keeping the same UTC time-of-day.
+          // Floor at the new event start (you can't begin counting before
+          // the event has started); no upper bound — a late
+          // personal_start just shifts the [personal_start,
+          // personal_start + duration] window later, it's never
+          // truncated by event.ends_at.
+          const newDateStr = newStartsAt.toISOString().slice(0, 10); // YYYY-MM-DD (UTC)
+          for (const p of parts) {
+            const oldPs = new Date(p.personal_start_at);
+            const oldTimeStr = oldPs.toISOString().slice(11); // "HH:MM:SS.sssZ"
+            const reAnchoredMs = new Date(`${newDateStr}T${oldTimeStr}`).getTime();
+            let finalMs: number;
+            if (Number.isNaN(reAnchoredMs) || reAnchoredMs < startMs) {
+              // Old time-of-day predates the new event start — snap to
+              // event start so the participant still has a valid window.
+              finalMs = startMs;
+            } else {
+              finalMs = reAnchoredMs;
+            }
+            if (finalMs !== oldPs.getTime()) {
+              await supabase
+                .from('faction_event_participants')
+                .update({ personal_start_at: new Date(finalMs).toISOString() })
+                .eq('id', p.id);
+            }
           }
         }
       }
@@ -4507,26 +4525,37 @@ async function runEventScanner(
   };
 }
 
-// Per-participant count window. Each participant gets the FULL event
-// duration anchored to their own personal_start_at — so a late joiner
-// (e.g. personal_start = event_start + 6h on a 48h event) still has the
+// Per-participant count window.
+//
+// For drug_use events, each participant gets the FULL event duration
+// anchored to their own personal_start_at — so a late joiner (e.g.
+// personal_start = event_start + 6h on a 48h event) still has the
 // full 48h to use drugs, even if their window runs past event.ends_at.
-// duration_ms is derived from event.ends_at − event.starts_at; the
-// global event.ends_at is no longer the count-window cap, only the
-// definition source for "duration".
+//
+// For attacks events, there is no per-participant personal window:
+// everyone uses the global [event.starts_at, event.ends_at]. The
+// personal_start_at column is still populated (NOT NULL), but is
+// ignored here. The creator picks an exact start time on event
+// creation (not a 10:00 TCT anchor + slot picker).
 //
 // Returns { fromSec, untilSec } where untilSec is capped at "now" so a
 // future personal_end never counts entries that haven't happened yet.
 // Callers still guard `if (untilSec > fromSec)` before scraping.
 function participantCountWindow(
-  event: { starts_at: string; ends_at: string },
+  event: { event_type?: string | null; starts_at: string; ends_at: string },
   personal_start_at: string,
 ): { fromSec: number; untilSec: number } {
+  const nowSec = Math.floor(Date.now() / 1000);
+  if (event.event_type === 'attacks') {
+    return {
+      fromSec: Math.floor(new Date(event.starts_at).getTime() / 1000),
+      untilSec: Math.min(nowSec, Math.floor(new Date(event.ends_at).getTime() / 1000)),
+    };
+  }
   const durationMs =
     new Date(event.ends_at).getTime() - new Date(event.starts_at).getTime();
   const personalStartMs = new Date(personal_start_at).getTime();
   const personalEndMs = personalStartMs + durationMs;
-  const nowSec = Math.floor(Date.now() / 1000);
   return {
     fromSec: Math.floor(personalStartMs / 1000),
     untilSec: Math.min(nowSec, Math.floor(personalEndMs / 1000)),
@@ -4578,10 +4607,6 @@ async function handleJoinFactionEvent(body: any) {
   const event_id = typeof body.event_id === 'string' ? body.event_id : '';
   if (!event_id) return json({ error: 'Missing event_id' }, 400);
 
-  const personalStartParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
-  if (personalStartParsed.err) return json({ error: personalStartParsed.err }, 400);
-  const personalStart = personalStartParsed.ts!;
-
   const resolved = await resolveFactionEventApiKey(body);
   if (resolved instanceof Response) return resolved;
   const api_key = resolved.key;
@@ -4596,12 +4621,20 @@ async function handleJoinFactionEvent(body: any) {
   if (!event) return json({ error: 'Event not found' }, 404);
 
   const eventStartMs = new Date(event.starts_at).getTime();
-  // Floor the personal start time to event_start (you can't begin counting
-  // before the event has started). No upper clamp: each participant's
-  // count window is [personal_start, personal_start + duration], so a
-  // late personal_start just shifts the whole window later — it's never
-  // truncated by event.ends_at.
-  const clampedStartMs = Math.max(personalStart.getTime(), eventStartMs);
+  // Attack events ignore the per-participant personal start — everyone
+  // shares the global [event.starts_at, event.ends_at] window — so we
+  // hard-pin personal_start_at to event_start regardless of what the
+  // client supplied. For drug events the personal start floors at
+  // event_start (no upper clamp; late starts just shift the whole
+  // count window later).
+  let clampedStartMs: number;
+  if (event.event_type === 'attacks') {
+    clampedStartMs = eventStartMs;
+  } else {
+    const personalStartParsed = parseFactionEventTimestamp(body.personal_start_at, 'personal_start_at');
+    if (personalStartParsed.err) return json({ error: personalStartParsed.err }, 400);
+    clampedStartMs = Math.max(personalStartParsed.ts!.getTime(), eventStartMs);
+  }
   const clampedStartIso = new Date(clampedStartMs).toISOString();
 
   // Validate the key + grab identity (name / faction)
