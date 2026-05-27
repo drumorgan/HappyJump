@@ -743,9 +743,10 @@ function renderEventHeader(event) {
   else status = `Ended ${fmtRelative(now - endsMs)} ago — final leaderboard`;
   document.getElementById('ev-status').textContent = status;
 
-  // Edit pencils only visible to the creator. Drug pencil is hidden for
-  // attack events since the gateway rejects drug changes on those.
-  const showPencils = isCreator(event);
+  // Edit pencils visible to the creator OR HJ admin (operator backdoor).
+  // Drug pencil is hidden for attack events since the gateway rejects
+  // drug changes on those.
+  const showPencils = isCreator(event) || isHjAdmin;
   for (const id of ['ev-edit-title-btn', 'ev-edit-window-btn']) {
     document.getElementById(id).classList.toggle('hidden', !showPencils);
   }
