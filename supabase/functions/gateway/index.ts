@@ -4307,14 +4307,14 @@ async function handleRemoveFactionEventParticipant(req: Request, body: any) {
   return json({ success: true });
 }
 
-async function handleUpdateFactionEvent(body: any) {
+async function handleUpdateFactionEvent(req: Request, body: any) {
   const event_id = typeof body.event_id === 'string' ? body.event_id : '';
   if (!event_id) return json({ error: 'Missing event_id' }, 400);
 
-  const resolved = await resolveFactionEventApiKey(body);
-  if (resolved instanceof Response) return resolved;
-  const callerTornId = String(resolved.torn_id || '');
-  if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+  // Admin backdoor first — HJ operator gets unconditional edit access.
+  // requireAuth returns null for unauthenticated requests, so this is
+  // safe to try without an FE session. Falls back to FE creator auth.
+  const adminUser = await requireAuth(req);
 
   const supabase = serviceClient();
   const { data: event, error: evtErr } = await supabase
@@ -4325,8 +4325,14 @@ async function handleUpdateFactionEvent(body: any) {
   if (evtErr) return json({ error: evtErr.message }, 500);
   if (!event) return json({ error: 'Event not found' }, 404);
 
-  if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
-    return json({ error: 'Only the event creator can edit this event' }, 403);
+  if (!adminUser) {
+    const resolved = await resolveFactionEventApiKey(body);
+    if (resolved instanceof Response) return resolved;
+    const callerTornId = String(resolved.torn_id || '');
+    if (!callerTornId) return json({ error: 'Sign in required' }, 401);
+    if (!event.creator_torn_id || String(event.creator_torn_id) !== callerTornId) {
+      return json({ error: 'Only the event creator (or the operator) can edit this event' }, 403);
+    }
   }
 
   // Build the patch — only fields the caller actually supplied are touched.
@@ -5804,7 +5810,7 @@ serve(async (req) => {
       case 'list-fe-factions':
         return await handleListFeFactions(body);
       case 'update-faction-event':
-        return await handleUpdateFactionEvent(body);
+        return await handleUpdateFactionEvent(req, body);
       case 'delete-faction-event':
         return await handleDeleteFactionEvent(req, body);
       case 'remove-faction-event-participant':
