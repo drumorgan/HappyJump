@@ -220,9 +220,13 @@
           <p class="form-intro" id="join-intro">Sign in above with your Torn API key, then pick your personal start time below. We only read your name, faction, log, and calendar.</p>
           <form id="join-form">
             <!-- API key input is only shown to users without an FE session.
-                 JS adds .hidden to this wrapper when signed in. -->
+                 JS adds .hidden to this wrapper when signed in. The
+                 key-help block beneath it shares the same hide-when-
+                 signed-in fate via .fe-join-key-row scope. -->
             <div class="fe-join-key-row">
               <input type="text" id="join-api-key" placeholder="Your Torn API key" autocomplete="off" />
+              <p class="key-note">No key? <a href="https://www.torn.com/preferences.php#tab=api?step=addNewKey&user=basic,profile,log,calendar,attacks&title=FactionEvents" target="_blank" rel="noopener">Click here to create a Custom Key</a> — it only needs your name, level, faction, log, calendar, and attacks. Attack-tracking events need the <code>attacks</code> scope; older keys without it stay at 0.</p>
+              <a href="https://www.torn.com/preferences.php#tab=api" target="_blank" rel="noopener" class="find-key-btn">Already made a Faction Events key? Find it on Torn &rarr;</a>
             </div>
 
             <div class="fe-row">
