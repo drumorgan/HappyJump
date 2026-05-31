@@ -2197,9 +2197,9 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   }
 
   // Email notification for key status changes
-  const emailStatuses = ['purchased', 'payout_sent', 'rejected'];
+  const emailStatuses = ['purchased', 'payout_sent', 'rejected', 'od_xanax', 'od_ecstasy'];
   if (emailStatuses.includes(new_status)) {
-    const payoutInfo = new_status === 'payout_sent'
+    const payoutInfo = ['payout_sent', 'od_xanax', 'od_ecstasy'].includes(new_status)
       ? `\nPayout Amount: ${formatMoney(Number(updates.payout_amount || txnRecord.payout_amount || 0))}`
       : '';
     const playerLabel = txnRecord.torn_name ? `${txnRecord.torn_name} [${tornId}]` : tornId;
