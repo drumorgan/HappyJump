@@ -292,6 +292,17 @@ export async function adminActiveConsumed(txnId) {
 }
 
 /**
+ * Admin: auto-detect a transaction's outcome using the client's server-stored
+ * key — runs the exact same OD / clean-close detection the client's own login
+ * runs, server-side. Registers od_xanax / od_ecstasy (with payout + email) or
+ * auto-closes clean, applying the result immediately. Returns the same
+ * { verified, policy_closed, od_type, detail } shape report-od returns.
+ */
+export async function adminAutoDetect(txnId) {
+  return gateway('admin-auto-detect', { txn_id: txnId });
+}
+
+/**
  * Admin: resync all client stats from transactions (fixes stale data).
  */
 export async function adminSyncAllClients() {
