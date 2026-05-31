@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -274,9 +274,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       }
       case 'purchased':
         actionsHtml = `
-          <button class="btn-od-xan" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_xanax">Xanax OD</button>
-          <button class="btn-od-ecs" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="od_ecstasy">Ecstasy OD</button>
-          <button class="btn-close" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="closed_clean">Close Clean</button>
+          <button class="btn-auto-detect" data-id="${t.id}">Check Status (OD / Clean Close)</button>
           <button class="btn-items-used" data-id="${t.id}">Items Used So Far</button>`;
         break;
       case 'od_xanax':
@@ -347,6 +345,11 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     btn.addEventListener('click', () => handleItemsUsed(btn.dataset.id, btn));
   });
 
+  // Bind "Check Status" buttons — server-side auto-detect of OD / clean close
+  txnList.querySelectorAll('.btn-auto-detect').forEach((btn) => {
+    btn.addEventListener('click', () => handleAutoDetect(btn.dataset.id, btn));
+  });
+
   // Start expiry countdown timers for requested transactions
   startExpiryTimers();
 }
@@ -412,6 +415,49 @@ async function handleItemsUsed(txnId, btn) {
     btn.disabled = false;
     btn.textContent = orig;
   }
+}
+
+// Auto-detect a purchased policy's outcome by scanning the client's stored API
+// log server-side — exactly what happens when the client logs in. Applies the
+// result immediately: registers a verified OD (with payout + operator email) or
+// auto-closes clean when the Ecstasy was taken successfully. Replaces the old
+// manual "Xanax OD / Ecstasy OD / Close Clean" buttons so outcomes are always
+// verified against the client's real Torn log rather than entered by hand.
+async function handleAutoDetect(txnId, btn) {
+  const resultEl = document.getElementById(`items-used-${txnId}`);
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Checking…';
+  if (resultEl) resultEl.innerHTML = '<div class="items-used-msg">Scanning client log for OD / clean close…</div>';
+
+  let res;
+  try {
+    res = await adminAutoDetect(txnId);
+  } catch (e) {
+    if (resultEl) resultEl.innerHTML = `<div class="items-used-msg">Error: ${esc(e.message)}</div>`;
+    btn.disabled = false;
+    btn.textContent = orig;
+    return;
+  }
+
+  // A verified OD or a clean close changes the transaction's status — reload the
+  // board so the row moves on (OD → "Payout Sent", clean → out of the active
+  // list). Nothing changed yet means the policy is still running.
+  if (res.verified || res.policy_closed) {
+    const msg = res.verified
+      ? `OD verified (${formatStatus(res.od_type)}) — payout registered, Giro emailed.`
+      : 'Policy closed clean — Happy Jump complete.';
+    showToast(msg, 'success');
+    await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
+    return;
+  }
+
+  // No status change — surface the reason inline and leave the policy open.
+  if (resultEl) {
+    resultEl.innerHTML = `<div class="items-used-msg">${esc(res.detail || 'No OD or clean close detected yet — policy still active.')}</div>`;
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
 }
 
 async function handleAction(txnId, tornId, newStatus, btn) {

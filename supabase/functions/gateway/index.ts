@@ -3140,6 +3140,51 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   });
 }
 
+// Admin-triggered auto-detect — runs the exact same detection the client's own
+// login runs, but server-side using the client's stored key. report-od both
+// registers a verified OD (computing payout + emailing the operator) AND
+// auto-closes clean when Ecstasy was taken without an OD, so a single call
+// covers both the old "Xanax/Ecstasy OD" and "Close Clean" buttons. The
+// operator no longer makes the call manually — the client's API log decides.
+async function handleAdminAutoDetect(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+
+  const supabase = serviceClient();
+  const { data: txn } = await supabase
+    .from('transactions')
+    .select('id, torn_id, status')
+    .eq('id', txn_id)
+    .maybeSingle();
+  if (!txn) return json({ error: 'Transaction not found' }, 404);
+  if (txn.status !== 'purchased') {
+    return json({ error: 'Transaction is not in the active insurance window.' }, 400);
+  }
+
+  const tornIdNum = Number(txn.torn_id);
+  if (!Number.isFinite(tornIdNum)) return json({ error: 'Invalid torn_id' }, 400);
+
+  // Every client must sign in with a valid Torn key to enter the system, so a
+  // stored key should always be on file. Fail loudly if it somehow isn't.
+  const { data: secret } = await supabase
+    .from('player_secrets')
+    .select('api_key_enc, api_key_iv')
+    .eq('torn_player_id', tornIdNum)
+    .maybeSingle();
+  if (!secret) return json({ error: 'No stored key for this client — cannot auto-detect.' }, 409);
+
+  const apiKey = await decryptApiKey(secret.api_key_enc, secret.api_key_iv);
+  if (!apiKey) return json({ error: 'Stored key could not be decrypted — ask the client to sign in again.' }, 409);
+
+  // Drive the client-login detection with the stored key. Relay its response
+  // verbatim so the admin UI sees the same { verified / policy_closed / detail }
+  // shape the client would.
+  return await handleReportOd({ key: apiKey, txn_id });
+}
+
 async function handleVerifyPayment(body: any) {
   const { txn_id } = body;
   if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
@@ -5801,6 +5846,8 @@ serve(async (req) => {
         return await handleAdminDetectHappyItems(req, body);
       case 'admin-active-consumed':
         return await handleAdminActiveConsumed(req, body);
+      case 'admin-auto-detect':
+        return await handleAdminAutoDetect(req, body);
       case 'create-faction-event':
         return await handleCreateFactionEvent(body);
       case 'get-faction-event':
