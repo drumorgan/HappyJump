@@ -385,6 +385,14 @@ async function adjustReserve(supabase: any, amount: number) {
 
 const ECSTASY_ITEM_ID = 197;
 const XANAX_ITEM_ID = 206;
+const EDVD_ITEM_ID = 366;
+
+// A Happy Jump package only ever ships 5x Erotic DVDs, so the Ecstasy-OD
+// payout replaces at most 5 EDVDs even if the client consumed more before
+// they jumped (some players can take 9+ before an OD). We make them whole on
+// the covered 5; any extra EDVDs they chose to use on top of the package are
+// on them.
+const EDVD_PAYOUT_CAP = 5;
 
 // Match a first-person OD narrative against Torn's events feed text and
 // classify by drug. Two narrative shapes are observed in the wild:
@@ -2350,13 +2358,20 @@ async function computeEcstasyConsumedPayout(
   const allItems = Object.entries(scan.items).map(([id, info]) => {
     const meta = itemsMap![id];
     const unitValue = meta ? Number(meta.market_value) : 0;
+    const itemId = Number(id);
+    // A package only ships 5x EDVD, so cap the EDVD line at 5 even if the
+    // client used more before jumping — we only ever replace the covered 5.
+    const usedQty = info.qty;
+    const payQty = itemId === EDVD_ITEM_ID ? Math.min(usedQty, EDVD_PAYOUT_CAP) : usedQty;
     return {
-      item_id: Number(id),
+      item_id: itemId,
       name: meta?.name || `item ${id}`,
-      qty: info.qty,
+      qty: payQty,
+      used_qty: usedQty,
+      capped: payQty !== usedQty,
       unit_value: unitValue,
-      line_value: unitValue * info.qty,
-      transferable: !isNonTransferableHappyItem(Number(id), meta),
+      line_value: unitValue * payQty,
+      transferable: !isNonTransferableHappyItem(itemId, meta),
     };
   });
 
