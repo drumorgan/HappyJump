@@ -1983,6 +1983,16 @@ function wireTestBench() {
   const attackBtn = document.getElementById('tb-count-attacks');
   const statusEl = document.getElementById('tb-status');
   const outputEl = document.getElementById('tb-output');
+  const customRow = document.getElementById('tb-custom-row');
+  const customIdInput = document.getElementById('tb-custom-id');
+  const customNameInput = document.getElementById('tb-custom-name');
+
+  function syncCustomRow() {
+    if (!customRow) return;
+    customRow.classList.toggle('hidden', drugSel.value !== 'custom');
+  }
+  drugSel.addEventListener('change', syncCustomRow);
+  syncCustomRow();
 
   // datetime-local strings are interpreted as the operator's LOCAL clock;
   // convert to unix seconds via Date so the gateway gets a stable epoch.
@@ -2005,11 +2015,18 @@ function wireTestBench() {
   drugBtn.addEventListener('click', async () => {
     const apiKey = keyInput.value.trim();
     if (!apiKey) { statusEl.textContent = 'Paste an API key first.'; return; }
-    const presetVal = drugSel.value || '';
-    const [idStr, ...nameParts] = presetVal.split('|');
-    const drugItemId = Number(idStr);
-    const drugName = nameParts.join('|').trim();
-    if (!drugItemId || !drugName) { statusEl.textContent = 'Pick a drug.'; return; }
+    let drugItemId;
+    let drugName;
+    if (drugSel.value === 'custom') {
+      drugItemId = Number((customIdInput.value || '').trim());
+      drugName = (customNameInput.value || '').trim();
+      if (!drugItemId || !drugName) { statusEl.textContent = 'Enter a custom item ID and name.'; return; }
+    } else {
+      const [idStr, ...nameParts] = (drugSel.value || '').split('|');
+      drugItemId = Number(idStr);
+      drugName = nameParts.join('|').trim();
+      if (!drugItemId || !drugName) { statusEl.textContent = 'Pick an item.'; return; }
+    }
     statusEl.textContent = `Counting ${drugName} uses…`;
     outputEl.textContent = '(running — this can take 5-20 seconds per page of log)';
     const t0 = Date.now();

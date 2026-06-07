@@ -332,17 +332,28 @@
           <p class="key-note">Window is optional — leave empty to scan the whole available log. Torn's v1 <code>attacks</code> selection returns at most the last ~100 attacks regardless of window.</p>
 
           <div class="fe-row" style="gap:0.5rem;flex-wrap:wrap;align-items:center">
-            <label class="fe-label" style="flex:1;min-width:200px">Drug
+            <label class="fe-label" style="flex:1;min-width:200px">Item
               <select id="tb-drug-preset">
                 <option value="196|Cannabis">Cannabis</option>
                 <option value="197|Ecstasy">Ecstasy</option>
                 <option value="206|Xanax">Xanax</option>
                 <option value="180|Bottle of Beer">Bottle of Beer</option>
+                <option value="custom">Custom (enter ID + name below)</option>
               </select>
             </label>
-            <button type="button" id="tb-count-drugs" class="submit-btn-alt">Count Drugs</button>
+            <button type="button" id="tb-count-drugs" class="submit-btn-alt">Count Item Uses</button>
             <button type="button" id="tb-count-attacks" class="submit-btn-alt">Count Attacks</button>
           </div>
+
+          <div id="tb-custom-row" class="fe-row hidden" style="gap:0.5rem;flex-wrap:wrap;align-items:center">
+            <label class="fe-label" style="flex:1;min-width:160px">Item ID
+              <input type="text" id="tb-custom-id" placeholder="e.g. 226" inputmode="numeric" autocomplete="off" />
+            </label>
+            <label class="fe-label" style="flex:2;min-width:220px">Item name (for narrative match)
+              <input type="text" id="tb-custom-name" placeholder="e.g. Blood Bag : O+" autocomplete="off" />
+            </label>
+          </div>
+          <p class="key-note">Use Custom to probe items that aren't in the preset list — e.g. Blood Bag fills/uses. The scanner matches on item ID first, then falls back to narrative text containing the name.</p>
 
           <div id="tb-status" class="price-note" style="margin-top:0.6rem">Idle.</div>
           <pre id="tb-output" style="margin-top:0.6rem;background:#0e0e0e;color:#cfe9ff;border:1px solid #222;border-radius:6px;padding:0.7rem;max-height:520px;overflow:auto;font-size:0.8rem;white-space:pre-wrap;word-break:break-word">(no result yet)</pre>
