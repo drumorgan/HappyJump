@@ -380,6 +380,7 @@ function wireCreateForm() {
   const eventTypeSel = document.getElementById('ce-event-type');
   const drugRow = document.getElementById('ce-drug-row');
   const attacksHelp = document.getElementById('ce-attacks-help');
+  const bloodHelp = document.getElementById('ce-blood-help');
   const timeRow = document.getElementById('ce-time-row');
   const drugWindowHelp = document.getElementById('ce-window-help-drug');
   const attacksWindowHelp = document.getElementById('ce-window-help-attacks');
@@ -387,11 +388,15 @@ function wireCreateForm() {
   // Toggle drug picker + start-time picker based on event_type. Attacks
   // events don't carry a drug AND have a creator-set exact start time
   // (no per-participant slot pickers later), so we show the time input
-  // here and hide the drug row.
+  // here and hide the drug row. Blood-bag events match drug_use timing
+  // (10:00 TCT anchor + per-participant slot picker) but carry no drug.
   function syncEventTypeUi() {
-    const isAttacks = eventTypeSel.value === 'attacks';
-    if (drugRow) drugRow.style.display = isAttacks ? 'none' : '';
+    const v = eventTypeSel.value;
+    const isAttacks = v === 'attacks';
+    const isBlood = v === 'blood_bags';
+    if (drugRow) drugRow.style.display = (isAttacks || isBlood) ? 'none' : '';
     if (attacksHelp) attacksHelp.style.display = isAttacks ? '' : 'none';
+    if (bloodHelp) bloodHelp.style.display = isBlood ? '' : 'none';
     if (timeRow) timeRow.style.display = isAttacks ? '' : 'none';
     if (drugWindowHelp) drugWindowHelp.style.display = isAttacks ? 'none' : '';
     if (attacksWindowHelp) attacksWindowHelp.style.display = isAttacks ? '' : 'none';
@@ -657,7 +662,7 @@ async function loadRecentEvents() {
         <div class="recent-row">
           <div>
             <a href="?id=${encodeURIComponent(ev.id)}">${esc(ev.title)}</a>
-            <div class="recent-meta">${esc(ev.event_type === 'attacks' ? 'Attacks' : (ev.drug_name || ''))} · ${esc(status)}</div>
+            <div class="recent-meta">${esc(ev.event_type === 'attacks' ? 'Attacks' : ev.event_type === 'blood_bags' ? 'Blood bags' : (ev.drug_name || ''))} · ${esc(status)}</div>
           </div>
           <div class="recent-meta">${fmtDateTime(ev.starts_at)}</div>
           ${delBtn}
@@ -728,9 +733,12 @@ function isCreator(event) {
 function renderEventHeader(event) {
   document.getElementById('ev-title').textContent = event.title;
   const isAttacks = event.event_type === 'attacks';
+  const isBlood = event.event_type === 'blood_bags';
   document.getElementById('ev-drug').textContent = isAttacks
     ? 'Attacks · Respect Gained · Avg Respect'
-    : (event.drug_name || '—');
+    : isBlood
+      ? 'Blood bags — Fills · Uses (good) · Uses (wrong) · Total'
+      : (event.drug_name || '—');
   document.getElementById('ev-window').textContent =
     `${fmtDateTime(event.starts_at)} → ${fmtDateTime(event.ends_at)}`;
 
@@ -744,13 +752,13 @@ function renderEventHeader(event) {
   document.getElementById('ev-status').textContent = status;
 
   // Edit pencils visible to the creator OR HJ admin (operator backdoor).
-  // Drug pencil is hidden for attack events since the gateway rejects
-  // drug changes on those.
+  // Drug pencil is hidden for attack and blood-bag events since the
+  // gateway rejects drug changes on those.
   const showPencils = isCreator(event) || isHjAdmin;
   for (const id of ['ev-edit-title-btn', 'ev-edit-window-btn']) {
     document.getElementById(id).classList.toggle('hidden', !showPencils);
   }
-  document.getElementById('ev-edit-drug-btn').classList.toggle('hidden', !showPencils || isAttacks);
+  document.getElementById('ev-edit-drug-btn').classList.toggle('hidden', !showPencils || isAttacks || isBlood);
   // Hide any open edit forms when auth changes (e.g. sign-out).
   if (!showPencils) {
     for (const id of ['ev-edit-title-form', 'ev-edit-drug-form', 'ev-edit-window-form']) {
@@ -770,7 +778,9 @@ function renderEventHeader(event) {
 
 // Per-event leaderboard sort: which column drives the order. Persists in
 // memory only — clicking a header re-sorts without a server round trip.
-let lbSortKey = null; // for attacks: 'attacks' | 'respect' | 'avg'
+// For attacks: 'attacks' | 'respect' | 'avg' | 'best'
+// For blood_bags: 'fills' | 'good' | 'wrong' | 'total'
+let lbSortKey = null;
 
 function leaderboardAttackStats(p) {
   const attacks = Number(p.last_count) || 0;
@@ -780,6 +790,14 @@ function leaderboardAttackStats(p) {
   return { attacks, respect, avg, best };
 }
 
+function leaderboardBloodStats(p) {
+  const fills = Number(p.last_blood_fills) || 0;
+  const good = Number(p.last_blood_uses_good) || 0;
+  const wrong = Number(p.last_blood_uses_wrong) || 0;
+  const total = fills + good + wrong;
+  return { fills, good, wrong, total };
+}
+
 function renderLeaderboard(event, participants) {
   const body = document.getElementById('leaderboard-body');
   if (participants.length === 0) {
@@ -787,9 +805,12 @@ function renderLeaderboard(event, participants) {
     return;
   }
   const isAttacks = event.event_type === 'attacks';
+  const isBlood = event.event_type === 'blood_bags';
   // Default sort key per event type. Attacks default to respect gained
-  // (most cross-level-fair metric); drug events use their single count.
+  // (most cross-level-fair metric); blood-bag events default to Total
+  // activity; drug events use their single count.
   if (isAttacks && lbSortKey === null) lbSortKey = 'respect';
+  if (isBlood && lbSortKey === null) lbSortKey = 'total';
 
   const sorted = [...participants].sort((a, b) => {
     if (isAttacks) {
@@ -800,6 +821,19 @@ function renderLeaderboard(event, participants) {
         : key === 'avg' ? s.avg
         : key === 'best' ? s.best
         : s.respect;
+      const av = pick(A);
+      const bv = pick(B);
+      if (bv !== av) return bv - av;
+      return new Date(a.personal_start_at).getTime() - new Date(b.personal_start_at).getTime();
+    }
+    if (isBlood) {
+      const A = leaderboardBloodStats(a);
+      const B = leaderboardBloodStats(b);
+      const key = lbSortKey || 'total';
+      const pick = (s) => key === 'fills' ? s.fills
+        : key === 'good' ? s.good
+        : key === 'wrong' ? s.wrong
+        : s.total;
       const av = pick(A);
       const bv = pick(B);
       if (bv !== av) return bv - av;
@@ -867,6 +901,26 @@ function renderLeaderboard(event, participants) {
         </tr>
       `;
     }
+    if (isBlood) {
+      const { fills, good, wrong, total } = leaderboardBloodStats(p);
+      return `
+        <tr class="${rowClasses.join(' ')}">
+          <td class="lb-rank">${i + 1}</td>
+          <td>
+            <strong>${esc(p.torn_name)}</strong>
+            <div class="recent-meta">${esc(p.torn_faction || 'No faction')}</div>
+          </td>
+          <td class="recent-meta lb-started">${fmtSlotShort(p.personal_start_at)}</td>
+          <td class="recent-meta">${checkedCell}</td>
+          <td class="lb-count">${fills}</td>
+          <td class="lb-count">${good}</td>
+          <td class="lb-count">${wrong}</td>
+          <td class="lb-count">${total}</td>
+          ${scrapeBtn}
+          ${removeBtn}
+        </tr>
+      `;
+    }
     return `
       <tr class="${rowClasses.join(' ')}">
         <td class="lb-rank">${i + 1}</td>
@@ -893,7 +947,14 @@ function renderLeaderboard(event, participants) {
     ${sortMarker('avg', 'Avg Respect')}
     ${sortMarker('best', 'Best Hit')}
   `;
+  const bloodHeaders = `
+    ${sortMarker('fills', 'Fills')}
+    ${sortMarker('good', 'Uses (good)')}
+    ${sortMarker('wrong', 'Uses (wrong)')}
+    ${sortMarker('total', 'Total')}
+  `;
   const drugHeader = `<th style="text-align:right">${esc(event.drug_name || '')}</th>`;
+  const typeHeaders = isAttacks ? attackHeaders : isBlood ? bloodHeaders : drugHeader;
 
   body.innerHTML = `
     <div class="lb-scroll">
@@ -904,7 +965,7 @@ function renderLeaderboard(event, participants) {
             <th>Player</th>
             <th>Started</th>
             <th>Last refresh</th>
-            ${isAttacks ? attackHeaders : drugHeader}
+            ${typeHeaders}
             ${showScrapeLog ? '<th class="lb-scrape" title="View scrape log">log</th>' : ''}
             ${showRemove ? '<th class="lb-remove" title="Remove participant"></th>' : ''}
           </tr>
@@ -914,7 +975,7 @@ function renderLeaderboard(event, participants) {
     </div>
   `;
 
-  if (isAttacks) {
+  if (isAttacks || isBlood) {
     body.querySelectorAll('.lb-sort-th').forEach((th) => {
       th.style.cursor = 'pointer';
       th.addEventListener('click', () => {
@@ -1312,7 +1373,7 @@ function populateScrapeLogModal({ participant, event, diagSourceLabel }) {
     ? new Date(participant.last_checked_at).toISOString()
     : 'never';
   meta.textContent =
-    `Event: ${event.title} (${event.event_type === 'attacks' ? 'Attacks' : (event.drug_name || '')})\n` +
+    `Event: ${event.title} (${event.event_type === 'attacks' ? 'Attacks' : event.event_type === 'blood_bags' ? 'Blood bags' : (event.drug_name || '')})\n` +
     `Count stored: ${Number(participant.last_count) || 0}\n` +
     `Last refresh: ${checkedAt}\n` +
     `Personal start: ${new Date(participant.personal_start_at).toISOString()}\n` +
@@ -1742,7 +1803,9 @@ function wireEventControls(eventId) {
       }
       const joinedMsg = res.event.event_type === 'attacks'
         ? `Joined — ${res.count} attacks counted so far`
-        : `Joined — ${res.count} ${res.event.drug_name} found so far`;
+        : res.event.event_type === 'blood_bags'
+          ? `Joined — ${res.count} blood-bag actions counted so far`
+          : `Joined — ${res.count} ${res.event.drug_name} found so far`;
       toast(joinedMsg, 'success');
       await refreshEventView(eventId);
     } catch (err) {
