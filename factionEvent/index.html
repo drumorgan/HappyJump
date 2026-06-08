@@ -77,6 +77,7 @@
               <select id="ce-event-type" required>
                 <option value="drug_use">Drug use — count one item per player</option>
                 <option value="attacks">Attacks — # attacks, respect gained, best single hit</option>
+                <option value="blood_bags">Blood bags — fills + uses (own type / wrong type) + total</option>
               </select>
             </label>
 
@@ -91,6 +92,8 @@
             </label>
 
             <p class="key-note" id="ce-attacks-help" style="display:none">Attack events show three columns per player: <strong># Attacks</strong>, <strong>Respect Gained</strong> (default sort) and <strong>Avg Respect / Attack</strong>, plus the single best-respect hit. Requires every participant's Custom Key to include the <code>attacks</code> scope — anyone without it stays at 0 until they re-mint.</p>
+
+            <p class="key-note" id="ce-blood-help" style="display:none">Blood-bag events show four columns per player: <strong>Fills</strong> (empty bags filled, your stock or armory), <strong>Uses (good type)</strong> (filled bag consumed, life increased), <strong>Uses (wrong type)</strong> (filled bag consumed, sent to hospital) and <strong>Total</strong> (default sort). Counts both personal stock and faction-armory activity.</p>
 
             <label class="fe-label">Event date
               <input type="date" id="ce-starts-at" required />
