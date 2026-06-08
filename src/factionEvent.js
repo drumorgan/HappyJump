@@ -1989,7 +1989,7 @@ function wireTestBench() {
 
   function syncCustomRow() {
     if (!customRow) return;
-    customRow.classList.toggle('hidden', drugSel.value !== 'custom');
+    customRow.style.display = drugSel.value === 'custom' ? 'flex' : 'none';
   }
   drugSel.addEventListener('change', syncCustomRow);
   syncCustomRow();
