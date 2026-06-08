@@ -1096,6 +1096,157 @@ async function countAttacksInWindow(
   };
 }
 
+// Faction-events scanner for the `blood_bags` event type. Same pagination
+// shape as countItemUseInLog (no `to=` on first request, dedupe-by-log-key,
+// `oldestTs <= cutoff` termination) but matches on log CODES rather than
+// item IDs — blood bags span a whole family (731 empty, 732+ per blood type)
+// so item-ID matching is the wrong abstraction. The three log codes we care
+// about:
+//   * 2340 = "Item use empty blood bag" — fill event (consumes an empty,
+//            produces a filled bag, data.armory_deposit tells us where).
+//   * 2100 = "Item use blood bag"       — use, life_increased  (own type)
+//   * 2101 = "Item use blood bag"       — use, hospital_time_increased
+//                                          (wrong blood type)
+async function countBloodBagActivity(
+  apiKey: string,
+  sinceTimestamp?: number,
+  untilTimestamp?: number,
+  maxPages = 200,
+): Promise<{
+  fills: number;
+  uses_good: number;
+  uses_wrong: number;
+  matchedItems: Array<{ ts: number; drug: string }>;
+  details: string[];
+  pages: number;
+  totalEntries: number;
+  inWindowTotal: number;
+  reachedCutoff: boolean;
+  debug: string[];
+  logTypeHistogram: Array<{ key: string; count: number }>;
+}> {
+  const FILL_CODE = 2340;
+  const USE_GOOD_CODE = 2100;
+  const USE_WRONG_CODE = 2101;
+
+  let toParam = '';
+  const cutoff = sinceTimestamp || 0;
+  const upper = untilTimestamp || Number.POSITIVE_INFINITY;
+  const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
+  const seenKeys = new Set<string>();
+  let pagesFetched = 0;
+  let totalEntries = 0;
+  let lastOldestTs = Infinity;
+  let reachedCutoff = false;
+  let inWindowTotal = 0;
+
+  let fills = 0;
+  let uses_good = 0;
+  let uses_wrong = 0;
+  const matched: { ts: number; kind: string; detail: string }[] = [];
+  const debug: string[] = [];
+  const logTypeCounts = new Map<string, number>();
+  function dbg(line: string) { debug.push(line); console.log(line); }
+
+  dbg(`[countBloodBagActivity] START cutoff=${cutoff} upper=${upper}`);
+
+  for (let page = 0; page < maxPages; page++) {
+    const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
+    const res = await fetch(url);
+    const data = await res.json();
+    if (data.error || !data.log) {
+      dbg(`[countBloodBagActivity] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      break;
+    }
+
+    const entriesKv = Object.entries(data.log) as [string, any][];
+    if (entriesKv.length === 0) {
+      dbg(`[countBloodBagActivity] page=${page} empty page, stopping`);
+      break;
+    }
+    pagesFetched++;
+    totalEntries += entriesKv.length;
+
+    let pageMatches = 0;
+    let pageInWindow = 0;
+    for (const [key, entry] of entriesKv) {
+      const ts = entry.timestamp || 0;
+      if (ts < cutoff) continue;
+      if (ts > upper) continue;
+      pageInWindow++;
+      inWindowTotal++;
+
+      const logCode = Number(entry.log);
+      const logKey = `${entry.log ?? '?'}/${entry.title ?? '?'}`;
+      logTypeCounts.set(logKey, (logTypeCounts.get(logKey) || 0) + 1);
+
+      let kind: string | null = null;
+      if (logCode === FILL_CODE) kind = 'fill';
+      else if (logCode === USE_GOOD_CODE) kind = 'use_good';
+      else if (logCode === USE_WRONG_CODE) kind = 'use_wrong';
+      if (!kind) continue;
+      if (seenKeys.has(key)) continue;
+      seenKeys.add(key);
+
+      if (kind === 'fill') fills++;
+      else if (kind === 'use_good') uses_good++;
+      else if (kind === 'use_wrong') uses_wrong++;
+
+      const narrative = String(entry.title || entry.log || '').slice(0, 80);
+      matched.push({
+        ts,
+        kind,
+        detail: `${kind} @ ${new Date(ts * 1000).toISOString()} — "${narrative}" data=${JSON.stringify(entry.data || {}).slice(0, 160)}`,
+      });
+      pageMatches++;
+    }
+    dbg(`[countBloodBagActivity] page=${page} inWindow=${pageInWindow} matches=${pageMatches} runningFills=${fills} usesGood=${uses_good} usesWrong=${uses_wrong}`);
+
+    const oldestTs = Math.min(...entriesKv.map(([, e]) => e.timestamp || Infinity));
+    if (oldestTs <= cutoff) {
+      dbg(`[countBloodBagActivity] page=${page} reached cutoff (oldestTs=${oldestTs} <= cutoff=${cutoff})`);
+      reachedCutoff = true;
+      break;
+    }
+    if (oldestTs === Infinity || oldestTs >= lastOldestTs) {
+      dbg(`[countBloodBagActivity] page=${page} no forward progress, stopping`);
+      break;
+    }
+    lastOldestTs = oldestTs;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  if (!reachedCutoff && pagesFetched === maxPages) {
+    dbg(`[countBloodBagActivity] WARNING hit maxPages=${maxPages} without reaching cutoff`);
+  }
+
+  matched.sort((a, b) => a.ts - b.ts);
+  const sortedLogTypes = [...logTypeCounts.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 20)
+    .map(([key, count]) => ({ key, count }));
+
+  dbg(`[countBloodBagActivity] FINAL fills=${fills} uses_good=${uses_good} uses_wrong=${uses_wrong} pages=${pagesFetched} totalEntries=${totalEntries} inWindow=${inWindowTotal}`);
+
+  return {
+    fills,
+    uses_good,
+    uses_wrong,
+    matchedItems: matched.map((m) => ({
+      ts: m.ts,
+      drug: m.kind === 'fill' ? 'Fill' : m.kind === 'use_good' ? 'Use (good type)' : 'Use (wrong type)',
+    })),
+
+    details: matched.map((m) => m.detail),
+    pages: pagesFetched,
+    totalEntries,
+    inWindowTotal,
+    reachedCutoff,
+    debug,
+    logTypeHistogram: sortedLogTypes,
+  };
+}
+
 // Scan the Torn user log for every happiness-boosting item the client
 // consumed in a window, grouped by item ID with quantities. This is the
 // foundation for the Choco-Jump fix: instead of paying a fixed 5× EDVD on an
@@ -3869,7 +4020,10 @@ function parseFactionEventTimestamp(s: any, label: string): { ts: Date | null; e
 
 async function handleCreateFactionEvent(body: any) {
   const title = typeof body.title === 'string' ? body.title.trim() : '';
-  const event_type = body.event_type === 'attacks' ? 'attacks' : 'drug_use';
+  const event_type: 'drug_use' | 'attacks' | 'blood_bags' =
+    body.event_type === 'attacks' ? 'attacks'
+      : body.event_type === 'blood_bags' ? 'blood_bags'
+      : 'drug_use';
   const drug_item_id = Number(body.drug_item_id);
   const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : '';
 
@@ -4039,6 +4193,9 @@ async function handleCreateFactionEvent(body: any) {
       last_count: creatorCount,
       last_respect_total: seedScan.respect_total,
       last_best_single_respect: seedScan.best_single_respect,
+      last_blood_fills: seedScan.blood_fills,
+      last_blood_uses_good: seedScan.blood_uses_good,
+      last_blood_uses_wrong: seedScan.blood_uses_wrong,
       last_checked_at: checkedAt,
       last_diag_json: seedScan.diag,
     })
@@ -4133,12 +4290,11 @@ async function handleGetFactionEvent(body: any) {
   // For attack events, default sort is total respect gained (most
   // cross-level-fair metric). The client can re-sort by column locally
   // but the initial server order matches what the leaderboard highlights.
-  const eventType = event.event_type === 'attacks' ? 'attacks' : 'drug_use';
-  const orderColumn = eventType === 'attacks' ? 'last_respect_total' : 'last_count';
+  const orderColumn = event.event_type === 'attacks' ? 'last_respect_total' : 'last_count';
 
   const { data: participants, error: partErr } = await supabase
     .from('faction_event_participants')
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, created_at, scrape_status')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_blood_fills, last_blood_uses_good, last_blood_uses_wrong, last_checked_at, created_at, scrape_status')
     .eq('event_id', event_id)
     .order(orderColumn, { ascending: false, nullsFirst: false });
 
@@ -4409,10 +4565,10 @@ async function handleUpdateFactionEvent(req: Request, body: any) {
 
   if (body.drug_item_id !== undefined || typeof body.drug_name === 'string') {
     // Drug edits only apply to drug_use events. Reject silently with an
-    // error for attacks events so the UI can't accidentally repaint with
-    // a meaningless drug label.
-    if (event.event_type === 'attacks') {
-      return json({ error: 'Drug cannot be changed on an attacks event' }, 400);
+    // error for attacks / blood_bags events so the UI can't accidentally
+    // repaint with a meaningless drug label.
+    if (event.event_type === 'attacks' || event.event_type === 'blood_bags') {
+      return json({ error: `Drug cannot be changed on a ${event.event_type} event` }, 400);
     }
     const drug_item_id = Number(body.drug_item_id ?? event.drug_item_id);
     const drug_name = typeof body.drug_name === 'string' ? body.drug_name.trim() : event.drug_name;
@@ -4484,7 +4640,7 @@ async function handleUpdateFactionEvent(req: Request, body: any) {
       .eq('event_id', event_id);
 
     if (parts && parts.length > 0) {
-      // First, blanket-invalidate counts (drug + attack metrics both).
+      // First, blanket-invalidate counts (drug + attack + blood-bag metrics).
       await supabase
         .from('faction_event_participants')
         .update({
@@ -4492,6 +4648,9 @@ async function handleUpdateFactionEvent(req: Request, body: any) {
           last_count: 0,
           last_respect_total: null,
           last_best_single_respect: null,
+          last_blood_fills: null,
+          last_blood_uses_good: null,
+          last_blood_uses_wrong: null,
         })
         .eq('event_id', event_id);
 
@@ -4546,9 +4705,9 @@ async function handleUpdateFactionEvent(req: Request, body: any) {
 // returned to the calling user from `refresh-faction-event` so the
 // modal-mode display can use one renderer for stored + fresh scrapes.
 type ScrapeDiag = {
-  // 'drug_use' (default for legacy rows) or 'attacks'. Determines which
-  // optional fields are populated.
-  kind?: 'drug_use' | 'attacks';
+  // 'drug_use' (default for legacy rows), 'attacks', or 'blood_bags'.
+  // Determines which optional fields are populated.
+  kind?: 'drug_use' | 'attacks' | 'blood_bags';
   from_sec: number;
   until_sec: number;
   window_seconds: number;
@@ -4577,6 +4736,10 @@ type ScrapeDiag = {
   records_scanned?: number;
   scope_error?: boolean;
   torn_error?: { code: number; message: string } | null;
+  // blood_bags-only fields
+  fills?: number;
+  uses_good?: number;
+  uses_wrong?: number;
 };
 
 // Run the right scanner for an event's type and return a normalized
@@ -4593,13 +4756,20 @@ async function runEventScanner(
   count: number;
   respect_total: number | null;
   best_single_respect: number | null;
+  // blood_bags only; null on other event types.
+  blood_fills: number | null;
+  blood_uses_good: number | null;
+  blood_uses_wrong: number | null;
   diag: ScrapeDiag;
   // Set when the scanner couldn't compute a fresh result (e.g. the
   // participant's key lacks `attacks` scope). Callers should skip
   // overwriting last_count when this is non-null.
   skipReason: 'scope_error' | null;
 }> {
-  const kind = event.event_type === 'attacks' ? 'attacks' : 'drug_use';
+  const kind: 'drug_use' | 'attacks' | 'blood_bags' =
+    event.event_type === 'attacks' ? 'attacks'
+      : event.event_type === 'blood_bags' ? 'blood_bags'
+      : 'drug_use';
   const window_seconds = Math.max(0, untilSec - fromSec);
   const scrapedAt = new Date().toISOString();
 
@@ -4608,6 +4778,9 @@ async function runEventScanner(
       count: 0,
       respect_total: kind === 'attacks' ? 0 : null,
       best_single_respect: kind === 'attacks' ? 0 : null,
+      blood_fills: kind === 'blood_bags' ? 0 : null,
+      blood_uses_good: kind === 'blood_bags' ? 0 : null,
+      blood_uses_wrong: kind === 'blood_bags' ? 0 : null,
       diag: {
         kind,
         from_sec: fromSec,
@@ -4630,6 +4803,9 @@ async function runEventScanner(
       count: r.count,
       respect_total: r.respect_total,
       best_single_respect: r.best_single,
+      blood_fills: null,
+      blood_uses_good: null,
+      blood_uses_wrong: null,
       diag: {
         kind: 'attacks',
         from_sec: fromSec,
@@ -4650,6 +4826,42 @@ async function runEventScanner(
     };
   }
 
+  if (kind === 'blood_bags') {
+    const r = await countBloodBagActivity(apiKey, fromSec, untilSec);
+    // last_count carries Total (fills + uses_good + uses_wrong) so the
+    // existing list-ordering / generic display paths keep working without
+    // event-type-aware branching. Individual columns are read from the
+    // dedicated last_blood_* fields.
+    const total = r.fills + r.uses_good + r.uses_wrong;
+    return {
+      count: total,
+      respect_total: null,
+      best_single_respect: null,
+      blood_fills: r.fills,
+      blood_uses_good: r.uses_good,
+      blood_uses_wrong: r.uses_wrong,
+      diag: {
+        kind: 'blood_bags',
+        from_sec: fromSec,
+        until_sec: untilSec,
+        window_seconds,
+        scraped_at: scrapedAt,
+        pages: r.pages,
+        total_entries: r.totalEntries,
+        in_window_total: r.inWindowTotal,
+        reached_cutoff: r.reachedCutoff,
+        debug: r.debug,
+        log_type_histogram: r.logTypeHistogram,
+        matched: r.details,
+        matched_items: r.matchedItems,
+        fills: r.fills,
+        uses_good: r.uses_good,
+        uses_wrong: r.uses_wrong,
+      },
+      skipReason: null,
+    };
+  }
+
   // drug_use
   const drugItemId = Number(event.drug_item_id);
   const drugName = String(event.drug_name || '');
@@ -4658,6 +4870,9 @@ async function runEventScanner(
     count: result.count,
     respect_total: null,
     best_single_respect: null,
+    blood_fills: null,
+    blood_uses_good: null,
+    blood_uses_wrong: null,
     diag: { kind: 'drug_use', ...buildScrapeDiag(fromSec, untilSec, drugName, drugItemId, result) },
     skipReason: null,
   };
@@ -4814,6 +5029,9 @@ async function handleJoinFactionEvent(body: any) {
         last_count: scan.count,
         last_respect_total: scan.respect_total,
         last_best_single_respect: scan.best_single_respect,
+        last_blood_fills: scan.blood_fills,
+        last_blood_uses_good: scan.blood_uses_good,
+        last_blood_uses_wrong: scan.blood_uses_wrong,
         last_checked_at: checkedAt,
         last_diag_json: scan.diag,
       },
@@ -4976,13 +5194,17 @@ async function handleAdminRescrapeParticipant(req: Request, body: any) {
   if (event.event_type === 'attacks') {
     updateFields.last_respect_total = scan.respect_total;
     updateFields.last_best_single_respect = scan.best_single_respect;
+  } else if (event.event_type === 'blood_bags') {
+    updateFields.last_blood_fills = scan.blood_fills;
+    updateFields.last_blood_uses_good = scan.blood_uses_good;
+    updateFields.last_blood_uses_wrong = scan.blood_uses_wrong;
   }
 
   const { data: updated, error: updErr } = await supabase
     .from('faction_event_participants')
     .update(updateFields)
     .eq('id', participant.id)
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, last_diag_json')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_blood_fills, last_blood_uses_good, last_blood_uses_wrong, last_checked_at, last_diag_json')
     .single();
   if (updErr) return json({ error: updErr.message }, 500);
 
@@ -5100,6 +5322,10 @@ async function handleForceRefreshAllParticipants(req: Request, body: any) {
     if (event.event_type === 'attacks') {
       updateFields.last_respect_total = scan.respect_total;
       updateFields.last_best_single_respect = scan.best_single_respect;
+    } else if (event.event_type === 'blood_bags') {
+      updateFields.last_blood_fills = scan.blood_fills;
+      updateFields.last_blood_uses_good = scan.blood_uses_good;
+      updateFields.last_blood_uses_wrong = scan.blood_uses_wrong;
     }
     await supabase
       .from('faction_event_participants')
@@ -5294,13 +5520,17 @@ async function handleScrapeNextPending(req: Request, body: any) {
   if (event.event_type === 'attacks') {
     updateFields.last_respect_total = scan.respect_total;
     updateFields.last_best_single_respect = scan.best_single_respect;
+  } else if (event.event_type === 'blood_bags') {
+    updateFields.last_blood_fills = scan.blood_fills;
+    updateFields.last_blood_uses_good = scan.blood_uses_good;
+    updateFields.last_blood_uses_wrong = scan.blood_uses_wrong;
   }
 
   const { data: updated, error: updErr } = await supabase
     .from('faction_event_participants')
     .update(updateFields)
     .eq('id', row.id)
-    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_checked_at, scrape_status')
+    .select('id, torn_id, torn_name, torn_faction, personal_start_at, last_count, last_respect_total, last_best_single_respect, last_blood_fills, last_blood_uses_good, last_blood_uses_wrong, last_checked_at, scrape_status')
     .single();
   if (updErr) return json({ error: updErr.message }, 500);
 
@@ -5387,6 +5617,10 @@ async function handleRefreshFactionEventParticipant(body: any) {
   if (event.event_type === 'attacks') {
     updateFields.last_respect_total = scan.respect_total;
     updateFields.last_best_single_respect = scan.best_single_respect;
+  } else if (event.event_type === 'blood_bags') {
+    updateFields.last_blood_fills = scan.blood_fills;
+    updateFields.last_blood_uses_good = scan.blood_uses_good;
+    updateFields.last_blood_uses_wrong = scan.blood_uses_wrong;
   }
 
   const { data: updated, error: updErr } = await supabase
@@ -5542,6 +5776,10 @@ async function handleRefreshStaleParticipants(body: any) {
     if (event.event_type === 'attacks') {
       updateFields.last_respect_total = scan.respect_total;
       updateFields.last_best_single_respect = scan.best_single_respect;
+    } else if (event.event_type === 'blood_bags') {
+      updateFields.last_blood_fills = scan.blood_fills;
+      updateFields.last_blood_uses_good = scan.blood_uses_good;
+      updateFields.last_blood_uses_wrong = scan.blood_uses_wrong;
     }
     await supabase
       .from('faction_event_participants')
