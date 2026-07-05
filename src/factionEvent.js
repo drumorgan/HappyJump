@@ -689,7 +689,7 @@ async function loadRecentEvents() {
       });
     });
   } catch (err) {
-    body.innerHTML = `<p class="form-intro" style="color:#e94560">Failed to load: ${esc(err.message || String(err))}</p>`;
+    body.innerHTML = `<p class="form-intro" style="color:#e05545">Failed to load: ${esc(err.message || String(err))}</p>`;
   }
 }
 

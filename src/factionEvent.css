@@ -1,4 +1,5 @@
-/* Faction Events — page-specific tweaks layered on top of style.css */
+/* Faction Events — page-specific tweaks layered on top of palazzo.css
+   (Palazzo del Pompino theme) */
 
 /* Override the global 640px container — FE leaderboards are tables with
    up to 4 metric columns + scrape-log + remove buttons, which doesn't
@@ -9,7 +10,7 @@
 }
 
 /* Prominent event title at the top of the event-header card. Replaces
-   the tiny pink card-header label so the event name reads at a glance
+   the tiny card-header label so the event name reads at a glance
    from across the room. Pencil stays inline so the creator/admin can
    tap to edit without scrolling. */
 .fe-event-header {
@@ -18,9 +19,10 @@
 
 .fe-event-header h1 {
   margin: 0;
+  font-family: var(--font-display);
   font-size: 1.7rem;
-  font-weight: 700;
-  color: #fff;
+  font-weight: 900;
+  color: var(--gold-light);
   letter-spacing: -0.01em;
   flex: 1;
   line-height: 1.2;
@@ -29,7 +31,7 @@
 .fe-label {
   display: block;
   margin: 0.75rem 0;
-  color: #ccc;
+  color: rgba(240, 232, 213, 0.75);
   font-size: 0.95rem;
 }
 
@@ -39,18 +41,19 @@
   width: 100%;
   margin-top: 0.35rem;
   padding: 0.6rem 0.8rem;
-  background: #1a1a24;
-  color: #eee;
-  border: 1px solid #2c2c3a;
-  border-radius: 6px;
+  background: var(--midnight);
+  color: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: 2px;
   font-size: 1rem;
   box-sizing: border-box;
+  transition: border-color 0.3s ease;
 }
 
 .fe-label input:focus,
 .fe-label select:focus {
   outline: none;
-  border-color: #e94560;
+  border-color: var(--gold);
 }
 
 .fe-row {
@@ -61,12 +64,15 @@
 }
 
 .fe-secondary {
-  background: #2c2c3a;
-  color: #ccc;
+  background: transparent;
+  border: 1px solid rgba(240, 232, 213, 0.2);
+  color: var(--muted);
 }
 
 .fe-secondary:hover {
-  background: #3a3a4a;
+  background: rgba(240, 232, 213, 0.05);
+  border-color: var(--gold-dim);
+  color: var(--gold);
 }
 
 .fe-share {
@@ -78,10 +84,10 @@
 .fe-share input {
   flex: 1;
   padding: 0.5rem 0.75rem;
-  background: #15151c;
-  color: #888;
-  border: 1px solid #2c2c3a;
-  border-radius: 6px;
+  background: var(--midnight);
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 2px;
   font-size: 0.85rem;
   font-family: monospace;
 }
@@ -95,29 +101,32 @@
 .lb-table td {
   padding: 0.55rem 0.5rem;
   text-align: left;
-  border-bottom: 1px solid #2a2a36;
+  border-bottom: 1px solid rgba(180, 145, 70, 0.12);
 }
 
 .lb-table th {
-  color: #888;
-  font-weight: 500;
-  font-size: 0.85rem;
+  font-family: var(--font-display);
+  color: var(--gold);
+  opacity: 0.75;
+  font-weight: 600;
+  font-size: 0.62rem;
   text-transform: uppercase;
-  letter-spacing: 0.05em;
+  letter-spacing: 0.16em;
 }
 
 .lb-table td.lb-rank {
   width: 2.5rem;
-  color: #888;
+  color: var(--muted);
   text-align: center;
 }
 
 .lb-table td.lb-count {
   width: 4rem;
   text-align: right;
+  font-family: var(--font-display);
   font-weight: 600;
   font-size: 1.1rem;
-  color: #e8c84a;
+  color: var(--gold-light);
 }
 
 .lb-table td.lb-started {
@@ -134,11 +143,11 @@
 }
 
 .lb-table tr.me-row {
-  background: rgba(233, 69, 96, 0.08);
+  background: rgba(201, 168, 76, 0.08);
 }
 
 .lb-table tr.me-row td.lb-rank {
-  color: #e94560;
+  color: var(--gold);
   font-weight: 700;
 }
 
@@ -147,7 +156,7 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.55rem 0;
-  border-bottom: 1px solid #2a2a36;
+  border-bottom: 1px solid rgba(180, 145, 70, 0.12);
 }
 
 .recent-row:last-child {
@@ -155,17 +164,18 @@
 }
 
 .recent-row a {
-  color: #e94560;
+  color: var(--gold);
   text-decoration: none;
   font-weight: 500;
 }
 
 .recent-row a:hover {
+  color: var(--gold-light);
   text-decoration: underline;
 }
 
 .recent-row .recent-meta {
-  color: #888;
+  color: var(--muted);
   font-size: 0.8rem;
 }
 
@@ -181,8 +191,9 @@
 }
 
 .fe-chip {
-  background: #2a3a4a;
-  color: #cde;
+  background: var(--deep);
+  border: 1px solid var(--border);
+  color: rgba(240, 232, 213, 0.85);
   padding: 0.25rem 0.5rem 0.25rem 0.7rem;
   border-radius: 14px;
   display: inline-flex;
@@ -193,8 +204,9 @@
 }
 
 .fe-chip-mine {
-  background: #3a2a4a;
-  color: #edc;
+  background: var(--gold-wash);
+  border-color: var(--gold-dim);
+  color: var(--gold-light);
 }
 
 .fe-chip-x {
@@ -221,9 +233,9 @@
 .fe-faction-results {
   max-height: 200px;
   overflow-y: auto;
-  background: #1a1a1a;
-  border: 1px solid #333;
-  border-radius: 4px;
+  background: var(--deep);
+  border: 1px solid var(--border);
+  border-radius: 2px;
   margin-top: 0.2rem;
 }
 
@@ -239,8 +251,8 @@
   text-align: left;
   background: transparent;
   border: none;
-  border-bottom: 1px solid #2a2a2a;
-  color: #ccc;
+  border-bottom: 1px solid rgba(180, 145, 70, 0.1);
+  color: rgba(240, 232, 213, 0.75);
   padding: 0.4rem 0.6rem;
   cursor: pointer;
   font-size: 0.9rem;
@@ -252,8 +264,8 @@
 
 .fe-faction-result:hover,
 .fe-faction-result:focus {
-  background: #2a2a2a;
-  color: #fff;
+  background: var(--gold-wash);
+  color: var(--cream);
   outline: none;
 }
 
@@ -262,7 +274,7 @@
 }
 
 .fe-faction-empty {
-  color: #888;
+  color: var(--muted);
   font-size: 0.85rem;
   padding: 0.5rem 0.6rem;
   margin: 0;
@@ -270,9 +282,9 @@
 
 .recent-row .recent-delete-btn {
   background: transparent;
-  color: #a02020;
-  border: 1px solid #5a2020;
-  border-radius: 4px;
+  color: var(--accent-red);
+  border: 1px solid rgba(224, 85, 69, 0.4);
+  border-radius: 2px;
   width: 1.8rem;
   height: 1.8rem;
   font-size: 1rem;
@@ -283,8 +295,8 @@
 }
 
 .recent-row .recent-delete-btn:hover {
-  background: #5a2020;
-  color: #fff;
+  background: rgba(224, 85, 69, 0.25);
+  color: var(--cream);
 }
 
 .recent-row .recent-delete-btn:disabled {
@@ -293,7 +305,7 @@
 }
 
 .ev-drug-inline {
-  color: #e8c84a;
+  color: var(--gold-light);
   font-weight: 600;
 }
 
@@ -305,10 +317,10 @@
   gap: 0.75rem;
   padding: 0.55rem 0.85rem;
   margin: 0.5rem 0 1rem;
-  background: rgba(233, 69, 96, 0.08);
-  border: 1px solid rgba(233, 69, 96, 0.25);
-  border-radius: 6px;
-  color: #ccc;
+  background: var(--gold-wash);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
+  color: rgba(240, 232, 213, 0.75);
   font-size: 0.9rem;
 }
 
@@ -317,11 +329,11 @@
 }
 
 .fe-identity-label strong {
-  color: #fff;
+  color: var(--cream);
 }
 
 .fe-identity-faction {
-  color: #888;
+  color: var(--muted);
   margin-left: 0.35rem;
 }
 
@@ -332,34 +344,37 @@
 
 /* ── Top-level event-type tabs (Consumables / Racing / …) ──
    Lives below the sign-in card so one Torn API key login works for every
-   event type. Active tab is the red brand color; inactive tabs are dim. */
+   event type. Active tab is Palazzo gold; inactive tabs are dim. */
 .fe-tabs {
   display: flex;
   gap: 0;
   margin: 0.5rem 0 1rem;
-  border-bottom: 1px solid #2c2c3a;
+  border-bottom: 1px solid var(--border);
 }
 
 .fe-tab {
   flex: 1 1 auto;
-  padding: 0.65rem 1rem;
+  font-family: var(--font-display);
+  padding: 0.7rem 1rem;
   background: transparent;
-  color: #888;
+  color: var(--muted);
   border: none;
   border-bottom: 2px solid transparent;
-  font-size: 0.95rem;
-  font-weight: 500;
+  font-size: 0.68rem;
+  font-weight: 600;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
   cursor: pointer;
   transition: color 0.15s, border-color 0.15s;
 }
 
 .fe-tab:hover {
-  color: #ccc;
+  color: var(--cream);
 }
 
 .fe-tab.active {
-  color: #e94560;
-  border-bottom-color: #e94560;
+  color: var(--gold-light);
+  border-bottom-color: var(--gold);
 }
 
 .fe-tab-panel.hidden {
@@ -372,16 +387,16 @@
   margin-left: 0.5rem;
   padding: 0.15rem 0.55rem;
   background: transparent;
-  color: #888;
-  border: 1px solid #2c2c3a;
-  border-radius: 4px;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 2px;
   cursor: pointer;
   font-size: 0.8rem;
 }
 
 .fe-pencil-btn:hover {
-  color: #e94560;
-  border-color: #e94560;
+  color: var(--gold);
+  border-color: var(--gold);
 }
 
 .fe-pencil-btn.hidden {
@@ -406,9 +421,9 @@
 .fe-edit-form {
   margin-top: 0.5rem;
   padding: 0.85rem;
-  background: #15151c;
-  border: 1px solid #2c2c3a;
-  border-radius: 6px;
+  background: var(--midnight);
+  border: 1px solid var(--border);
+  border-radius: 4px;
   text-align: left;
 }
 
@@ -440,17 +455,18 @@
   display: block;
   width: 100%;
   padding: 0.6rem 0.8rem;
-  background: #1a1a24;
-  color: #eee;
-  border: 1px solid #2c2c3a;
-  border-radius: 6px;
+  background: var(--midnight);
+  color: var(--cream);
+  border: 1px solid var(--border);
+  border-radius: 2px;
   font-size: 1rem;
   box-sizing: border-box;
+  transition: border-color 0.3s ease;
 }
 
 .fe-join-key-row input:focus {
   outline: none;
-  border-color: #e94560;
+  border-color: var(--gold);
 }
 
 /* ── Disabled refresh button (when not signed in) ── */
@@ -467,19 +483,19 @@
 .ev-delete-confirm {
   margin-top: 8px;
   padding: 10px;
-  border: 1px solid #e94560;
-  border-radius: 6px;
-  background: rgba(233, 69, 96, 0.08);
+  border: 1px solid var(--accent-red);
+  border-radius: 4px;
+  background: rgba(224, 85, 69, 0.08);
   text-align: left;
 }
 .fe-danger {
   color: #fff !important;
-  background: #b53050 !important;
-  border-color: #b53050 !important;
+  background: #b0402f !important;
+  border-color: #b0402f !important;
 }
 .fe-danger:hover {
-  background: #c84062 !important;
-  border-color: #c84062 !important;
+  background: var(--accent-red) !important;
+  border-color: var(--accent-red) !important;
 }
 
 /* ── Me-card action row — three buttons on one line, wrap on narrow ── */
@@ -498,23 +514,23 @@
 /* ── Diagnostics panel on me-card ── */
 .me-debug {
   margin-top: 12px;
-  border: 1px solid #2a3045;
-  border-radius: 6px;
-  background: #0e1322;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: var(--deep);
 }
 .me-debug summary {
   cursor: pointer;
   padding: 8px 12px;
-  color: #aab;
+  color: var(--muted);
   font-size: 13px;
   user-select: none;
 }
 .me-debug-body {
   margin: 0;
   padding: 12px;
-  border-top: 1px solid #2a3045;
-  background: #0a0e1a;
-  color: #cde;
+  border-top: 1px solid var(--border);
+  background: var(--midnight);
+  color: rgba(240, 232, 213, 0.8);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12px;
   line-height: 1.4;
@@ -543,14 +559,14 @@
   opacity: 0.7;
 }
 .lb-table tr.pending-row td.lb-count {
-  color: #aab;
+  color: var(--muted);
 }
 .lb-pending-badge {
   display: inline-block;
   padding: 2px 6px;
-  border-radius: 4px;
-  background: rgba(232, 200, 74, 0.18);
-  color: #e8c84a;
+  border-radius: 2px;
+  background: rgba(201, 168, 76, 0.15);
+  color: var(--gold-light);
   font-size: 0.75rem;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -566,18 +582,18 @@
 }
 .lb-scrape-btn {
   background: transparent;
-  border: 1px solid #2a3045;
-  border-radius: 4px;
-  color: #aab;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--muted);
   padding: 2px 6px;
   cursor: pointer;
   font-size: 0.95rem;
   line-height: 1;
 }
 .lb-scrape-btn:hover {
-  background: rgba(233, 69, 96, 0.12);
-  border-color: rgba(233, 69, 96, 0.5);
-  color: #fff;
+  background: var(--gold-wash);
+  border-color: var(--gold-dim);
+  color: var(--gold-light);
 }
 
 /* ── Leaderboard remove-participant column + button (admin/creator only) ── */
@@ -590,18 +606,18 @@
 }
 .lb-remove-btn {
   background: transparent;
-  border: 1px solid #2a3045;
-  border-radius: 4px;
-  color: #aab;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  color: var(--muted);
   padding: 2px 6px;
   cursor: pointer;
   font-size: 1rem;
   line-height: 1;
 }
 .lb-remove-btn:hover:not(:disabled) {
-  background: rgba(233, 69, 96, 0.18);
-  border-color: rgba(233, 69, 96, 0.6);
-  color: #fff;
+  background: rgba(224, 85, 69, 0.18);
+  border-color: rgba(224, 85, 69, 0.6);
+  color: var(--cream);
 }
 .lb-remove-btn:disabled {
   opacity: 0.4;
@@ -626,9 +642,9 @@
   display: none;
 }
 .scrape-log-modal {
-  background: #11151f;
-  border: 1px solid #2a3045;
-  border-radius: 8px;
+  background: var(--panel);
+  border: 1px solid var(--border-strong);
+  border-radius: 4px;
   width: 100%;
   max-width: 760px;
   max-height: 90vh;
@@ -641,30 +657,30 @@
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  background: #0e1322;
-  border-bottom: 1px solid #2a3045;
-  color: #fff;
+  background: var(--panel-warm);
+  border-bottom: 1px solid var(--border);
+  color: var(--cream);
 }
 .scrape-log-close {
   background: transparent;
   border: none;
-  color: #aab;
+  color: var(--muted);
   font-size: 1.4rem;
   line-height: 1;
   cursor: pointer;
   padding: 0 0.25rem;
 }
 .scrape-log-close:hover {
-  color: #fff;
+  color: var(--cream);
 }
 .scrape-log-meta {
   padding: 0.6rem 1rem;
-  background: #0a0e1a;
-  color: #aab;
+  background: var(--midnight);
+  color: var(--muted);
   font-size: 0.85rem;
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   white-space: pre-wrap;
-  border-bottom: 1px solid #2a3045;
+  border-bottom: 1px solid var(--border);
 }
 .scrape-log-body {
   flex: 1 1 auto;
@@ -673,8 +689,8 @@
   border: none;
   outline: none;
   resize: none;
-  background: #0a0e1a;
-  color: #cde;
+  background: var(--midnight);
+  color: rgba(240, 232, 213, 0.8);
   font-family: ui-monospace, "SF Mono", Menlo, monospace;
   font-size: 12px;
   line-height: 1.4;
@@ -685,8 +701,8 @@
   display: flex;
   gap: 0.5rem;
   padding: 0.6rem 1rem;
-  background: #0e1322;
-  border-top: 1px solid #2a3045;
+  background: var(--panel-warm);
+  border-top: 1px solid var(--border);
   flex-wrap: wrap;
 }
 .scrape-log-actions button {
