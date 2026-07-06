@@ -2710,6 +2710,14 @@ async function handleReportOd(body: any) {
       .eq('id', txn_id);
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+
+    // If we just backfilled amount_paid on a legacy row, fold that revenue
+    // into the reserve too (same rule as autoCloseExpired — rows purchased
+    // under current code already folded at purchase time and skip this).
+    if (closeUpdate.amount_paid && Number(txn.amount_paid || 0) === 0) {
+      await adjustReserve(supabase, Number(closeUpdate.amount_paid));
+    }
+
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
@@ -2954,6 +2962,14 @@ async function handleCheckDrugUsage(body: any) {
       .eq('id', txn_id);
 
     await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+
+    // If we just backfilled amount_paid on a legacy row, fold that revenue
+    // into the reserve too (same rule as autoCloseExpired — rows purchased
+    // under current code already folded at purchase time and skip this).
+    if (closeUpdate.amount_paid && Number(txn.amount_paid || 0) === 0) {
+      await adjustReserve(supabase, Number(closeUpdate.amount_paid));
+    }
+
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
@@ -3547,6 +3563,13 @@ async function handleVerifyPayment(body: any) {
     .eq('id', txn_id);
 
   if (updateErr) return json({ error: updateErr.message }, 500);
+
+  // Fold the received revenue into the reserve. This path advances
+  // requested → purchased directly (bypassing admin-update-status), so it
+  // must do its own fold — same rule as the admin transition. amount_paid
+  // was 0 or partial while 'requested' (pre-payment state, nothing folded
+  // yet), so the full cumulative totalPaid is the correct delta.
+  await adjustReserve(supabase, totalPaid);
 
   // Notify operator
   const overpaidNote = totalPaid > expectedAmount
