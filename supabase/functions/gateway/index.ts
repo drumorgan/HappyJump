@@ -621,7 +621,7 @@ async function countXanaxUsageInLog(
   sinceTimestamp?: number,
   maxPages = 30,
   untilTimestamp?: number,
-): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
+): Promise<{ count: number; details: string[]; pages: number; totalEntries: number; error: string | null }> {
   let toParam = '';
   const uses: { timestamp: number; detail: string; key: string }[] = [];
   const cutoff = sinceTimestamp || 0;
@@ -631,6 +631,11 @@ async function countXanaxUsageInLog(
   let pagesFetched = 0;
   let totalEntries = 0;
   let lastOldestTs = Infinity;
+  // A Torn error (most often code 16 — the key has no `log` scope) used to just
+  // break the loop and return 0, which is indistinguishable from "they really
+  // took nothing" for anyone without a browser console. Capture it so callers
+  // can say "scan failed" instead of quietly reporting a zero.
+  let scanError: string | null = null;
 
   for (let page = 0; page < maxPages; page++) {
     const url = `${TORN_API}/user/?selections=log${fromParam}${toParam}&key=${apiKey}`;
@@ -638,6 +643,13 @@ async function countXanaxUsageInLog(
     const data = await res.json();
     if (data.error || !data.log) {
       console.log(`[countXanaxUsageInLog] page=${page} error=${JSON.stringify(data.error || 'no log')}`);
+      // Only page 0 failing means we never saw the log at all. A later page
+      // erroring still leaves the earlier pages' counts valid.
+      if (page === 0) {
+        scanError = data.error
+          ? `Torn error ${data.error.code}: ${data.error.error}`
+          : 'Torn returned no log data';
+      }
       break;
     }
 
@@ -702,6 +714,7 @@ async function countXanaxUsageInLog(
     details: uses.map((u) => u.detail),
     pages: pagesFetched,
     totalEntries,
+    error: scanError,
   };
 }
 
@@ -3288,7 +3301,7 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: txn } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, purchased_at, closed_at, status, od_event_timestamp, payout_amount')
+    .select('id, torn_id, torn_name, purchased_at, closed_at, status, od_event_timestamp, payout_amount, consumed_items')
     .eq('id', txn_id)
     .maybeSingle();
   if (!txn) return json({ error: 'Transaction not found' }, 404);
@@ -3321,6 +3334,16 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   // the breakdown is the policy window, not "everything since purchase". Live
   // rows run to now. od_event_timestamp is unix seconds already.
   const settled = txn.status === 'od_xanax' || txn.status === 'od_ecstasy' || txn.status === 'payout_sent';
+
+  // Which drug ended the policy. There is no od_type COLUMN — status carries it
+  // for od_xanax / od_ecstasy, but a row advanced to payout_sent has lost it.
+  // A stored consumed_items breakdown is only ever written for an Ecstasy OD,
+  // so it identifies those; anything else stays null rather than guessing.
+  const odDrug: 'xanax' | 'ecstasy' | null =
+    txn.status === 'od_xanax' ? 'xanax'
+    : txn.status === 'od_ecstasy' ? 'ecstasy'
+    : txn.status === 'payout_sent' && txn.consumed_items ? 'ecstasy'
+    : null;
   const nowTs = Math.floor(Date.now() / 1000);
   let untilTs = nowTs;
   let windowEnd: 'now' | 'od_event' | 'closed_at' = 'now';
@@ -3342,7 +3365,14 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
     computeEcstasyConsumedPayout(apiKey, cfg || {}, fromTs, untilTs),
     countXanaxUsageInLog(apiKey, fromTs, undefined, untilTs),
   ]);
-  if (!computed) return json({ has_key: true, scan_failed: true, xanax_used: xanaxResult?.count ?? null });
+  if (!computed) {
+    return json({
+      has_key: true,
+      scan_failed: true,
+      xanax_used: xanaxResult?.count ?? null,
+      scan: { xanax_error: xanaxResult?.error ?? null },
+    });
+  }
 
   return json({
     has_key: true,
@@ -3352,9 +3382,21 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
     status: txn.status,
     settled,
     payout_amount: txn.payout_amount != null ? Number(txn.payout_amount) : null,
+    od_drug: odDrug,
     from_ts: fromTs,
     until_ts: untilTs,
     window_end: windowEnd,
+    // Diagnostics so a zero count is legible without a browser console: a real
+    // "they took nothing" shows pages scanned with no error, while a key that
+    // can't read the log shows scan_error and 0 pages.
+    scan: {
+      xanax_pages: xanaxResult.pages,
+      xanax_entries: xanaxResult.totalEntries,
+      xanax_error: xanaxResult.error,
+      from_iso: new Date(fromTs * 1000).toISOString(),
+      until_iso: new Date(untilTs * 1000).toISOString(),
+      od_event_timestamp: txn.od_event_timestamp ? Number(txn.od_event_timestamp) : null,
+    },
   });
 }
 
