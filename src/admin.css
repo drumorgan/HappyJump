@@ -782,3 +782,21 @@
 .tier-badge.braccio-destro { background: rgba(143, 168, 255, 0.1); color: var(--accent-blue); border: 1px solid rgba(143, 168, 255, 0.25); }
 .tier-badge.famiglia { background: rgba(201, 162, 255, 0.1); color: var(--accent-purple); border: 1px solid rgba(201, 162, 255, 0.25); }
 .famiglia-permanent-tag { display: inline-block; font-family: var(--font-display); padding: 0.1rem 0.4rem; margin-left: 0.3rem; border-radius: 2px; font-size: 0.55rem; font-weight: 600; letter-spacing: 0.08em; text-transform: uppercase; background: rgba(201, 162, 255, 0.1); color: var(--accent-purple); border: 1px solid rgba(201, 162, 255, 0.3); vertical-align: middle; }
+
+/* Scan diagnostics under the "Drugs Taken" panel — a zero count has to be
+   legible without a browser console, so the window and page tally are always
+   one tap away. */
+.items-used-diag {
+  margin-top: 0.6rem;
+  font-size: 0.8rem;
+  color: #9a9aa8;
+}
+.items-used-diag summary {
+  cursor: pointer;
+  color: #c9a84c;
+}
+.items-used-diag ul {
+  margin: 0.4rem 0 0;
+  padding-left: 1.1rem;
+  line-height: 1.5;
+}
