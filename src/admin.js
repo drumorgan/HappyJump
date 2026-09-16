@@ -413,8 +413,39 @@ async function handleItemsUsed(txnId, btn) {
       : '';
 
     if (resultEl) {
-      const xanaxLine = res.xanax_used != null
-        ? `<div class="items-used-xanax">Xanax used: <strong>${Number(res.xanax_used)}</strong> <span class="items-used-dim">of 4 covered</span></div>`
+      // The OD pill itself is deliberately excluded from the "uses" count —
+      // entryMatchesDrugUse drops any log entry mentioning "overdos" so an OD
+      // never reads as a successful use. That's right for the covered-uses
+      // rule (4 successful Xanax = policy consumed) but it made the panel
+      // report "0 taken" for a client who OD'd on their first pill. Report the
+      // successful uses AND the OD pill so the total matches reality.
+      const odXanax = res.od_drug === 'xanax';
+      const odEcstasy = res.od_drug === 'ecstasy';
+      const xanaxUsed = res.xanax_used != null ? Number(res.xanax_used) : null;
+      const xanaxLine = xanaxUsed == null
+        ? ''
+        : odXanax
+        ? `<div class="items-used-xanax">Xanax taken: <strong>${xanaxUsed + 1}</strong> <span class="items-used-dim">— ${xanaxUsed} used successfully + the pill that caused the OD</span></div>`
+        : `<div class="items-used-xanax">Xanax used: <strong>${xanaxUsed}</strong> <span class="items-used-dim">of 4 covered</span></div>`;
+      const ecstasyLine = odEcstasy
+        ? '<div class="items-used-xanax">Ecstasy taken: <strong>1</strong> <span class="items-used-dim">— the pill that caused the OD</span></div>'
+        : '';
+
+      // A Torn log error returns an empty scan, which looks exactly like "they
+      // took nothing". Say which one it is rather than showing a bare 0.
+      const scan = res.scan || {};
+      const scanWarning = scan.xanax_error
+        ? `<div class="items-used-excluded">Log scan failed — ${esc(scan.xanax_error)}. The counts below are NOT reliable; the client's stored key probably can't read their log.</div>`
+        : '';
+      const diagHtml = scan.from_iso
+        ? `<details class="items-used-diag"><summary>Scan diagnostics</summary>
+            <ul>
+              <li>Window: ${esc(new Date(scan.from_iso).toLocaleString())} → ${esc(new Date(scan.until_iso).toLocaleString())}</li>
+              <li>Window end: ${esc(res.window_end || 'now')}${scan.od_event_timestamp ? ` (OD event ${esc(new Date(scan.od_event_timestamp * 1000).toLocaleString())})` : ''}</li>
+              <li>Log pages scanned: ${Number(scan.xanax_pages || 0)} · entries seen: ${Number(scan.xanax_entries || 0)}</li>
+              <li>Xanax scan error: ${scan.xanax_error ? esc(scan.xanax_error) : 'none'}</li>
+            </ul>
+          </details>`
         : '';
       // Settled rows report the OD-capped window and the payout that was
       // actually registered; live rows report the running "if they OD'd now".
@@ -423,23 +454,26 @@ async function handleItemsUsed(txnId, btn) {
         : res.window_end === 'closed_at'
         ? 'Taken under this policy (purchase → close)'
         : 'Used since purchase';
-      const odDrugLine = res.status === 'od_xanax' || res.status === 'od_ecstasy' || res.status === 'payout_sent'
-        ? `<div class="items-used-xanax">OD drug: <strong>${res.status === 'od_ecstasy' ? 'Ecstasy' : 'Xanax'}</strong></div>`
+      const odDrugLine = res.od_drug
+        ? `<div class="items-used-xanax">OD drug: <strong>${res.od_drug === 'ecstasy' ? 'Ecstasy' : 'Xanax'}</strong></div>`
         : '';
       const footLine = res.settled
         ? `<div class="items-used-foot">Registered payout: <strong>${$(res.payout_amount || 0)}</strong>${
-            res.status === 'od_xanax' ? ' <span class="items-used-dim">(flat 4x Xanax + rehab — happiness items are not replaced on a Xanax OD)</span>' : ''
+            res.od_drug === 'xanax' ? ' <span class="items-used-dim">(flat 4x Xanax + rehab — happiness items are not replaced on a Xanax OD)</span>' : ''
           }</div>`
         : `<div class="items-used-foot">If they OD'd now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>`;
       resultEl.innerHTML = `
         <div class="items-used-box">
           <div class="items-used-head">${esc(windowLabel)}</div>
+          ${scanWarning}
           ${odDrugLine}
           ${xanaxLine}
+          ${ecstasyLine}
           <div class="items-used-subhead">Happiness items${res.settled ? '' : ' (replaceable)'} — ${$(ci.happy_value || 0)}</div>
           <ul>${lines.join('')}</ul>
           ${excludedHtml}
           ${footLine}
+          ${diagHtml}
         </div>`;
     }
   } catch (e) {
