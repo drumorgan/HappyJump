@@ -612,14 +612,20 @@ async function findEcstasyUsageInLog(
 
 // Counts successful Xanax uses in the Torn API log since a given timestamp.
 // Returns count (max meaningful = 4) and details of each use found.
+// `untilTimestamp` (unix seconds, optional) caps the upper end of the window —
+// used when reporting on a settled policy so uses logged AFTER the OD, while
+// the payout was pending, don't inflate the in-policy count. Left undefined the
+// scan runs open-ended to now, which is what every live-policy caller wants.
 async function countXanaxUsageInLog(
   apiKey: string,
   sinceTimestamp?: number,
   maxPages = 30,
+  untilTimestamp?: number,
 ): Promise<{ count: number; details: string[]; pages: number; totalEntries: number }> {
   let toParam = '';
   const uses: { timestamp: number; detail: string; key: string }[] = [];
   const cutoff = sinceTimestamp || 0;
+  const ceiling = untilTimestamp && untilTimestamp > cutoff ? untilTimestamp : Infinity;
   const fromParam = sinceTimestamp ? `&from=${sinceTimestamp}` : '';
   const seenKeys = new Set<string>();
   let pagesFetched = 0;
@@ -654,7 +660,7 @@ async function countXanaxUsageInLog(
     let pageMatches = 0;
     for (const [key, entry] of entriesKv) {
       const ts = entry.timestamp || 0;
-      if (ts < cutoff) continue;
+      if (ts < cutoff || ts > ceiling) continue;
       if (!entryMatchesDrugUse(entry, 'Xanax', XANAX_ITEM_ID)) continue;
 
       if (seenKeys.has(key)) continue;
@@ -3261,10 +3267,15 @@ async function handleAdminDetectHappyItems(req: Request, body: any) {
   });
 }
 
-// Admin-only: for a single active (purchased) transaction, scan the client's
-// log for the happiness-boosting items they've consumed since purchase and
-// value them live — i.e. the running Ecstasy-OD liability if they OD'd right
-// now. Uses the client's own server-stored key (player_secrets); if they never
+// Admin-only: scan a client's log for the drugs / happiness-boosting items they
+// consumed under a given policy and value them live.
+//   • On an active (purchased) policy the window runs purchased_at → now, so the
+//     result is the running Ecstasy-OD liability if they OD'd right this second.
+//   • On a settled OD row (od_xanax / od_ecstasy / payout_sent) the window is
+//     capped at the OD event itself (od_event_timestamp), so the list is exactly
+//     what they took inside the policy — drugs consumed after the OD, while the
+//     payout was pending, are not folded in.
+// Uses the client's own server-stored key (player_secrets); if they never
 // signed in we have no key to scan, so we say so plainly rather than showing
 // a misleading $0. Read-only: never mutates the transaction.
 async function handleAdminActiveConsumed(req: Request, body: any) {
@@ -3277,7 +3288,7 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: txn } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, purchased_at, status')
+    .select('id, torn_id, torn_name, purchased_at, closed_at, status, od_event_timestamp, payout_amount')
     .eq('id', txn_id)
     .maybeSingle();
   if (!txn) return json({ error: 'Transaction not found' }, 404);
@@ -3305,10 +3316,31 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
 
   const { data: cfg } = await supabase.from('config').select('*').single();
   const fromTs = Math.floor(new Date(txn.purchased_at).getTime() / 1000);
-  const untilTs = Math.floor(Date.now() / 1000);
+
+  // Settled rows stop the clock at the OD (or, failing that, at close time) so
+  // the breakdown is the policy window, not "everything since purchase". Live
+  // rows run to now. od_event_timestamp is unix seconds already.
+  const settled = txn.status === 'od_xanax' || txn.status === 'od_ecstasy' || txn.status === 'payout_sent';
+  const nowTs = Math.floor(Date.now() / 1000);
+  let untilTs = nowTs;
+  let windowEnd: 'now' | 'od_event' | 'closed_at' = 'now';
+  if (settled) {
+    if (txn.od_event_timestamp) {
+      untilTs = Number(txn.od_event_timestamp);
+      windowEnd = 'od_event';
+    } else if (txn.closed_at) {
+      untilTs = Math.floor(new Date(txn.closed_at).getTime() / 1000);
+      windowEnd = 'closed_at';
+    }
+  }
+  if (!Number.isFinite(untilTs) || untilTs <= fromTs) {
+    untilTs = nowTs;
+    windowEnd = 'now';
+  }
+
   const [computed, xanaxResult] = await Promise.all([
     computeEcstasyConsumedPayout(apiKey, cfg || {}, fromTs, untilTs),
-    countXanaxUsageInLog(apiKey, fromTs),
+    countXanaxUsageInLog(apiKey, fromTs, undefined, untilTs),
   ]);
   if (!computed) return json({ has_key: true, scan_failed: true, xanax_used: xanaxResult?.count ?? null });
 
@@ -3317,8 +3349,12 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
     consumed: computed.consumedItems,
     projected_ecstasy_payout: computed.payout,
     xanax_used: xanaxResult.count,
+    status: txn.status,
+    settled,
+    payout_amount: txn.payout_amount != null ? Number(txn.payout_amount) : null,
     from_ts: fromTs,
     until_ts: untilTs,
+    window_end: windowEnd,
   });
 }
 
