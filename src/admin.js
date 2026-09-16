@@ -279,9 +279,21 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         break;
       case 'od_xanax':
       case 'od_ecstasy':
-        actionsHtml = `<button class="btn-payout" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="payout_sent">Payout Sent</button>`;
+        actionsHtml = `<button class="btn-payout" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="payout_sent">Payout Sent</button>
+          <button class="btn-items-used" data-id="${t.id}">Drugs Taken</button>`;
+        break;
+      case 'payout_sent':
+        actionsHtml = `<button class="btn-items-used" data-id="${t.id}">Drugs Taken</button>`;
         break;
     }
+
+    // Rows that carry a payout also offer an on-demand scan of what the client
+    // actually consumed inside the policy window — a Xanax OD never stores a
+    // consumed_items breakdown (its payout is the flat 4x Xanax + rehab), and
+    // pre-migration Ecstasy ODs don't have one either, so the log is the only
+    // source. Scanned on click rather than on render: each one walks paginated
+    // Torn log pages using the client's stored key.
+    const showsPayout = t.status === 'od_xanax' || t.status === 'od_ecstasy' || t.status === 'payout_sent';
 
     const payoutInfo = t.payout_amount ? ` | Payout: ${$(t.payout_amount)}` : '';
     const closesInfo = t.closes_at ? ` | Closes: ${new Date(t.closes_at).toLocaleDateString()}` : '';
@@ -326,7 +338,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       </div>
       ${consumedHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
-      ${t.status === 'purchased' ? `<div class="items-used-result" id="items-used-${t.id}"></div>` : ''}
+      ${t.status === 'purchased' || showsPayout ? `<div class="items-used-result" id="items-used-${t.id}"></div>` : ''}
     </div>`;
   }).join('');
 
@@ -354,8 +366,11 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
   startExpiryTimers();
 }
 
-// Scan an active policy's client log for happiness items used since purchase
-// and render the running tally + projected Ecstasy-OD liability inline.
+// Scan a policy's client log for the drugs / happiness items consumed inside
+// its window and render the tally inline. On an active policy that's a running
+// count plus the projected Ecstasy-OD liability; on a settled OD row the
+// gateway caps the window at the OD event, so it's the definitive list of what
+// they took — shown next to the payout that was actually registered.
 async function handleItemsUsed(txnId, btn) {
   const resultEl = document.getElementById(`items-used-${txnId}`);
   const orig = btn.textContent;
@@ -388,7 +403,9 @@ async function handleItemsUsed(txnId, btn) {
     const lines = (ci.happy_items || []).map(
       (it) => `<li>${Number(it.qty)}x ${esc(it.name)} — ${$(it.line_value)}</li>`,
     );
-    if (lines.length === 0) lines.push('<li class="items-used-none">No happiness items used yet</li>');
+    if (lines.length === 0) {
+      lines.push(`<li class="items-used-none">No happiness items ${res.settled ? 'found in the policy window' : 'used yet'}</li>`);
+    }
 
     const excluded = ci.excluded_items || [];
     const excludedHtml = excluded.length
@@ -399,14 +416,30 @@ async function handleItemsUsed(txnId, btn) {
       const xanaxLine = res.xanax_used != null
         ? `<div class="items-used-xanax">Xanax used: <strong>${Number(res.xanax_used)}</strong> <span class="items-used-dim">of 4 covered</span></div>`
         : '';
+      // Settled rows report the OD-capped window and the payout that was
+      // actually registered; live rows report the running "if they OD'd now".
+      const windowLabel = res.window_end === 'od_event'
+        ? 'Taken under this policy (purchase → OD)'
+        : res.window_end === 'closed_at'
+        ? 'Taken under this policy (purchase → close)'
+        : 'Used since purchase';
+      const odDrugLine = res.status === 'od_xanax' || res.status === 'od_ecstasy' || res.status === 'payout_sent'
+        ? `<div class="items-used-xanax">OD drug: <strong>${res.status === 'od_ecstasy' ? 'Ecstasy' : 'Xanax'}</strong></div>`
+        : '';
+      const footLine = res.settled
+        ? `<div class="items-used-foot">Registered payout: <strong>${$(res.payout_amount || 0)}</strong>${
+            res.status === 'od_xanax' ? ' <span class="items-used-dim">(flat 4x Xanax + rehab — happiness items are not replaced on a Xanax OD)</span>' : ''
+          }</div>`
+        : `<div class="items-used-foot">If they OD'd now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>`;
       resultEl.innerHTML = `
         <div class="items-used-box">
-          <div class="items-used-head">Used since purchase</div>
+          <div class="items-used-head">${esc(windowLabel)}</div>
+          ${odDrugLine}
           ${xanaxLine}
-          <div class="items-used-subhead">Happiness items (replaceable) — ${$(ci.happy_value || 0)}</div>
+          <div class="items-used-subhead">Happiness items${res.settled ? '' : ' (replaceable)'} — ${$(ci.happy_value || 0)}</div>
           <ul>${lines.join('')}</ul>
           ${excludedHtml}
-          <div class="items-used-foot">If they OD'd on Ecstasy now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>
+          ${footLine}
         </div>`;
     }
   } catch (e) {
