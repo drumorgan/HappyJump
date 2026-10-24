@@ -1115,6 +1115,38 @@ body::before {
   padding: 0.85rem 0.3rem;
 }
 
+/* Four products: 2x2 grid on phones / portrait iPad, one row when wide */
+.four-tabs {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+}
+
+.four-tabs .product-tab {
+  font-size: 0.56rem;
+  padding: 0.85rem 0.3rem;
+  border-right: none;
+}
+
+.four-tabs .product-tab:nth-child(odd) {
+  border-right: 1px solid var(--border);
+}
+
+.four-tabs .product-tab:nth-child(-n+2) {
+  border-bottom: 1px solid var(--border);
+}
+
+@media (min-width: 720px) {
+  .four-tabs {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .four-tabs .product-tab:nth-child(-n+2) {
+    border-bottom: none;
+  }
+  .four-tabs .product-tab:not(:last-child) {
+    border-right: 1px solid var(--border);
+  }
+}
+
 .product-tab.active {
   background: var(--gold-wash);
   color: var(--gold-light);
@@ -1187,6 +1219,11 @@ body::before {
 .product-badge.ecstasy-only {
   background: rgba(232, 168, 107, 0.12);
   color: #eab784;
+}
+
+.product-badge.xanax-only {
+  background: rgba(186, 143, 255, 0.12);
+  color: #c4a6ff;
 }
 
 .shield-feature.eco-feature {
