@@ -11,7 +11,7 @@ const input = document.getElementById('api-key');
 const submitBtn = document.getElementById('submit-btn');
 let currentApiKey = null;          // used during the manual-login session only
 let currentSession = null;          // { player_id, session_token } after set-api-key/auto-login
-let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only'
+let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only' | 'xanax_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
 
@@ -129,9 +129,20 @@ function calcEcstasyOnlyPricing(config, margin) {
   return { packageCost: 0, xanaxPayout: 0, ecstasyPayout, trueCost: expectedLiability, suggestedPrice };
 }
 
+// Xanax-only insurance: covers the first 4 Xanax after purchase (stacking / chaining)
+function calcXanaxOnlyPricing(config, margin) {
+  const xanaxPayout = 4 * Number(config.xanax_price) + Number(config.rehab_bonus);
+  const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
+  const expectedLiability = pXanOd * xanaxPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout, ecstasyPayout: 0, trueCost: expectedLiability, suggestedPrice };
+}
+
 function getPricing(config, margin, product) {
   if (product === 'insurance') return calcInsurancePricing(config, margin);
   if (product === 'ecstasy_only') return calcEcstasyOnlyPricing(config, margin);
+  if (product === 'xanax_only') return calcXanaxOnlyPricing(config, margin);
   return calcPricing(config, margin);
 }
 
@@ -142,6 +153,28 @@ function buildCoverageHTML(product, pricing, config) {
   const ecsPayout = `4x Xanax + every happiness item you used (Erotic DVDs &mdash; up to 5, candy, etc.) + 1x Ecstasy + ${rehabBonus} rehab bonus`;
 
   let rows = '';
+
+  if (product === 'xanax_only') {
+    const rows = `
+      <tr>
+        <td class="cov-condition">OD on Xanax (pills 1-4)</td>
+        <td class="cov-payout">${xanPayout}</td>
+      </tr>
+      <tr>
+        <td class="cov-condition">OD on Ecstasy</td>
+        <td class="cov-not-covered">NOT COVERED</td>
+      </tr>
+      <tr>
+        <td class="cov-clean">All 4 Xanax taken, no OD</td>
+        <td class="cov-clean">Policy closes clean on your 4th Xanax, or expires after 3 days (72 hours)</td>
+      </tr>`;
+    return `<table class="coverage-table">
+      <thead><tr><th>Outcome</th><th>What You Get</th></tr></thead>
+      <tbody>${rows}</tbody>
+    </table>
+    <p class="coverage-note">Built for <strong style="color:#c8aa6e">stacking and chaining</strong> &mdash; no Happy Jump required. Covers the <strong>first 4 Xanax you take after purchase</strong>, max 3 days (72 hours). An OD on any of those 4 pays out ${xanPayout}. Your 5th Xanax onward is <strong>not covered</strong> &mdash; buy another La Scorta when this one closes to keep stacking protected.</p>
+    <p class="coverage-note" style="opacity:0.85"><strong>Note:</strong> the payout replaces pills and covers rehab &mdash; it does not restore energy you had stacked when you OD'd.</p>`;
+  }
 
   if (product === 'package') {
     rows = `
@@ -222,6 +255,10 @@ function updateAnonPricing() {
     priceHeader.textContent = 'Premium';
     priceNote.textContent = 'Current premium — Straniero rate';
     contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
+  } else if (selectedProduct === 'xanax_only') {
+    priceHeader.textContent = 'Premium';
+    priceNote.textContent = 'Current premium — Straniero rate';
+    contentsEl.textContent = 'Xanax OD insurance only — covers your next 4 Xanax (stacking & chaining)';
   } else if (selectedProduct === 'insurance') {
     priceHeader.textContent = 'Premium';
     priceNote.textContent = 'Current premium — Straniero rate';
@@ -250,6 +287,39 @@ function updateAnonPricing() {
   if (anonCoverageBody) {
     anonCoverageBody.innerHTML = buildCoverageHTML(selectedProduct, pricing, storefrontConfig);
   }
+
+  renderAvailability();
+}
+
+// Xanax-only policies lock far less reserve than the jump products, so they
+// have their own (larger) availability count.
+function renderAvailability() {
+  const avail = storefrontAvail;
+  const availEl = document.getElementById('anon-availability');
+  if (!avail || !availEl) return;
+  const count = selectedProduct === 'xanax_only'
+    ? Number(avail.available_xanax_only ?? avail.available)
+    : Number(avail.available);
+  availEl.classList.remove('sold-out');
+  if (count > 0) {
+    availEl.textContent = `Current Reserves: ${count}`;
+    return;
+  }
+  let soldOutMsg = 'Sold out';
+  if (avail.nextCloseAt) {
+    const closeDate = new Date(avail.nextCloseAt);
+    const now = new Date();
+    const daysUntil = Math.max(0, Math.ceil((closeDate - now) / (1000 * 60 * 60 * 24)));
+    if (daysUntil > 0) {
+      soldOutMsg += ` — next stock expected in ~${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
+    } else {
+      soldOutMsg += ' — stock expected soon';
+    }
+  } else {
+    soldOutMsg += ' — check back later';
+  }
+  availEl.textContent = soldOutMsg;
+  availEl.classList.add('sold-out');
 }
 
 function switchProduct(product) {
@@ -276,6 +346,12 @@ async function initStorefront() {
     const [config, avail] = await Promise.all([getConfig(), getAvailability()]);
     storefrontConfig = config;
     storefrontAvail = avail;
+    // La Scorta needs the updated gateway — an older one doesn't know
+    // 'xanax_only' and silently creates a full package request instead.
+    // Only the new gateway reports available_xanax_only, so use it as the gate.
+    if (avail.available_xanax_only == null) {
+      document.querySelectorAll('.product-tab[data-product="xanax_only"]').forEach((tab) => tab.remove());
+    }
     loadTierMargins(config);
     const pricing = calcPricing(config, TIERS[0].margin); // new client rate for anonymous view
 
@@ -302,29 +378,8 @@ async function initStorefront() {
       }
     }).catch(() => {});
 
-    // Populate all storefront pricing/coverage/tiers via the shared updater
+    // Populate all storefront pricing/coverage/tiers/availability via the shared updater
     updateAnonPricing();
-
-    const availEl = document.getElementById('anon-availability');
-    if (avail.available > 0) {
-      availEl.textContent = `Current Reserves: ${avail.available}`;
-    } else {
-      let soldOutMsg = 'Sold out';
-      if (avail.nextCloseAt) {
-        const closeDate = new Date(avail.nextCloseAt);
-        const now = new Date();
-        const daysUntil = Math.max(0, Math.ceil((closeDate - now) / (1000 * 60 * 60 * 24)));
-        if (daysUntil > 0) {
-          soldOutMsg += ` — next stock expected in ~${daysUntil} day${daysUntil !== 1 ? 's' : ''}`;
-        } else {
-          soldOutMsg += ' — stock expected soon';
-        }
-      } else {
-        soldOutMsg += ' — check back later';
-      }
-      availEl.textContent = soldOutMsg;
-      availEl.classList.add('sold-out');
-    }
   } catch (err) {
     showToast(err.message, 'error');
   }
@@ -495,8 +550,8 @@ function showPlayerView(player, config, history, apiKey) {
     (t) => ['requested', 'purchased', 'od_xanax', 'od_ecstasy'].includes(t.status),
   );
   if (hasActive && activeTxn) {
-    const activeProduct = activeTxn.product_type === 'ecstasy_only' ? 'ecstasy_only'
-      : activeTxn.product_type === 'insurance' ? 'insurance' : 'package';
+    const activeProduct = ['ecstasy_only', 'xanax_only', 'insurance'].includes(activeTxn.product_type)
+      ? activeTxn.product_type : 'package';
     switchProduct(activeProduct);
     personalPricingCard.classList.add('hidden');
   } else {
@@ -508,9 +563,10 @@ function showPlayerView(player, config, history, apiKey) {
     const pricing = getPricing(config, tier.margin, selectedProduct);
     const isInsurance = selectedProduct === 'insurance';
     const isEcstasyOnly = selectedProduct === 'ecstasy_only';
+    const isXanaxOnly = selectedProduct === 'xanax_only';
 
     // Price header
-    const headers = { package: 'Your Package Price', insurance: 'Your Premium', ecstasy_only: 'Your Premium' };
+    const headers = { package: 'Your Package Price', insurance: 'Your Premium', ecstasy_only: 'Your Premium', xanax_only: 'Your Premium' };
     document.getElementById('pv-price-header').textContent = headers[selectedProduct] || headers.package;
 
     // Personal pricing
@@ -522,6 +578,8 @@ function showPlayerView(player, config, history, apiKey) {
     const contentsEl = document.getElementById('pv-contents');
     if (isEcstasyOnly) {
       contentsEl.textContent = 'Ecstasy OD insurance only — covers the final step';
+    } else if (isXanaxOnly) {
+      contentsEl.textContent = 'Xanax OD insurance only — covers your next 4 Xanax (stacking & chaining)';
     } else if (isInsurance) {
       contentsEl.textContent = 'Full OD insurance — no items included';
     } else {
@@ -548,6 +606,9 @@ function showPlayerView(player, config, history, apiKey) {
       if (isEcstasyOnly) {
         buyBtn.textContent = "Request L'Ultimo Miglio — " + $(pricing.suggestedPrice);
         buyStatus.textContent = 'This submits an insurance request for Ecstasy OD only. Giro will collect the premium via in-game trade.';
+      } else if (isXanaxOnly) {
+        buyBtn.textContent = 'Request La Scorta — ' + $(pricing.suggestedPrice);
+        buyStatus.textContent = 'This submits an insurance request covering your next 4 Xanax. Giro will collect the premium via in-game trade.';
       } else if (isInsurance) {
         buyBtn.textContent = 'Request Protezione Totale — ' + $(pricing.suggestedPrice);
         buyStatus.textContent = 'This submits a full insurance request. Giro will collect the premium via in-game trade.';
@@ -568,7 +629,7 @@ function showPlayerView(player, config, history, apiKey) {
             torn_level: player.torn_level,
             product_type: selectedProduct,
           }, currentAuth());
-          const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio" };
+          const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio", xanax_only: 'La Scorta' };
           const productLabel = productLabels[selectedProduct] || 'package';
           showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
           buyBtn.textContent = 'Request In Progress';
@@ -836,12 +897,16 @@ function runDrugUsageCheck(activeTxn) {
       const xanaxSpan = isEcstasyOnly
         ? ''
         : `<span>Xanax: <strong style="color:${xanaxColor}">${xanaxCount}/4</strong> used</span>`;
+      // La Scorta (xanax_only) has no Ecstasy step — hide that counter.
+      const ecstasySpan = activeTxn.product_type === 'xanax_only'
+        ? ''
+        : `<span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>`;
       progressEl.style.opacity = '1';
       progressEl.innerHTML = `
         <div style="display:flex;gap:1.5rem;justify-content:center;font-size:1.05rem">
           ${xanaxSpan}
-          <span>Ecstasy: <strong style="color:${ecstasyColor}">${ecstasyDone ? '1/1' : '0/1'}</strong> used</span>
-        </div>`;
+          ${ecstasySpan}
+        </div>${result.detail && !result.policy_closed ? `<div class="deal-detail" style="margin-top:0.5rem">${esc(result.detail)}</div>` : ''}`;
     }
   }).catch(() => {
     const progressEl = document.getElementById('drug-progress-content');
@@ -978,7 +1043,7 @@ function renderHistory(transactions) {
     const date = new Date(txn.created_at).toLocaleDateString();
     const pillClass = getStatusPillClass(txn.status);
     const label = formatStatus(txn.status);
-    const productLabels = { package: 'Bella Vita', insurance: 'Protezione', ecstasy_only: 'Ultimo Miglio' };
+    const productLabels = { package: 'Bella Vita', insurance: 'Protezione', ecstasy_only: 'Ultimo Miglio', xanax_only: 'La Scorta' };
     const productLabel = productLabels[txn.product_type] || 'Package';
     html += `<tr>
       <td>${esc(date)}</td>

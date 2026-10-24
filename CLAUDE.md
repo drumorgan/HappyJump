@@ -56,6 +56,20 @@ A Happy Jump consumes: 4x Xanax, 5x Erotic DVDs, 1x Ecstasy. Any OD at any step 
 | Any Xanax (1-4) | 4x Xanax + $1M rehab bonus                                      |
 | Ecstasy         | Full new package (4 Xan + 5 EDVD + 1 Ecstasy) + $1M rehab bonus |
 
+### Products (`transactions.product_type`)
+
+| product_type   | Name              | Covers                                   | Reserve lock      |
+|----------------|-------------------|------------------------------------------|-------------------|
+| `package`      | La Bella Vita     | Drugs supplied + Xanax & Ecstasy ODs     | `ecstasy_payout`  |
+| `insurance`    | Protezione Totale | Xanax & Ecstasy ODs (client's own drugs) | `ecstasy_payout`  |
+| `ecstasy_only` | L'Ultimo Miglio   | Ecstasy OD only (`xanax_payout` = 0)     | `ecstasy_payout`  |
+| `xanax_only`   | La Scorta         | First 4 Xanax after purchase, for stacking/chaining (`ecstasy_payout` = 0) | `xanax_payout` |
+
+- **Reserve lock** is always `max(ecstasy_payout, xanax_payout)` — `reserveLockFor()` in the gateway and `src/logic.js`. Never release/lock raw `ecstasy_payout`.
+- **La Scorta pricing:** `P(Xanax OD) × xanax_payout / (1 − margin)`. Torn's wiki confirms addiction does not change OD chance, so the flat per-pill rate holds for heavy stackers.
+- **La Scorta coverage:** an OD counts only if fewer than 4 successful Xanax preceded it (report-od recounts up to the earliest Xanax OD, since revived stackers keep going). `check-drug-usage` auto-closes clean at 4 successful Xanax unless an OD is in the log. Taking Ecstasy does not close it.
+- **Availability:** `get-availability` returns `available` (jump products) and `available_xanax_only`. The storefront hides the La Scorta tab when `available_xanax_only` is missing (older gateway would silently create a `package`).
+
 ### Payout Trade Subject Lines
 
 Use these exact subject lines when sending payouts in-game so trade logs are searchable:

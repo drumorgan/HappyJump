@@ -5,7 +5,9 @@ import {
   calcPricing,
   calcInsurancePricing,
   calcEcstasyOnlyPricing,
+  calcXanaxOnlyPricing,
   getPricing,
+  reserveLockFor,
   computePayoutAmount,
   calcReserveDelta,
   calcAvailability,
@@ -218,6 +220,48 @@ describe('getPricing', () => {
     const r = getPricing(DEFAULT_CONFIG, DEFAULT_MARGIN, 'ecstasy_only');
     const expected = calcEcstasyOnlyPricing(DEFAULT_CONFIG, DEFAULT_MARGIN);
     expect(r.suggestedPrice).toBe(expected.suggestedPrice);
+  });
+
+  it('routes to xanax-only', () => {
+    const r = getPricing(DEFAULT_CONFIG, DEFAULT_MARGIN, 'xanax_only');
+    const expected = calcXanaxOnlyPricing(DEFAULT_CONFIG, DEFAULT_MARGIN);
+    expect(r.suggestedPrice).toBe(expected.suggestedPrice);
+  });
+});
+
+// ── calcXanaxOnlyPricing (La Scorta) ────────────────────────────────
+
+describe('calcXanaxOnlyPricing', () => {
+  const r = calcXanaxOnlyPricing(DEFAULT_CONFIG, DEFAULT_MARGIN);
+
+  it('pays the flat Xanax payout (4x Xanax + rehab) and no Ecstasy payout', () => {
+    expect(r.xanaxPayout).toBe(4400000);
+    expect(r.ecstasyPayout).toBe(0);
+    expect(r.packageCost).toBe(0);
+  });
+
+  it('expected liability is P(any OD in 4 pills) x Xanax payout', () => {
+    const p = 1 - Math.pow(0.97, 4);
+    expect(r.expectedLiability).toBeCloseTo(p * 4400000, 2);
+  });
+
+  it('premium is well under full insurance', () => {
+    const full = calcInsurancePricing(DEFAULT_CONFIG, DEFAULT_MARGIN);
+    expect(r.suggestedPrice).toBeLessThan(full.suggestedPrice);
+    expect(r.suggestedPrice).toBe(Math.round(r.expectedLiability / (1 - DEFAULT_MARGIN)));
+  });
+});
+
+// ── reserveLockFor ──────────────────────────────────────────────────
+
+describe('reserveLockFor', () => {
+  it('locks ecstasy payout for jump products', () => {
+    expect(reserveLockFor({ xanax_payout: '4400000', ecstasy_payout: '24470000' })).toBe(24470000);
+    expect(reserveLockFor({ xanax_payout: 0, ecstasy_payout: 24470000 })).toBe(24470000);
+  });
+
+  it('locks only the xanax payout for xanax-only (ecstasy_payout snapshot is 0)', () => {
+    expect(reserveLockFor({ xanax_payout: '4400000', ecstasy_payout: '0' })).toBe(4400000);
   });
 });
 
@@ -519,6 +563,16 @@ describe('validateOdCoverage', () => {
 
   it('ecstasy-only covers ecstasy OD', () => {
     expect(validateOdCoverage('ecstasy_only', 'ecstasy')).toEqual({ covered: true });
+  });
+
+  it('xanax-only covers xanax OD', () => {
+    expect(validateOdCoverage('xanax_only', 'xanax')).toEqual({ covered: true });
+  });
+
+  it('xanax-only does NOT cover ecstasy OD', () => {
+    const r = validateOdCoverage('xanax_only', 'ecstasy');
+    expect(r.covered).toBe(false);
+    expect(r.reason).toContain('not covered');
   });
 
   it('no OD detected returns not covered', () => {

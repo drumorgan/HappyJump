@@ -155,7 +155,9 @@ async function loadStats() {
   // Availability
   try {
     const avail = await getAvailability();
-    document.getElementById('stat-available').textContent = avail.available ?? '—';
+    document.getElementById('stat-available').textContent = avail.available_xanax_only != null
+      ? `${avail.available ?? '—'} · ${avail.available_xanax_only} Scorta`
+      : (avail.available ?? '—');
   } catch {
     document.getElementById('stat-available').textContent = '—';
   }
@@ -251,6 +253,8 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     const faction = t.torn_faction ? ` | ${esc(t.torn_faction)}` : '';
     const productBadge = t.product_type === 'ecstasy_only'
       ? '<span class="product-badge ecstasy-only">Ultimo Miglio</span>'
+      : t.product_type === 'xanax_only'
+      ? '<span class="product-badge xanax-only">La Scorta</span>'
       : t.product_type === 'insurance'
       ? '<span class="product-badge shield">Protezione</span>'
       : '<span class="product-badge package">Bella Vita</span>';
@@ -461,6 +465,8 @@ async function handleItemsUsed(txnId, btn) {
         ? `<div class="items-used-foot">Registered payout: <strong>${$(res.payout_amount || 0)}</strong>${
             res.od_drug === 'xanax' ? ' <span class="items-used-dim">(flat 4x Xanax + rehab — happiness items are not replaced on a Xanax OD)</span>' : ''
           }</div>`
+        : res.product_type === 'xanax_only'
+        ? `<div class="items-used-foot">If they OD'd on a covered Xanax now: <strong>${$(res.xanax_payout)}</strong> payout (flat 4x Xanax + rehab — La Scorta does not cover Ecstasy)</div>`
         : `<div class="items-used-foot">If they OD'd now: <strong>${$(res.projected_ecstasy_payout)}</strong> payout (incl. 4x Xanax + 1x Ecstasy + rehab)</div>`;
       resultEl.innerHTML = `
         <div class="items-used-box">

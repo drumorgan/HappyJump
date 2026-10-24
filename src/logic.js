@@ -101,11 +101,27 @@ export function calcEcstasyOnlyPricing(config, margin) {
 }
 
 /**
+ * Xanax-only insurance: covers the first 4 Xanax taken after purchase (no
+ * Ecstasy coverage). Worst case is the flat Xanax payout, so that's also what
+ * gets locked in the reserve.
+ */
+export function calcXanaxOnlyPricing(config, margin) {
+  const { xanaxPayout } = computePriceComponents(config);
+  const { pXanaxOd } = computeOdProbabilities(config);
+
+  const expectedLiability = pXanaxOd * xanaxPayout;
+  const suggestedPrice = Math.round(expectedLiability / (1 - margin));
+
+  return { packageCost: 0, xanaxPayout, ecstasyPayout: 0, expectedLiability, trueCost: expectedLiability, suggestedPrice };
+}
+
+/**
  * Get pricing for any product type.
  */
 export function getPricing(config, margin, productType) {
   if (productType === 'insurance') return calcInsurancePricing(config, margin);
   if (productType === 'ecstasy_only') return calcEcstasyOnlyPricing(config, margin);
+  if (productType === 'xanax_only') return calcXanaxOnlyPricing(config, margin);
   return calcPricing(config, margin);
 }
 
@@ -186,6 +202,10 @@ export function validateOdCoverage(productType, odDrug) {
     return { covered: false, reason: 'Xanax OD not covered under ecstasy-only policy' };
   }
 
+  if (productType === 'xanax_only' && odDrug === 'ecstasy') {
+    return { covered: false, reason: 'Ecstasy OD not covered under xanax-only policy' };
+  }
+
   return { covered: true };
 }
 
@@ -205,6 +225,15 @@ export function computePayoutAmount(odDrug, txnSnapshots) {
  */
 export function calcAvailability(currentReserve, ecstasyPayout) {
   return Math.max(0, Math.floor(Number(currentReserve) / Number(ecstasyPayout)));
+}
+
+/**
+ * Worst-case liability a transaction locks in the reserve while active.
+ * Xanax-only policies snapshot ecstasy_payout = 0, so this resolves to
+ * xanax_payout for them and to ecstasy_payout for every other product.
+ */
+export function reserveLockFor(txn) {
+  return Math.max(Number(txn.ecstasy_payout || 0), Number(txn.xanax_payout || 0));
 }
 
 /**
