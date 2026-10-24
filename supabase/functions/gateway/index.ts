@@ -370,6 +370,13 @@ function formatStatus(status: string): string {
 // Avoids read-then-write race conditions by using a Postgres function
 // that does: UPDATE config SET current_reserve = current_reserve + amount WHERE id = 1
 
+// Worst-case liability a transaction holds in the reserve while active.
+// Xanax-only policies snapshot ecstasy_payout = 0, so this resolves to their
+// xanax_payout; every other product locks its ecstasy_payout.
+function reserveLockFor(txn: any): number {
+  return Math.max(Number(txn?.ecstasy_payout || 0), Number(txn?.xanax_payout || 0));
+}
+
 async function adjustReserve(supabase: any, amount: number) {
   const { data, error } = await supabase.rpc('adjust_reserve', { amount });
   if (error) {
@@ -1414,7 +1421,7 @@ async function autoCloseExpired(supabase: any) {
   // Auto-expire requested transactions after 48 hours
   const { data: expiredRequests } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, ecstasy_payout')
+    .select('id, torn_id, torn_name, xanax_payout, ecstasy_payout')
     .eq('status', 'requested')
     .not('expires_at', 'is', null)
     .lt('expires_at', nowIso);
@@ -1427,7 +1434,7 @@ async function autoCloseExpired(supabase: any) {
         .eq('id', txn.id);
 
       // Release locked reserve (atomic)
-      await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+      await adjustReserve(supabase, reserveLockFor(txn));
 
       if (txn.torn_id) {
         await syncClientStats(supabase, txn.torn_id);
@@ -1441,7 +1448,7 @@ async function autoCloseExpired(supabase: any) {
           ``,
           `Player: ${expiredLabel}`,
           `Transaction ID: ${txn.id}`,
-          `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+          `Reserve released: ${formatMoney(reserveLockFor(txn))}`,
         ].join('\n'),
       );
     }
@@ -1450,7 +1457,7 @@ async function autoCloseExpired(supabase: any) {
   // Auto-close purchased transactions after 3 days
   const { data: expired } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, ecstasy_payout, suggested_price, amount_paid')
+    .select('id, torn_id, torn_name, xanax_payout, ecstasy_payout, suggested_price, amount_paid')
     .eq('status', 'purchased')
     .lt('closes_at', nowIso);
 
@@ -1468,7 +1475,7 @@ async function autoCloseExpired(supabase: any) {
       .eq('id', txn.id);
 
     // Release locked reserve (atomic)
-    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+    await adjustReserve(supabase, reserveLockFor(txn));
 
     // If we just backfilled amount_paid on a legacy row, fold that revenue
     // into the reserve too (forward-only — under the new rule, purchased rows
@@ -1490,7 +1497,7 @@ async function autoCloseExpired(supabase: any) {
         ``,
         `Player: ${expiredLabel}`,
         `Transaction ID: ${txn.id}`,
-        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+        `Reserve released: ${formatMoney(reserveLockFor(txn))}`,
       ].join('\n'),
     );
   }
@@ -1950,7 +1957,7 @@ async function handleFeRevokeSession(body: any) {
 async function handleCreateTransaction(body: any) {
   console.log('[create-transaction] Handler called for', body.torn_name, body.torn_id);
   const { torn_id, torn_name, torn_faction, torn_level } = body;
-  const validProducts = ['package', 'insurance', 'ecstasy_only'];
+  const validProducts = ['package', 'insurance', 'ecstasy_only', 'xanax_only'];
   const productType = validProducts.includes(body.product_type) ? body.product_type : 'package';
   if (!torn_id || !torn_name) {
     return json({ error: 'Missing required player fields' }, 400);
@@ -2016,8 +2023,12 @@ async function handleCreateTransaction(body: any) {
   const xanaxPayout = 4 * xanaxPrice + rehabBonus;
   const ecstasyPayout = packageCost + rehabBonus;
 
+  // Worst case this policy can cost us — Xanax-only can never pay more than
+  // the flat Xanax payout, so it locks far less reserve than the jump products.
+  const reserveLock = productType === 'xanax_only' ? xanaxPayout : ecstasyPayout;
+
   // Check availability — reserve already reflects locked liabilities for active sales
-  const available = Math.floor(reserve / ecstasyPayout);
+  const available = Math.floor(reserve / reserveLock);
   if (available <= 0) {
     return json({ error: 'No packages available right now. Check back later.' }, 400);
   }
@@ -2048,11 +2059,17 @@ async function handleCreateTransaction(body: any) {
   // Calculate final price
   let expectedLiability: number;
   let snapshotXanaxPayout = xanaxPayout;
+  let snapshotEcstasyPayout = ecstasyPayout;
 
   if (productType === 'ecstasy_only') {
     // Ecstasy-only: covers only the Ecstasy step (flat OD rate, no Xanax coverage)
     expectedLiability = Number(config.ecstasy_od_pct) * ecstasyPayout;
     snapshotXanaxPayout = 0; // Xanax ODs not covered
+  } else if (productType === 'xanax_only') {
+    // Xanax-only: covers the first 4 Xanax after purchase, no Ecstasy step.
+    // ecstasy_payout = 0 is what makes reserveLockFor() lock xanax_payout.
+    expectedLiability = (1 - Math.pow(1 - Number(config.xanax_od_pct), 4)) * xanaxPayout;
+    snapshotEcstasyPayout = 0; // Ecstasy ODs not covered
   } else {
     const pXanOd = 1 - Math.pow(1 - Number(config.xanax_od_pct), 4);
     const pEcsOd = Math.pow(1 - Number(config.xanax_od_pct), 4) * Number(config.ecstasy_od_pct);
@@ -2060,7 +2077,7 @@ async function handleCreateTransaction(body: any) {
   }
 
   // Insurance-only and ecstasy-only: no drug cost, just expected liability + margin
-  const isInsuranceType = productType === 'insurance' || productType === 'ecstasy_only';
+  const isInsuranceType = productType === 'insurance' || productType === 'ecstasy_only' || productType === 'xanax_only';
   const trueCost = isInsuranceType ? expectedLiability : packageCost + expectedLiability;
   const snapshotPackageCost = isInsuranceType ? 0 : packageCost;
   const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
@@ -2075,7 +2092,7 @@ async function handleCreateTransaction(body: any) {
       package_cost: snapshotPackageCost,
       suggested_price: suggestedPrice,
       xanax_payout: snapshotXanaxPayout,
-      ecstasy_payout: ecstasyPayout,
+      ecstasy_payout: snapshotEcstasyPayout,
       expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
     })
     .select('id, status, suggested_price, product_type')
@@ -2084,7 +2101,7 @@ async function handleCreateTransaction(body: any) {
   if (txnErr) return json({ error: txnErr.message }, 500);
 
   // Lock worst-case liability from reserve for this new active sale (atomic)
-  await adjustReserve(supabase, -ecstasyPayout);
+  await adjustReserve(supabase, -reserveLock);
 
   // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
@@ -2092,6 +2109,7 @@ async function handleCreateTransaction(body: any) {
     package: 'La Bella Vita (Package)',
     insurance: 'Protezione Totale (Full Shield)',
     ecstasy_only: "L'Ultimo Miglio (Ecstasy Only)",
+    xanax_only: 'La Scorta (Xanax Only)',
   };
   const productLabel = productLabels[productType] || 'Package';
   console.log('[create-transaction] About to send notification email...');
@@ -2200,9 +2218,12 @@ async function handleGetAvailability() {
   // Reserve already reflects locked liabilities for active sales,
   // so available = floor(reserve / worst_case_payout) with no active subtraction
   const available = Math.max(0, Math.floor(Number(config.current_reserve) / ecstasyPayout));
+  // Xanax-only policies lock only the flat Xanax payout, so more of them fit.
+  const xanaxPayout = 4 * Number(config.xanax_price) + Number(config.rehab_bonus);
+  const availableXanaxOnly = Math.max(0, Math.floor(Number(config.current_reserve) / xanaxPayout));
 
   let nextCloseAt: string | null = null;
-  if (available <= 0) {
+  if (available <= 0 || availableXanaxOnly <= 0) {
     const { data: nextClose } = await supabase
       .from('transactions')
       .select('closes_at')
@@ -2215,7 +2236,7 @@ async function handleGetAvailability() {
     nextCloseAt = nextClose?.closes_at || null;
   }
 
-  return json({ available, nextCloseAt });
+  return json({ available, available_xanax_only: availableXanaxOnly, nextCloseAt });
 }
 
 async function handleAdminUpdateStatus(req: Request, body: any) {
@@ -2233,7 +2254,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Always fetch torn_id from the transaction itself (don't rely on request body)
   const { data: txnRecord, error: fetchErr } = await supabase
     .from('transactions')
-    .select('torn_id, torn_name, status, suggested_price, amount_paid, xanax_payout, ecstasy_payout, payout_amount')
+    .select('torn_id, torn_name, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout, payout_amount')
     .eq('id', txn_id)
     .single();
 
@@ -2243,6 +2264,15 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   }
 
   const tornId = txnRecord.torn_id;
+
+  // Coverage guards — the snapshot payout for an uncovered drug is 0, so
+  // marking it would register a $0 "payout" instead of flagging the mistake.
+  if (txnRecord.product_type === 'xanax_only' && new_status === 'od_ecstasy') {
+    return json({ error: 'La Scorta (Xanax only) does not cover Ecstasy ODs' }, 400);
+  }
+  if (txnRecord.product_type === 'ecstasy_only' && new_status === 'od_xanax') {
+    return json({ error: "L'Ultimo Miglio (Ecstasy only) does not cover Xanax ODs" }, 400);
+  }
 
   // Build update payload
   const updates: Record<string, unknown> = { status: new_status };
@@ -2323,7 +2353,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Re-lock reserve when moving FROM a closed state TO an active state
   if (wasReleased && willBeLocked) {
     try {
-      const ecsP = Number(txnRecord.ecstasy_payout || 0);
+      const ecsP = reserveLockFor(txnRecord);
       await adjustReserve(supabase, -ecsP);
       console.log(`[admin-update-status] Reserve re-locked: -${ecsP} for txn ${txn_id} (${oldStatus} → ${new_status})`);
     } catch (e) {
@@ -2333,7 +2363,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Release reserve when moving FROM an active state TO a closed state
   if (wasLocked && willBeReleased) {
     try {
-      const ecsP = Number(txnRecord.ecstasy_payout || 0);
+      const ecsP = reserveLockFor(txnRecord);
       let releaseAmount: number;
       if (new_status === 'payout_sent') {
         const payAmt = Number(updates.payout_amount || txnRecord.payout_amount || 0);
@@ -2430,7 +2460,7 @@ async function handleAdminRejectAndBlock(req: Request, body: any) {
   // Find all pending (requested/purchased) transactions for this player
   const { data: pending } = await supabase
     .from('transactions')
-    .select('id, status, ecstasy_payout, amount_paid')
+    .select('id, status, xanax_payout, ecstasy_payout, amount_paid')
     .eq('torn_id', String(torn_id))
     .in('status', ['requested', 'purchased']);
 
@@ -2446,7 +2476,7 @@ async function handleAdminRejectAndBlock(req: Request, body: any) {
       .update({ status: 'rejected', closed_at: now })
       .eq('id', txn.id);
 
-    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+    await adjustReserve(supabase, reserveLockFor(txn));
 
     if (txn.status === 'purchased' && Number(txn.amount_paid || 0) > 0) {
       await adjustReserve(supabase, -Number(txn.amount_paid));
@@ -2708,6 +2738,26 @@ async function handleReportOd(body: any) {
     // odEventTimestamp stays — still a valid timestamp for replay-prevention.
   }
 
+  // Xanax-only (La Scorta) clients are stackers — they can be revived and keep
+  // going, so the window may hold more than one OD. The events scan returns the
+  // MOST RECENT one; coverage is decided by the FIRST Xanax OD (only pills 1-4
+  // are covered), so prefer the log's earliest Xanax OD when it's older.
+  if (txn.product_type === 'xanax_only' && logOd?.drug === 'xanax'
+      && (odDrug !== 'xanax' || !odEventTimestamp || logOd.timestamp < odEventTimestamp)) {
+    odDrug = 'xanax';
+    odEventTimestamp = logOd.timestamp;
+    odSource = 'log';
+  }
+
+  // Successful Xanax uses BEFORE the OD decide whether the OD pill was 1-4.
+  // xanaxUsedCount runs to now, so a stacker who OD'd on pill 2 and later took
+  // more would otherwise read as "all 4 used" and be wrongly rejected.
+  let xanaxUsedBeforeOd = xanaxUsedCount;
+  if (txn.product_type === 'xanax_only' && odDrug === 'xanax' && odEventTimestamp && xanaxUsedCount >= 4) {
+    const beforeOd = await countXanaxUsageInLog(api_key, fromTs, undefined, odEventTimestamp - 1);
+    if (!beforeOd.error) xanaxUsedBeforeOd = beforeOd.count;
+  }
+
   // If Ecstasy was used successfully AND no OD was detected, auto-close — the jump is complete.
   // Ecstasy is the final step of a Happy Jump; once it's used without an OD, coverage is spent
   // regardless of how many Xanax show in the log (clients commonly stack Xanax before buying
@@ -2716,7 +2766,9 @@ async function handleReportOd(body: any) {
   // log entry (the OD is recorded separately in the events endpoint, and the use-log narrative does
   // not always contain "overdose"), so `ecstasyUsed` can be true precisely when the covered Ecstasy OD
   // happened. Falling through to the OD verification path below is what pays that claim out.
-  if (!odDrug && ecstasyUsed) {
+  // Not for La Scorta (Xanax only): Ecstasy isn't part of that policy, so
+  // taking one says nothing about whether its 4 covered Xanax are spent.
+  if (!odDrug && ecstasyUsed && txn.product_type !== 'xanax_only') {
     const nowIso = new Date().toISOString();
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
@@ -2728,7 +2780,7 @@ async function handleReportOd(body: any) {
       .update(closeUpdate)
       .eq('id', txn_id);
 
-    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+    await adjustReserve(supabase, reserveLockFor(txn));
 
     // If we just backfilled amount_paid on a legacy row, fold that revenue
     // into the reserve too (same rule as autoCloseExpired — rows purchased
@@ -2747,7 +2799,7 @@ async function handleReportOd(body: any) {
         ``,
         `Player: ${identData.name} [${tornId}]`,
         `Transaction ID: ${txn_id}`,
-        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+        `Reserve released: ${formatMoney(reserveLockFor(txn))}`,
       ].join('\n'),
     );
 
@@ -2760,7 +2812,7 @@ async function handleReportOd(body: any) {
   }
 
   // If all 4 Xanax used and they're claiming a Xanax OD — reject (covered uses consumed)
-  if (xanaxUsedCount >= 4 && odDrug === 'xanax') {
+  if (xanaxUsedBeforeOd >= 4 && odDrug === 'xanax') {
     return json({
       verified: false,
       torn_id: tornId,
@@ -2797,6 +2849,14 @@ async function handleReportOd(body: any) {
     return json({
       verified: false,
       detail: `Xanax OD detected, but your L'Ultimo Miglio policy only covers Ecstasy ODs. Xanax ODs are not covered under this policy.`,
+    });
+  }
+
+  // Xanax-only policies do not cover Ecstasy ODs
+  if (txn.product_type === 'xanax_only' && odDrug === 'ecstasy') {
+    return json({
+      verified: false,
+      detail: `Ecstasy OD detected, but your La Scorta policy only covers Xanax ODs (your first 4 Xanax after purchase). Ecstasy ODs are not covered under this policy.`,
     });
   }
 
@@ -2926,7 +2986,7 @@ async function handleCheckDrugUsage(body: any) {
 
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, status, suggested_price, amount_paid, ecstasy_payout')
+    .select('id, torn_id, purchased_at, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -2964,12 +3024,32 @@ async function handleCheckDrugUsage(body: any) {
   };
 
   const nowIso = new Date().toISOString();
+  const isXanaxOnly = txn.product_type === 'xanax_only';
+
+  // La Scorta (Xanax only) is spent once 4 Xanax are taken successfully. But
+  // stackers can be revived and keep popping, so 4+ successful uses don't prove
+  // the covered pills were clean — an OD on pill 2 followed by more pills also
+  // reads as 4+. If any OD is in the log, leave the policy open for Report OD
+  // to judge (it counts only the uses before the OD).
+  let xanaxOnlyDone = false;
+  if (isXanaxOnly && xanaxResult.count >= 4 && !xanaxResult.error) {
+    const od = await findOdInLog(api_key, fromTs);
+    if (od) {
+      return json({
+        xanax_used: xanaxUsed,
+        ecstasy_used: ecstasyUsed,
+        detail: 'An overdose is in your log since purchase — use Report OD so it can be checked against your 4 covered Xanax.',
+        debug,
+      });
+    }
+    xanaxOnlyDone = true;
+  }
 
   // Auto-close if Ecstasy was used successfully — the Happy Jump is complete.
   // Xanax count is informational only; clients often stack Xanax before purchase, so the
   // in-policy count is frequently < 4 even on a fully-finished jump. Ecstasy use is the
-  // unambiguous "jump done" signal.
-  if (ecstasyUsed) {
+  // unambiguous "jump done" signal. (La Scorta closes on its 4th clean Xanax instead.)
+  if ((ecstasyUsed && !isXanaxOnly) || xanaxOnlyDone) {
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
     if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
@@ -2980,7 +3060,7 @@ async function handleCheckDrugUsage(body: any) {
       .update(closeUpdate)
       .eq('id', txn_id);
 
-    await adjustReserve(supabase, Number(txn.ecstasy_payout || 0));
+    await adjustReserve(supabase, reserveLockFor(txn));
 
     // If we just backfilled amount_paid on a legacy row, fold that revenue
     // into the reserve too (same rule as autoCloseExpired — rows purchased
@@ -2992,14 +3072,20 @@ async function handleCheckDrugUsage(body: any) {
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      xanaxOnlyDone
+        ? `Happy Jump — Clean Close (4 Xanax Used) — ${identData.name} [${tornId}]`
+        : `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
       [
-        `Client's API log confirms Ecstasy taken successfully (${xanaxUsed} Xanax + Ecstasy in-policy).`,
-        `Policy auto-closed clean — the Happy Jump is complete.`,
+        xanaxOnlyDone
+          ? `Client's API log confirms all 4 covered Xanax taken successfully (La Scorta).`
+          : `Client's API log confirms Ecstasy taken successfully (${xanaxUsed} Xanax + Ecstasy in-policy).`,
+        xanaxOnlyDone
+          ? `Policy auto-closed clean — coverage is spent.`
+          : `Policy auto-closed clean — the Happy Jump is complete.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
         `Transaction ID: ${txn_id}`,
-        `Reserve released: ${formatMoney(Number(txn.ecstasy_payout || 0))}`,
+        `Reserve released: ${formatMoney(reserveLockFor(txn))}`,
       ].join('\n'),
     );
 
@@ -3007,7 +3093,9 @@ async function handleCheckDrugUsage(body: any) {
       xanax_used: xanaxUsed,
       ecstasy_used: ecstasyUsed,
       policy_closed: true,
-      detail: 'Ecstasy taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
+      detail: xanaxOnlyDone
+        ? 'All 4 covered Xanax taken with no OD — La Scorta closed clean. Buy another policy to keep stacking covered!'
+        : 'Ecstasy taken successfully — Happy Jump complete! Policy closed clean. Congrats!',
       debug,
     });
   }
@@ -3156,6 +3244,12 @@ async function handleAdminTestOdVerify(req: Request, body: any) {
   ) {
     finalDrug = 'ecstasy';
   }
+  if (txn?.product_type === 'xanax_only' && logOd?.drug === 'xanax'
+      && (finalDrug !== 'xanax' || !finalTs || logOd.timestamp < finalTs)) {
+    finalDrug = 'xanax';
+    finalSource = 'log';
+    finalTs = logOd.timestamp;
+  }
 
   return json({
     player: {
@@ -3301,7 +3395,7 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
   const supabase = serviceClient();
   const { data: txn } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, purchased_at, closed_at, status, od_event_timestamp, payout_amount, consumed_items')
+    .select('id, torn_id, torn_name, purchased_at, closed_at, status, product_type, xanax_payout, od_event_timestamp, payout_amount, consumed_items')
     .eq('id', txn_id)
     .maybeSingle();
   if (!txn) return json({ error: 'Transaction not found' }, 404);
@@ -3378,6 +3472,8 @@ async function handleAdminActiveConsumed(req: Request, body: any) {
     has_key: true,
     consumed: computed.consumedItems,
     projected_ecstasy_payout: computed.payout,
+    product_type: txn.product_type || 'package',
+    xanax_payout: Number(txn.xanax_payout || 0),
     xanax_used: xanaxResult.count,
     status: txn.status,
     settled,
