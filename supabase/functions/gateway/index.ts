@@ -6338,6 +6338,12 @@ serve(async (req) => {
         return json({ error: `Unknown action: ${action}` }, 400);
     }
   } catch (err) {
+    // Torn occasionally answers with an HTML page (outage, maintenance,
+    // Cloudflare) and the `await res.json()` on it throws a bare parser error
+    // like "Unexpected token '<'". Say what actually happened instead.
+    if (err instanceof SyntaxError && /token '<'|<html/i.test(err.message)) {
+      return json({ error: 'Torn API returned an error page instead of data (Torn may be down or busy). Try again in a minute.' }, 502);
+    }
     return json({ error: err.message }, 500);
   }
 });
