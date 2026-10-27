@@ -1384,3 +1384,45 @@ body::before {
     scroll-behavior: auto !important;
   }
 }
+
+/* ============ Referral partners ============ */
+.partner-hint {
+  font-size: 0.85rem;
+  color: var(--muted);
+  margin-top: 0.35rem;
+  overflow-wrap: anywhere;
+}
+
+.partner-operator {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.9rem 1rem;
+  margin-bottom: 1rem;
+}
+
+.partner-balance {
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.partner-balance.owed {
+  color: var(--gold-light);
+}
+
+.partner-link-row {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.75rem;
+}
+
+.partner-link-row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.partner-stat-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.5rem 1rem;
+  margin-top: 0.75rem;
+}

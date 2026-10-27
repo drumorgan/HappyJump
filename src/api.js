@@ -611,3 +611,35 @@ export async function feTestCountAttacks({ apiKey, fromTs, toTs }) {
   });
 }
 
+
+// --- Referral partners ---
+
+/** Become a referral partner (self-serve). Returns the caller's partner stats. */
+export async function partnerSignup(auth) {
+  return gateway('partner-signup', authPayload(auth));
+}
+
+/** The caller's partner stats, or { partner: null } if they haven't signed up. */
+export async function partnerStats(auth) {
+  return gateway('partner-stats', authPayload(auth));
+}
+
+export async function adminListPartners() {
+  return gateway('admin-list-partners');
+}
+
+export async function adminUpdatePartner(tornId, updates) {
+  return gateway('admin-update-partner', { torn_id: String(tornId), ...updates });
+}
+
+export async function adminSetOperatorKey(key) {
+  return gateway('admin-set-operator-key', { key });
+}
+
+export async function adminScanPartnerPayments() {
+  return gateway('admin-scan-partner-payments');
+}
+
+export async function adminRecordPartnerPayment(send) {
+  return gateway('admin-record-partner-payment', send);
+}

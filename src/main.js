@@ -1,4 +1,4 @@
-import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats, setApiKey, autoLogin, revokeSession } from './api.js';
+import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats, setApiKey, autoLogin, revokeSession, partnerSignup, partnerStats } from './api.js';
 import { esc, decodeEntities, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -14,6 +14,19 @@ let currentSession = null;          // { player_id, session_token } after set-ap
 let selectedProduct = 'insurance'; // 'package' | 'insurance' | 'ecstasy_only' | 'xanax_only'
 const topForm = document.getElementById('api-form-top');
 const topInput = document.getElementById('api-key-top');
+
+// --- Referral code ---
+// A ?ref=<torn_id> link is remembered so it still applies if the visitor buys
+// later. The gateway decides whether it counts (new clients only, no self-referral).
+const REF_STORAGE_KEY = 'happyjump_ref';
+try {
+  const ref = new URLSearchParams(location.search).get('ref');
+  if (ref && /^\d+$/.test(ref)) localStorage.setItem(REF_STORAGE_KEY, ref);
+} catch { /* storage blocked — the ref just won't persist */ }
+
+function storedRefCode() {
+  try { return localStorage.getItem(REF_STORAGE_KEY) || null; } catch { return null; }
+}
 
 // --- Session storage ---
 // We store only { player_id, session_token } in localStorage. The raw Torn API
@@ -628,6 +641,7 @@ function showPlayerView(player, config, history, apiKey) {
             torn_faction: player.torn_faction,
             torn_level: player.torn_level,
             product_type: selectedProduct,
+            ref_code: storedRefCode(),
           }, currentAuth());
           const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio", xanax_only: 'La Scorta' };
           const productLabel = productLabels[selectedProduct] || 'package';
@@ -666,6 +680,9 @@ function showPlayerView(player, config, history, apiKey) {
 
   // History
   renderHistory(history.transactions);
+
+  // Refer & Earn card (hidden if the gateway predates the partner actions)
+  renderPartnerCard();
 
   // Tier ladder with current highlight
   renderTierLadder(cleanCount, config);
@@ -1075,3 +1092,82 @@ function renderTierLadder(cleanCount, config) {
   }).join('');
 }
 
+
+// --- Refer & Earn (referral partner program) ---
+const PARTNER_STATUS_LABELS = { requested: 'awaiting payment', purchased: 'paid', closed_clean: 'paid', od_xanax: 'paid', od_ecstasy: 'paid', payout_sent: 'paid', rejected: 'expired' };
+
+async function renderPartnerCard() {
+  const section = document.getElementById('partner-section');
+  const body = document.getElementById('partner-body');
+  const auth = currentAuth();
+  if (!section || !body || !auth) return;
+
+  let stats;
+  try {
+    stats = await partnerStats(auth);
+  } catch {
+    // Older gateway without the partner actions — keep the card hidden.
+    section.classList.add('hidden');
+    return;
+  }
+  section.classList.remove('hidden');
+
+  if (!stats.partner) {
+    body.innerHTML = `
+      <p class="deal-detail">Send people to Happy Jump with your own link. Every policy they pay for earns you <strong>25% of Giro's profit</strong> on it — on their first policy and every one after.</p>
+      <p class="deal-detail" style="opacity:0.75">Applies to new clients only (people who haven't bought a policy before). Your own purchases don't count. Commission is paid in-game by Send Money.</p>
+      <button id="partner-signup-btn" class="btn-verify-payment">Get my referral link</button>`;
+    document.getElementById('partner-signup-btn').onclick = async (e) => {
+      e.target.disabled = true;
+      e.target.textContent = 'Setting up…';
+      try {
+        await partnerSignup(currentAuth());
+        showToast('You are now a Happy Jump referral partner!', 'success');
+        renderPartnerCard();
+      } catch (err) {
+        showToast(err.message, 'error');
+        e.target.disabled = false;
+        e.target.textContent = 'Get my referral link';
+      }
+    };
+    return;
+  }
+
+  const p = stats.partner;
+  const link = `https://happyjump.girovagabondo.com/?ref=${p.torn_id}`;
+  const policies = (stats.policies || []).map((t) => `<tr>
+      <td>${esc(new Date(t.created_at).toLocaleDateString())}</td>
+      <td>${esc(t.torn_name)}</td>
+      <td>${esc(PARTNER_STATUS_LABELS[t.status] || t.status)}</td>
+      <td>${t.status === 'rejected' ? '—' : $(t.commission_amount)}</td>
+    </tr>`).join('');
+
+  body.innerHTML = `
+    ${p.active ? '' : '<p class="deal-detail" style="color:#e8a735">Your referral link is paused — new policies won’t earn commission. Contact Giro.</p>'}
+    <div class="partner-link-row">
+      <input type="text" id="partner-link" readonly value="${esc(link)}" />
+      <button id="partner-copy-btn" class="btn-verify-payment">Copy</button>
+    </div>
+    <div class="partner-stat-grid">
+      <div class="deal-detail">Clients referred: <strong>${Number(stats.referred_clients)}</strong></div>
+      <div class="deal-detail">Your share: <strong>${Math.round(p.margin_share * 100)}%</strong> of profit</div>
+      <div class="deal-detail">Earned: <strong>${$(stats.earned)}</strong></div>
+      <div class="deal-detail">Paid to you: <strong>${$(stats.paid)}</strong></div>
+      <div class="deal-detail">Balance owed: <strong>${$(stats.balance)}</strong></div>
+      <div class="deal-detail">Awaiting client payment: <strong>${$(stats.pending)}</strong></div>
+    </div>
+    ${policies ? `<details class="items-used-diag" style="margin-top:0.75rem"><summary>Referred policies (${stats.policies.length})</summary>
+      <table class="history-table"><thead><tr><th>Date</th><th>Client</th><th>Status</th><th>Commission</th></tr></thead><tbody>${policies}</tbody></table>
+    </details>` : ''}`;
+
+  document.getElementById('partner-copy-btn').onclick = async () => {
+    const input = document.getElementById('partner-link');
+    try {
+      await navigator.clipboard.writeText(link);
+      showToast('Referral link copied', 'success');
+    } catch {
+      input.select();
+      showToast('Select the link and copy it', 'success');
+    }
+  };
+}
