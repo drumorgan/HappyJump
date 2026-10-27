@@ -1,5 +1,5 @@
 import { getConfig, validatePlayer, createTransaction, getAvailability, getPlayerTransactions, fetchMarketPrices, reportOd, checkDrugUsage, verifyPayment, getPublicStats, setApiKey, autoLogin, revokeSession } from './api.js';
-import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
+import { esc, decodeEntities, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
 const toastEl = document.getElementById('toast');
@@ -535,8 +535,8 @@ function showPlayerView(player, config, history, apiKey) {
 
   // Welcome
   const greeting = isReturning ? 'Welcome back' : 'Welcome';
-  document.getElementById('pv-name').textContent = `${greeting}, ${player.torn_name}`;
-  document.getElementById('pv-meta').textContent = `Level ${player.torn_level} | ${player.torn_faction || 'No faction'} | ${cleanCount} clean jump${cleanCount !== 1 ? 's' : ''}`;
+  document.getElementById('pv-name').textContent = `${greeting}, ${decodeEntities(player.torn_name)}`;
+  document.getElementById('pv-meta').textContent = `Level ${player.torn_level} | ${decodeEntities(player.torn_faction) || 'No faction'} | ${cleanCount} clean jump${cleanCount !== 1 ? 's' : ''}`;
 
   // Tier badge — Famiglia members get a permanent marker
   const permanentTag = isFamigliaPermanent ? ' <span class="famiglia-permanent-tag">Permanent</span>' : '';
