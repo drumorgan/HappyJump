@@ -27,7 +27,7 @@ import {
   listFeFactions,
 } from './api.js';
 import { supabase } from './supabaseClient.js';
-import { esc, showToast as _showToast } from './utils.js';
+import { esc, decodeEntities, showToast as _showToast } from './utils.js';
 
 const toastEl = document.getElementById('toast');
 const loadingEl = document.getElementById('loading');
@@ -294,9 +294,9 @@ function renderIdentityBar() {
   if (feSession) {
     bar.classList.remove('hidden');
     signInView.classList.add('hidden');
-    document.getElementById('fe-identity-name').textContent = feSession.torn_name || '—';
+    document.getElementById('fe-identity-name').textContent = decodeEntities(feSession.torn_name) || '—';
     const factionEl = document.getElementById('fe-identity-faction');
-    factionEl.textContent = feSession.torn_faction ? `· ${feSession.torn_faction}` : '';
+    factionEl.textContent = feSession.torn_faction ? `· ${decodeEntities(feSession.torn_faction)}` : '';
   } else {
     bar.classList.add('hidden');
     signInView.classList.remove('hidden');
@@ -1452,11 +1452,11 @@ function renderJoinOrMe(event, participants) {
       document.getElementById('me-count').innerHTML =
         `${respect.toFixed(2)} <span class="recent-meta" style="font-size:0.45em">respect</span>`;
       document.getElementById('me-meta').textContent =
-        `${attacks} attacks · avg ${avg.toFixed(2)}${best > 0 ? ` · best ${best.toFixed(2)}` : ''} · ${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
+        `${attacks} attacks · avg ${avg.toFixed(2)}${best > 0 ? ` · best ${best.toFixed(2)}` : ''} · ${decodeEntities(myRow.torn_name)} · ${decodeEntities(myRow.torn_faction) || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
     } else {
       document.getElementById('me-count').textContent = Number(myRow.last_count) || 0;
       document.getElementById('me-meta').textContent =
-        `${myRow.torn_name} · ${myRow.torn_faction || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
+        `${decodeEntities(myRow.torn_name)} · ${decodeEntities(myRow.torn_faction) || 'No faction'} · since ${fmtDateTime(myRow.personal_start_at)}`;
     }
     // "Change my start time" is meaningless on attack events — everyone
     // shares the event window. Hide the button + collapse the inline
