@@ -3735,7 +3735,10 @@ async function handleAdminListPartners(req: Request) {
     };
   });
 
-  return json({ partners: list, operator_key: op || null });
+  const operatorKey = Deno.env.get('OPERATOR_TORN_KEY')
+    ? { source: 'secret' }
+    : op ? { source: 'saved', ...op } : null;
+  return json({ partners: list, operator_key: operatorKey });
 }
 
 async function handleAdminUpdatePartner(req: Request, body: any) {
@@ -3758,6 +3761,35 @@ async function handleAdminUpdatePartner(req: Request, body: any) {
   const { error } = await serviceClient().from('partners').update(updates).eq('torn_id', String(torn_id));
   if (error) return json({ error: error.message }, 500);
   return json({ success: true });
+}
+
+// Giro's own Torn key, for reading his log. The OPERATOR_TORN_KEY Edge Function
+// secret (Supabase dashboard → Edge Functions → Secrets) wins; the key saved
+// from the admin Partners tab is the fallback.
+async function getOperatorKey(supabase: any): Promise<{ key: string; source: 'secret' | 'saved' } | null> {
+  const fromSecret = (Deno.env.get('OPERATOR_TORN_KEY') || '').trim();
+  if (fromSecret) return { key: fromSecret, source: 'secret' };
+  const { data: op } = await supabase
+    .from('operator_secrets').select('api_key_enc, api_key_iv').eq('id', 1).maybeSingle();
+  if (!op) return null;
+  const key = await decryptApiKey(op.api_key_enc, op.api_key_iv);
+  return key ? { key, source: 'saved' } : null;
+}
+
+// Admin "Test Key": confirm the operator key works and can read the log.
+async function handleAdminTestOperatorKey(req: Request) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const op = await getOperatorKey(serviceClient());
+  if (!op) return json({ ok: false, detail: 'No key found. Add an OPERATOR_TORN_KEY secret in Supabase (or save a key in the Partners tab).' });
+
+  const ident = await fetch(`${TORN_API}/user/?selections=basic&key=${op.key}`).then((r) => r.json());
+  if (ident.error) return json({ ok: false, source: op.source, detail: `Torn rejected the key: ${ident.error.error}` });
+  const log = await fetch(`${TORN_API}/user/?selections=log&key=${op.key}`).then((r) => r.json());
+  if (log.error) {
+    return json({ ok: false, source: op.source, torn_name: ident.name, torn_id: String(ident.player_id), detail: `Key works but can't read your log (${log.error.error}). Create a Custom Key with "log" access.` });
+  }
+  return json({ ok: true, source: op.source, torn_name: ident.name, torn_id: String(ident.player_id) });
 }
 
 // Store Giro's own Torn key (encrypted) so the gateway can read his log for
@@ -3803,11 +3835,9 @@ async function handleAdminScanPartnerPayments(req: Request) {
   if (!user) return json({ error: 'Not authenticated' }, 401);
   const supabase = serviceClient();
 
-  const { data: op } = await supabase
-    .from('operator_secrets').select('api_key_enc, api_key_iv').eq('id', 1).maybeSingle();
-  if (!op) return json({ error: 'No operator Torn key saved yet — add it in the Partners tab first.' }, 409);
-  const apiKey = await decryptApiKey(op.api_key_enc, op.api_key_iv);
-  if (!apiKey) return json({ error: 'Operator key could not be decrypted — save it again.' }, 409);
+  const op = await getOperatorKey(supabase);
+  if (!op) return json({ error: 'No operator Torn key — add an OPERATOR_TORN_KEY secret in Supabase (or save one in the Partners tab).' }, 409);
+  const apiKey = op.key;
 
   const { data: partners } = await supabase.from('partners').select('torn_id, torn_name, created_at');
   if (!partners || partners.length === 0) return json({ recorded: [], unmatched: [], scanned: 0 });
@@ -6659,6 +6689,8 @@ serve(async (req) => {
         return await handleAdminListPartners(req);
       case 'admin-update-partner':
         return await handleAdminUpdatePartner(req, body);
+      case 'admin-test-operator-key':
+        return await handleAdminTestOperatorKey(req);
       case 'admin-set-operator-key':
         return await handleAdminSetOperatorKey(req, body);
       case 'admin-scan-partner-payments':
