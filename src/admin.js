@@ -166,9 +166,12 @@ async function loadStats() {
   // Availability
   try {
     const avail = await getAvailability();
-    document.getElementById('stat-available').textContent = avail.available_xanax_only != null
-      ? `${avail.available ?? '—'} · ${avail.available_xanax_only} Scorta`
-      : (avail.available ?? '—');
+    // Two separate pools: a jump policy locks the full Ecstasy payout, La Scorta
+    // only the Xanax payout, so the same reserve covers far more La Scorta.
+    const row = (n, kind) => `<div class="avail-row"><span class="avail-num">${esc(String(n ?? '—'))}</span><span class="avail-kind">${kind}</span></div>`;
+    document.getElementById('stat-available').innerHTML = avail.available_xanax_only != null
+      ? row(avail.available, 'Happy Jump') + row(avail.available_xanax_only, 'La Scorta')
+      : esc(String(avail.available ?? '—'));
   } catch {
     document.getElementById('stat-available').textContent = '—';
   }
