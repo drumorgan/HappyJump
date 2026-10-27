@@ -74,6 +74,7 @@
       <div class="tab-bar">
         <button class="tab-btn active" data-tab="transactions">Transactions</button>
         <button class="tab-btn" data-tab="clients">Clients</button>
+        <button class="tab-btn" data-tab="partners">Partners</button>
       </div>
 
       <!-- Transactions tab -->
@@ -120,6 +121,25 @@
           <input type="text" id="client-search" placeholder="Search name or ID..." class="client-search-input" />
         </div>
         <div id="client-list"></div>
+      </div>
+
+      <!-- Partners tab (referral commissions) -->
+      <div id="tab-partners" class="tab-content">
+        <div class="partner-operator card-lite">
+          <div class="config-section-label">Your Torn key (for verifying commission payments)</div>
+          <div id="operator-key-status" class="partner-hint">Loading…</div>
+          <div class="filter-bar" style="margin-top:0.5rem">
+            <input type="password" id="operator-key-input" class="client-search-input" placeholder="Custom Key with log access" autocomplete="off" />
+            <button id="operator-key-save" class="refresh-btn">Save Key</button>
+          </div>
+          <div class="partner-hint">Pay partners with <strong>Send Money</strong> and put <strong>commission</strong> in the message — those sends are recorded automatically. Any other send to a partner shows up below for you to count by hand.</div>
+        </div>
+        <div class="filter-bar">
+          <button id="scan-payments-btn" class="refresh-btn">Verify Payments (scan my log)</button>
+          <button id="refresh-partners-btn" class="refresh-btn">Refresh</button>
+        </div>
+        <div id="partner-scan-result"></div>
+        <div id="partner-list"></div>
       </div>
 
       <!-- Config panel -->

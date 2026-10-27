@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect, adminListPartners, adminUpdatePartner, adminSetOperatorKey, adminScanPartnerPayments, adminRecordPartnerPayment } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -31,6 +31,7 @@ document.querySelectorAll('.tab-btn').forEach((btn) => {
     document.getElementById('tab-' + btn.dataset.tab).classList.add('active');
 
     if (btn.dataset.tab === 'clients') loadClients();
+    if (btn.dataset.tab === 'partners') loadPartners();
   });
 });
 
@@ -120,7 +121,17 @@ async function loadStats() {
   const margin = txns
     .filter((t) => closedStatuses.includes(t.status))
     .reduce((sum, t) => sum + (Number(t.suggested_price || 0) - Number(t.package_cost || 0)), 0);
-  const net = margin - paid;
+  // Referral commissions come out of the margin on the same closed policies.
+  // Separate query: the column only exists after migration 020, and a missing
+  // column must not take the whole stats bar down with it.
+  let commissions = 0;
+  const { data: commRows, error: commErr } = await supabase
+    .from('transactions')
+    .select('commission_amount')
+    .in('status', closedStatuses)
+    .gt('commission_amount', 0);
+  if (!commErr) commissions = (commRows || []).reduce((sum, t) => sum + Number(t.commission_amount || 0), 0);
+  const net = margin - paid - commissions;
 
   const totalOd = xanOd + ecsOd;
   const totalCompleted = clean + totalOd;
@@ -1326,3 +1337,148 @@ document.getElementById('fetch-prices-btn').addEventListener('click', async () =
 
 // --- Init ---
 checkSession();
+
+// --- Partners (referral commissions) ---
+const partnerList = document.getElementById('partner-list');
+const partnerScanResult = document.getElementById('partner-scan-result');
+
+async function loadPartners() {
+  partnerList.innerHTML = '<div class="partner-hint">Loading partners…</div>';
+  let res;
+  try {
+    res = await adminListPartners();
+  } catch (err) {
+    partnerList.innerHTML = `<div class="items-used-msg">Error: ${esc(err.message)}</div>`;
+    return;
+  }
+
+  const op = res.operator_key;
+  document.getElementById('operator-key-status').innerHTML = op
+    ? `Saved for <strong>${esc(op.torn_name)}</strong> [${esc(op.torn_id)}] · updated ${esc(new Date(op.updated_at).toLocaleString())}`
+    : '<span style="color:#e8a735">No key saved — payment verification is off until you add one.</span>';
+
+  const partners = res.partners || [];
+  if (partners.length === 0) {
+    partnerList.innerHTML = '<div class="partner-hint">No partners yet. Anyone signed in on the storefront can press "Get my referral link".</div>';
+    return;
+  }
+
+  const link = (id) => `https://happyjump.girovagabondo.com/?ref=${id}`;
+  partnerList.innerHTML = partners.map((p) => {
+    const pays = (p.payments || []).map((x) =>
+      `<li>${esc(new Date(x.sent_at).toLocaleDateString())} — ${$(x.amount)} <span class="items-used-dim">(${esc(x.matched_by)})</span></li>`).join('');
+    return `<div class="client-card ${p.active ? '' : 'client-blocked'}">
+      <div class="client-top">
+        <div>
+          <span class="txn-player">${esc(p.torn_name)}</span>
+          <span class="txn-player-id">[${esc(p.torn_id)}]</span>
+          ${p.active ? '' : '<span class="blocked-badge">INACTIVE</span>'}
+        </div>
+        <span class="partner-balance ${p.balance > 0 ? 'owed' : ''}">Owed: ${$(p.balance)}</span>
+      </div>
+      <div class="client-stats">
+        <span>Clients: ${p.referred_clients}</span>
+        <span>Paid policies: ${p.paid_policies}</span>
+        <span>Earned: ${$(p.earned)}</span>
+        <span>Pending: ${$(p.pending)}</span>
+        <span>Paid: ${$(p.paid)}</span>
+        <span>Since: ${esc(new Date(p.created_at).toLocaleDateString())}</span>
+      </div>
+      <div class="partner-hint">Link: <code>${esc(link(p.torn_id))}</code></div>
+      <div class="client-notes-row">
+        <label class="partner-hint">Margin share %</label>
+        <input type="number" min="0" max="100" step="1" class="client-notes-input partner-share-input" style="max-width:6rem"
+               value="${Math.round(p.margin_share * 100)}" data-torn-id="${esc(p.torn_id)}" />
+        <button class="btn-save-notes partner-share-save" data-torn-id="${esc(p.torn_id)}">Save</button>
+        <button class="${p.active ? 'btn-block' : 'btn-unblock'} partner-toggle" data-torn-id="${esc(p.torn_id)}" data-active="${p.active}">${p.active ? 'Deactivate' : 'Activate'}</button>
+      </div>
+      ${pays ? `<details class="items-used-diag"><summary>Payments (${p.payments.length})</summary><ul>${pays}</ul></details>` : ''}
+    </div>`;
+  }).join('');
+
+  partnerList.querySelectorAll('.partner-share-save').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const input = partnerList.querySelector(`.partner-share-input[data-torn-id="${btn.dataset.tornId}"]`);
+      const pct = Number(input.value);
+      if (!Number.isFinite(pct) || pct < 0 || pct > 100) { showToast('Share must be 0–100%', 'error'); return; }
+      btn.disabled = true;
+      try {
+        await adminUpdatePartner(btn.dataset.tornId, { margin_share: pct / 100 });
+        showToast('Share saved — applies to new policies only', 'success');
+      } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+      }
+      btn.disabled = false;
+    });
+  });
+
+  partnerList.querySelectorAll('.partner-toggle').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      btn.disabled = true;
+      try {
+        await adminUpdatePartner(btn.dataset.tornId, { active: btn.dataset.active !== 'true' });
+        await loadPartners();
+      } catch (err) {
+        showToast('Failed: ' + err.message, 'error');
+        btn.disabled = false;
+      }
+    });
+  });
+}
+
+document.getElementById('refresh-partners-btn').addEventListener('click', loadPartners);
+
+document.getElementById('operator-key-save').addEventListener('click', async (e) => {
+  const input = document.getElementById('operator-key-input');
+  const key = input.value.trim();
+  if (!key) { showToast('Paste your Torn key first', 'error'); return; }
+  e.target.disabled = true;
+  try {
+    const res = await adminSetOperatorKey(key);
+    input.value = '';
+    showToast(`Key saved for ${res.torn_name}`, 'success');
+    await loadPartners();
+  } catch (err) {
+    showToast('Key not saved: ' + err.message, 'error');
+  }
+  e.target.disabled = false;
+});
+
+document.getElementById('scan-payments-btn').addEventListener('click', async (e) => {
+  const btn = e.target;
+  btn.disabled = true;
+  btn.textContent = 'Scanning your log…';
+  partnerScanResult.innerHTML = '';
+  try {
+    const res = await adminScanPartnerPayments();
+    const recorded = res.recorded || [];
+    const unmatched = res.unmatched || [];
+    const row = (s) => `${esc(new Date(s.sent_at).toLocaleString())} — ${$(s.amount)} to ${esc(s.partner_name)} [${esc(s.partner_torn_id)}]`;
+    partnerScanResult.innerHTML = `<div class="items-used-box">
+      <div class="items-used-head">Scanned ${Number(res.scanned || 0)} log entries${res.scan_error ? ` — <span style="color:#ff6b6b">${esc(res.scan_error)}</span>` : ''}</div>
+      <div>Recorded as commission: <strong>${recorded.length}</strong></div>
+      ${recorded.length ? `<ul>${recorded.map((s) => `<li>${row(s)}</li>`).join('')}</ul>` : ''}
+      ${unmatched.length ? `<div style="margin-top:0.5rem">Other sends to partners (no "commission" in the message):</div>
+        <ul>${unmatched.map((s, i) => `<li>${row(s)} <button class="btn-save-notes count-send" data-i="${i}">Count as commission</button></li>`).join('')}</ul>` : ''}
+    </div>`;
+    partnerScanResult.querySelectorAll('.count-send').forEach((b) => {
+      b.addEventListener('click', async () => {
+        const s = unmatched[Number(b.dataset.i)];
+        b.disabled = true;
+        try {
+          await adminRecordPartnerPayment({ log_id: s.log_id, partner_torn_id: s.partner_torn_id, amount: s.amount, sent_at: s.sent_at });
+          b.replaceWith(Object.assign(document.createElement('span'), { textContent: '✓ counted', className: 'items-used-dim' }));
+          await loadPartners();
+        } catch (err) {
+          showToast('Failed: ' + err.message, 'error');
+          b.disabled = false;
+        }
+      });
+    });
+    if (recorded.length) await Promise.all([loadPartners(), loadConfig()]);
+  } catch (err) {
+    partnerScanResult.innerHTML = `<div class="items-used-msg">Error: ${esc(err.message)}</div>`;
+  }
+  btn.disabled = false;
+  btn.textContent = 'Verify Payments (scan my log)';
+});

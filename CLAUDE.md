@@ -70,6 +70,14 @@ A Happy Jump consumes: 4x Xanax, 5x Erotic DVDs, 1x Ecstasy. Any OD at any step 
 - **La Scorta coverage:** an OD counts only if fewer than 4 successful Xanax preceded it (report-od recounts up to the earliest Xanax OD, since revived stackers keep going). `check-drug-usage` auto-closes clean at 4 successful Xanax unless an OD is in the log. Taking Ecstasy does not close it.
 - **Availability:** `get-availability` returns `available` (jump products) and `available_xanax_only`. The storefront hides the La Scorta tab when `available_xanax_only` is missing (older gateway would silently create a `package`).
 
+### Referral Partners (migration `020_referral_partners.sql`)
+
+- **Self-serve:** any signed-in, non-blocked client presses "Get my referral link" on the storefront → `partners` row at the default 25% `margin_share`. Link is `?ref=<torn_id>`, remembered in `localStorage['happyjump_ref']` and sent as `ref_code` on `create-transaction`.
+- **Commission** = `margin_share × (suggested_price − true_cost)`, i.e. a share of Giro's profit, snapshotted on the transaction (`referrer_torn_id`, `commission_share`, `commission_amount`). Owed only while the transaction is in a paid status (`purchased`, `od_*`, `closed_clean`, `payout_sent`); `requested` is pending, `rejected`/expired owes nothing. Share edits apply to future policies only.
+- **Attribution is sticky** (`clients.referred_by`, first referrer wins): every later policy from that client pays the partner with or without the link. A ref only attaches to a client with no prior paid policies, never to the partner themselves, and only when the request is authenticated as that buyer (session or key) — `torn_id` in the body is unauthenticated. Inactive partners earn nothing.
+- **Payments:** Giro pays by Send Money with "commission" in the message. `admin-scan-partner-payments` reads Giro's log with the key stored in `operator_secrets` (service-role-only; separate from `player_secrets` so a storefront sign-out can't delete it, and not in the public `config` table). Sends that mention "commission" are recorded automatically; other sends to partners are listed for a manual "Count as commission". `partner_payments.log_id` is unique so rescans never double-count. Each recorded payment is deducted from `current_reserve`.
+- **Admin net profit** subtracts commissions on closed policies.
+
 ### Payout Trade Subject Lines
 
 Use these exact subject lines when sending payouts in-game so trade logs are searchable:
@@ -234,6 +242,13 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 | `list-faction-events`    | None     | Recent events for the picker view |
 | `list-fe-factions`       | None (FE auth optional) | Distinct factions among FE-signed-in users with member counts; flags caller's own faction |
 | `fetch-torn-event-start` | Key or FE session | Best-effort autofill of personal start from Torn calendar |
+| `partner-signup`         | Key or session | Become a referral partner (self-serve) |
+| `partner-stats`          | Key or session | Caller's partner link, earnings, balance, referred policies |
+| `admin-list-partners`    | Admin    | All partners with earned / pending / paid / balance + operator key status |
+| `admin-update-partner`   | Admin    | Change a partner's margin share or active flag |
+| `admin-set-operator-key` | Admin    | Save Giro's Torn key (encrypted, needs `log` scope) |
+| `admin-scan-partner-payments` | Admin | Scan Giro's log for Send Money to partners; auto-record "commission" sends |
+| `admin-record-partner-payment` | Admin | Count an unmatched send as a commission payment |
 
 ## Torn API Integration
 
