@@ -1954,6 +1954,44 @@ async function handleFeRevokeSession(body: any) {
   return json({ success: true });
 }
 
+// ── Referral partners ────────────────────────────────────────────────
+// Which partner (if any) earns commission on this buyer's policy. A client is
+// tied permanently to the first partner who referred them (clients.referred_by);
+// after that every policy they buy pays that partner, link or no link. A ref
+// code only attaches to a NEW client (no paid policies yet) and never to the
+// partner themselves. Inactive partners earn nothing.
+async function resolveReferral(
+  supabase: any,
+  buyerTornId: string,
+  refCode: unknown,
+  isExistingClient: boolean,
+): Promise<{ partnerId: string; share: number; attachNow: boolean } | null> {
+  const { data: client } = await supabase
+    .from('clients')
+    .select('referred_by')
+    .eq('torn_id', buyerTornId)
+    .maybeSingle();
+
+  let partnerId: string | null = client?.referred_by || null;
+  let attachNow = false;
+  if (!partnerId) {
+    const code = String(refCode ?? '').trim();
+    if (!/^\d+$/.test(code) || isExistingClient) return null;
+    partnerId = code;
+    attachNow = true;
+  }
+  if (partnerId === buyerTornId) return null; // self-referral
+
+  const { data: partner } = await supabase
+    .from('partners')
+    .select('torn_id, margin_share, active')
+    .eq('torn_id', partnerId)
+    .maybeSingle();
+  if (!partner || !partner.active) return null;
+
+  return { partnerId, share: Number(partner.margin_share), attachNow };
+}
+
 async function handleCreateTransaction(body: any) {
   console.log('[create-transaction] Handler called for', body.torn_name, body.torn_id);
   const { torn_id, torn_name, torn_faction, torn_level } = body;
@@ -2003,12 +2041,25 @@ async function handleCreateTransaction(body: any) {
   // via the user's own key/session; fall back to config if the lookup fails
   // so a Torn API blip can't block a purchase.
   let livePrices: { xanax: number; edvd: number; ecstasy: number } | null = null;
+  // Torn ID proven by the caller's own session/key. torn_id in the body is not
+  // authenticated, so referral attribution only attaches when they match —
+  // otherwise a partner could file a throwaway request in a prospect's name
+  // and claim them before they ever show up.
+  let verifiedCallerId: string | null = null;
   if (body.key || body.api_key || (body.player_id && body.session_token)) {
     const resolved = await resolveApiKey(body);
     // If auth was supplied but invalid (e.g. expired session), resolveApiKey
     // returns a Response — don't fail the purchase over it, just fall back.
     if (!(resolved instanceof Response)) {
       livePrices = await fetchLiveItemPrices(resolved.key);
+      if (resolved.torn_id) {
+        verifiedCallerId = String(resolved.torn_id);
+      } else if (body.ref_code) {
+        // Raw key (no session): look up whose key it is, only when a ref is in play.
+        const who = await fetch(`${TORN_API}/user/?selections=basic&key=${resolved.key}`)
+          .then((r) => r.json()).catch(() => null);
+        if (who && !who.error && who.player_id) verifiedCallerId = String(who.player_id);
+      }
     }
   }
 
@@ -2082,6 +2133,17 @@ async function handleCreateTransaction(body: any) {
   const snapshotPackageCost = isInsuranceType ? 0 : packageCost;
   const suggestedPrice = Math.round(trueCost / (1 - tierMargin));
 
+  // Referral commission: the partner's share of this policy's profit margin.
+  const referral = await resolveReferral(
+    supabase,
+    String(torn_id),
+    verifiedCallerId === String(torn_id) ? body.ref_code : null, // new attachments need a verified buyer
+    (playerHistory || []).length > 0,
+  );
+  const commissionAmount = referral
+    ? Math.max(0, Math.round((suggestedPrice - trueCost) * referral.share))
+    : 0;
+
   // Insert transaction
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
@@ -2094,6 +2156,9 @@ async function handleCreateTransaction(body: any) {
       xanax_payout: snapshotXanaxPayout,
       ecstasy_payout: snapshotEcstasyPayout,
       expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      referrer_torn_id: referral?.partnerId ?? null,
+      commission_share: referral?.share ?? null,
+      commission_amount: commissionAmount,
     })
     .select('id, status, suggested_price, product_type')
     .single();
@@ -2102,6 +2167,14 @@ async function handleCreateTransaction(body: any) {
 
   // Lock worst-case liability from reserve for this new active sale (atomic)
   await adjustReserve(supabase, -reserveLock);
+
+  // First referred policy: tie this client to the partner for good. Done after
+  // the insert so a failed request doesn't attach anyone.
+  if (referral?.attachNow) {
+    await supabase
+      .from('clients')
+      .upsert({ torn_id: String(torn_id), torn_name, referred_by: referral.partnerId }, { onConflict: 'torn_id' });
+  }
 
   // Await email so it completes before the isolate shuts down
   const tier = computeTier(cleanCount);
@@ -2125,6 +2198,7 @@ async function handleCreateTransaction(body: any) {
       `Product: ${productLabel}`,
       ``,
       `Price: ${formatMoney(suggestedPrice)}`,
+      ...(referral ? [`Referred by: [${referral.partnerId}] — commission ${formatMoney(commissionAmount)} once paid`] : []),
       ...(productType === 'package' ? [`Drug Cost: ${formatMoney(packageCost)}`] : [`Insurance Only — no drug cost`]),
       ``,
       `Transaction ID: ${txn.id}`,
@@ -3539,6 +3613,287 @@ async function handleAdminAutoDetect(req: Request, body: any) {
   // verbatim so the admin UI sees the same { verified / policy_closed / detail }
   // shape the client would.
   return await handleReportOd({ key: apiKey, txn_id });
+}
+
+// ── Referral partners: actions ───────────────────────────────────────
+
+// Statuses where the client has paid — commission on these is owed. Requested
+// is pending; rejected (incl. expired requests) never owes anything.
+const COMMISSION_OWED_STATES = ['purchased', 'od_xanax', 'od_ecstasy', 'closed_clean', 'payout_sent'];
+
+// Resolve the caller's Torn identity from a key or HJ session.
+async function identifyCaller(body: any): Promise<{ tornId: string; name: string } | Response> {
+  const resolved = await resolveApiKey(body);
+  if (resolved instanceof Response) return resolved;
+  const res = await fetch(`${TORN_API}/user/?selections=basic&key=${resolved.key}`);
+  const data = await res.json();
+  if (data.error) return json({ error: `Torn API: ${data.error.error}` }, 400);
+  return { tornId: String(data.player_id), name: String(data.name || '') };
+}
+
+async function partnerStatsFor(supabase: any, tornId: string) {
+  const [{ data: partner }, { data: txns }, { data: payments }, { count: clientCount }] = await Promise.all([
+    supabase.from('partners').select('torn_id, torn_name, margin_share, active, created_at').eq('torn_id', tornId).maybeSingle(),
+    supabase.from('transactions')
+      .select('torn_id, torn_name, product_type, status, created_at, commission_amount')
+      .eq('referrer_torn_id', tornId)
+      .order('created_at', { ascending: false }),
+    supabase.from('partner_payments')
+      .select('amount, sent_at, matched_by')
+      .eq('partner_torn_id', tornId)
+      .order('sent_at', { ascending: false }),
+    supabase.from('clients').select('torn_id', { count: 'exact', head: true }).eq('referred_by', tornId),
+  ]);
+  if (!partner) return null;
+
+  const rows = txns || [];
+  const earned = rows
+    .filter((t: any) => COMMISSION_OWED_STATES.includes(t.status))
+    .reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
+  const pending = rows
+    .filter((t: any) => t.status === 'requested')
+    .reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
+  const paid = (payments || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+
+  return {
+    partner: { ...partner, margin_share: Number(partner.margin_share) },
+    referred_clients: clientCount || 0,
+    earned,
+    pending,
+    paid,
+    balance: earned - paid,
+    policies: rows.slice(0, 50).map((t: any) => ({
+      torn_name: t.torn_name,
+      product_type: t.product_type,
+      status: t.status,
+      created_at: t.created_at,
+      commission_amount: Number(t.commission_amount || 0),
+      owed: COMMISSION_OWED_STATES.includes(t.status),
+    })),
+    payments: (payments || []).slice(0, 50).map((p: any) => ({ ...p, amount: Number(p.amount) })),
+  };
+}
+
+// Self-serve: any signed-in, non-blocked client can become a partner.
+async function handlePartnerSignup(body: any) {
+  const who = await identifyCaller(body);
+  if (who instanceof Response) return who;
+  const supabase = serviceClient();
+
+  const { data: client } = await supabase
+    .from('clients').select('is_blocked').eq('torn_id', who.tornId).maybeSingle();
+  if (client?.is_blocked) return json({ error: 'Your account has been blocked. Contact Giro for details.' }, 403);
+
+  const { data: existing } = await supabase
+    .from('partners').select('torn_id').eq('torn_id', who.tornId).maybeSingle();
+  if (!existing) {
+    const { error } = await supabase.from('partners').insert({ torn_id: who.tornId, torn_name: who.name });
+    if (error) return json({ error: error.message }, 500);
+    await sendNotificationEmail(
+      `Happy Jump — New Referral Partner — ${who.name} [${who.tornId}]`,
+      `${who.name} [${who.tornId}] signed up as a referral partner.\nLink: https://happyjump.girovagabondo.com/?ref=${who.tornId}`,
+    );
+  }
+  return json(await partnerStatsFor(supabase, who.tornId));
+}
+
+async function handlePartnerStats(body: any) {
+  const who = await identifyCaller(body);
+  if (who instanceof Response) return who;
+  const stats = await partnerStatsFor(serviceClient(), who.tornId);
+  return json(stats || { partner: null });
+}
+
+async function handleAdminListPartners(req: Request) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const supabase = serviceClient();
+
+  const [{ data: partners }, { data: txns }, { data: payments }, { data: clients }, { data: op }] = await Promise.all([
+    supabase.from('partners').select('torn_id, torn_name, margin_share, active, created_at').order('created_at'),
+    supabase.from('transactions').select('referrer_torn_id, status, commission_amount').not('referrer_torn_id', 'is', null),
+    supabase.from('partner_payments').select('partner_torn_id, amount, sent_at, matched_by, log_id').order('sent_at', { ascending: false }),
+    supabase.from('clients').select('referred_by').not('referred_by', 'is', null),
+    supabase.from('operator_secrets').select('torn_id, torn_name, updated_at').eq('id', 1).maybeSingle(),
+  ]);
+
+  const list = (partners || []).map((p: any) => {
+    const mine = (txns || []).filter((t: any) => t.referrer_torn_id === p.torn_id);
+    const earned = mine.filter((t: any) => COMMISSION_OWED_STATES.includes(t.status))
+      .reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
+    const pending = mine.filter((t: any) => t.status === 'requested')
+      .reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
+    const pays = (payments || []).filter((x: any) => x.partner_torn_id === p.torn_id);
+    const paid = pays.reduce((s: number, x: any) => s + Number(x.amount || 0), 0);
+    return {
+      ...p,
+      margin_share: Number(p.margin_share),
+      referred_clients: (clients || []).filter((c: any) => c.referred_by === p.torn_id).length,
+      paid_policies: mine.filter((t: any) => COMMISSION_OWED_STATES.includes(t.status)).length,
+      earned, pending, paid, balance: earned - paid,
+      payments: pays.slice(0, 20).map((x: any) => ({ ...x, amount: Number(x.amount) })),
+    };
+  });
+
+  return json({ partners: list, operator_key: op || null });
+}
+
+async function handleAdminUpdatePartner(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const { torn_id } = body;
+  if (!torn_id) return json({ error: 'Missing torn_id' }, 400);
+
+  const updates: Record<string, unknown> = {};
+  if (body.margin_share !== undefined) {
+    const share = Number(body.margin_share);
+    if (!Number.isFinite(share) || share < 0 || share > 1) {
+      return json({ error: 'margin_share must be between 0 and 1' }, 400);
+    }
+    updates.margin_share = share; // applies to future policies — existing ones keep their snapshot
+  }
+  if (body.active !== undefined) updates.active = !!body.active;
+  if (Object.keys(updates).length === 0) return json({ error: 'Nothing to update' }, 400);
+
+  const { error } = await serviceClient().from('partners').update(updates).eq('torn_id', String(torn_id));
+  if (error) return json({ error: error.message }, 500);
+  return json({ success: true });
+}
+
+// Store Giro's own Torn key (encrypted) so the gateway can read his log for
+// commission sends. Needs the `log` scope — checked before saving.
+async function handleAdminSetOperatorKey(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const key = String(body.key || '').trim();
+  if (!key) return json({ error: 'Missing key' }, 400);
+
+  const identRes = await fetch(`${TORN_API}/user/?selections=basic&key=${key}`);
+  const ident = await identRes.json();
+  if (ident.error) return json({ error: `Torn API: ${ident.error.error}` }, 400);
+
+  const logRes = await fetch(`${TORN_API}/user/?selections=log&key=${key}`);
+  const logData = await logRes.json();
+  if (logData.error) {
+    return json({ error: `This key can't read your log (Torn: ${logData.error.error}). Create a Custom Key with "log" access.` }, 400);
+  }
+
+  const enc = await encryptApiKey(key);
+  if (!enc) return json({ error: 'Encryption unavailable — API_KEY_ENCRYPTION_KEY not set' }, 500);
+
+  const { error } = await serviceClient().from('operator_secrets').upsert({
+    id: 1,
+    torn_id: String(ident.player_id),
+    torn_name: String(ident.name || ''),
+    api_key_enc: enc.ciphertext,
+    api_key_iv: enc.iv,
+    updated_at: new Date().toISOString(),
+  }, { onConflict: 'id' });
+  if (error) return json({ error: error.message }, 500);
+  return json({ success: true, torn_id: String(ident.player_id), torn_name: ident.name });
+}
+
+// Scan Giro's log for Send Money to partners. A send whose log data mentions
+// "commission" (the message you type when sending) is recorded automatically;
+// any other send to a partner is returned as "unmatched" so the admin can count
+// it by hand — Torn's log may not carry the message text at all. Each recorded
+// payment comes out of the reserve, like an OD payout.
+async function handleAdminScanPartnerPayments(req: Request) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const supabase = serviceClient();
+
+  const { data: op } = await supabase
+    .from('operator_secrets').select('api_key_enc, api_key_iv').eq('id', 1).maybeSingle();
+  if (!op) return json({ error: 'No operator Torn key saved yet — add it in the Partners tab first.' }, 409);
+  const apiKey = await decryptApiKey(op.api_key_enc, op.api_key_iv);
+  if (!apiKey) return json({ error: 'Operator key could not be decrypted — save it again.' }, 409);
+
+  const { data: partners } = await supabase.from('partners').select('torn_id, torn_name, created_at');
+  if (!partners || partners.length === 0) return json({ recorded: [], unmatched: [], scanned: 0 });
+  const partnerIds = new Set(partners.map((p: any) => String(p.torn_id)));
+  const nameOf = new Map(partners.map((p: any) => [String(p.torn_id), p.torn_name]));
+  const fromTs = Math.floor(Math.min(...partners.map((p: any) => new Date(p.created_at).getTime())) / 1000);
+
+  const { data: known } = await supabase.from('partner_payments').select('log_id').not('log_id', 'is', null);
+  const knownIds = new Set((known || []).map((k: any) => String(k.log_id)));
+
+  const recorded: any[] = [];
+  const unmatched: any[] = [];
+  let scanned = 0;
+  let scanError: string | null = null;
+  let toParam = '';
+  let lastOldestTs = Infinity;
+
+  for (let page = 0; page < 30; page++) {
+    const res = await fetch(`${TORN_API}/user/?selections=log&from=${fromTs}${toParam}&key=${apiKey}`);
+    const data = await res.json();
+    if (data.error || !data.log) {
+      if (page === 0) scanError = data.error ? `Torn error ${data.error.code}: ${data.error.error}` : 'Torn returned no log data';
+      break;
+    }
+    const entries = Object.entries(data.log) as [string, any][];
+    if (entries.length === 0) break;
+    scanned += entries.length;
+
+    for (const [logId, entry] of entries) {
+      const title = String(entry.title || entry.log || '').toLowerCase();
+      const d = entry.data || {};
+      const receiver = String(d.receiver || '');
+      const amount = Number(d.money || 0);
+      if (!(title.includes('money send') || title.includes('money transfer'))) continue;
+      if (!partnerIds.has(receiver) || amount <= 0) continue;
+      if (knownIds.has(String(logId))) continue;
+
+      const send = {
+        log_id: String(logId),
+        partner_torn_id: receiver,
+        partner_name: nameOf.get(receiver) || receiver,
+        amount,
+        sent_at: new Date((entry.timestamp || 0) * 1000).toISOString(),
+      };
+      const hay = `${JSON.stringify(d)} ${JSON.stringify(entry.params || {})}`.toLowerCase();
+      if (hay.includes('commission')) {
+        const { error } = await supabase.from('partner_payments').insert({
+          partner_torn_id: receiver, amount, sent_at: send.sent_at, log_id: send.log_id, matched_by: 'auto',
+        });
+        if (!error) {
+          knownIds.add(send.log_id);
+          await adjustReserve(supabase, -amount);
+          recorded.push(send);
+        }
+      } else {
+        unmatched.push(send);
+      }
+    }
+
+    const oldestTs = Math.min(...entries.map(([, e]) => e.timestamp || Infinity));
+    if (oldestTs <= fromTs || oldestTs === Infinity || oldestTs >= lastOldestTs) break;
+    lastOldestTs = oldestTs;
+    toParam = `&to=${oldestTs - 1}`;
+  }
+
+  return json({ recorded, unmatched, scanned, scan_error: scanError });
+}
+
+// Admin confirms an unmatched Send Money as a commission payment.
+async function handleAdminRecordPartnerPayment(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const { log_id, partner_torn_id, amount, sent_at } = body;
+  const amt = Number(amount);
+  if (!log_id || !partner_torn_id || !(amt > 0) || !sent_at) {
+    return json({ error: 'Missing log_id, partner_torn_id, amount or sent_at' }, 400);
+  }
+  const supabase = serviceClient();
+  const { error } = await supabase.from('partner_payments').insert({
+    partner_torn_id: String(partner_torn_id), amount: amt, sent_at, log_id: String(log_id), matched_by: 'manual',
+  });
+  if (error) {
+    return json({ error: error.code === '23505' ? 'That send is already recorded.' : error.message }, 400);
+  }
+  await adjustReserve(supabase, -amt);
+  return json({ success: true });
 }
 
 async function handleVerifyPayment(body: any) {
@@ -6296,6 +6651,20 @@ serve(async (req) => {
         return await handleAdminDetectHappyItems(req, body);
       case 'admin-active-consumed':
         return await handleAdminActiveConsumed(req, body);
+      case 'partner-signup':
+        return await handlePartnerSignup(body);
+      case 'partner-stats':
+        return await handlePartnerStats(body);
+      case 'admin-list-partners':
+        return await handleAdminListPartners(req);
+      case 'admin-update-partner':
+        return await handleAdminUpdatePartner(req, body);
+      case 'admin-set-operator-key':
+        return await handleAdminSetOperatorKey(req, body);
+      case 'admin-scan-partner-payments':
+        return await handleAdminScanPartnerPayments(req);
+      case 'admin-record-partner-payment':
+        return await handleAdminRecordPartnerPayment(req, body);
       case 'admin-auto-detect':
         return await handleAdminAutoDetect(req, body);
       case 'create-faction-event':
