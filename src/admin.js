@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect, adminListPartners, adminUpdatePartner, adminSetOperatorKey, adminScanPartnerPayments, adminRecordPartnerPayment } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect, adminListPartners, adminUpdatePartner, adminSetOperatorKey, adminTestOperatorKey, adminScanPartnerPayments, adminRecordPartnerPayment } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -1353,9 +1353,11 @@ async function loadPartners() {
   }
 
   const op = res.operator_key;
-  document.getElementById('operator-key-status').innerHTML = op
-    ? `Saved for <strong>${esc(op.torn_name)}</strong> [${esc(op.torn_id)}] · updated ${esc(new Date(op.updated_at).toLocaleString())}`
-    : '<span style="color:#e8a735">No key saved — payment verification is off until you add one.</span>';
+  document.getElementById('operator-key-status').innerHTML = !op
+    ? '<span style="color:#e8a735">No key yet — add an <code>OPERATOR_TORN_KEY</code> secret in Supabase (Edge Functions → Secrets), then press Test Key.</span>'
+    : op.source === 'secret'
+    ? 'Using the <strong>OPERATOR_TORN_KEY</strong> Supabase secret. Press Test Key to confirm it can read your log.'
+    : `Using the key saved here for <strong>${esc(op.torn_name)}</strong> [${esc(op.torn_id)}] · updated ${esc(new Date(op.updated_at).toLocaleString())}`;
 
   const partners = res.partners || [];
   if (partners.length === 0) {
@@ -1427,6 +1429,22 @@ async function loadPartners() {
 }
 
 document.getElementById('refresh-partners-btn').addEventListener('click', loadPartners);
+
+document.getElementById('operator-key-test').addEventListener('click', async (e) => {
+  const out = document.getElementById('operator-key-test-result');
+  e.target.disabled = true;
+  out.textContent = 'Testing…';
+  try {
+    const res = await adminTestOperatorKey();
+    const src = res.source === 'secret' ? 'Supabase secret' : res.source === 'saved' ? 'key saved here' : '';
+    out.innerHTML = res.ok
+      ? `<span style="color:#4caf50">✓ Works — ${esc(res.torn_name)} [${esc(res.torn_id)}], log readable (${esc(src)}).</span>`
+      : `<span style="color:#ff6b6b">✗ ${esc(res.detail)}</span>`;
+  } catch (err) {
+    out.innerHTML = `<span style="color:#ff6b6b">✗ ${esc(err.message)}</span>`;
+  }
+  e.target.disabled = false;
+});
 
 document.getElementById('operator-key-save').addEventListener('click', async (e) => {
   const input = document.getElementById('operator-key-input');
