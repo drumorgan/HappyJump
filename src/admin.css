@@ -133,6 +133,24 @@
   margin-top: 0.25rem;
 }
 
+/* "Can Sell Now" tile: one row per reserve pool */
+.avail-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: center;
+  gap: 0.4rem;
+  line-height: 1.3;
+}
+
+.avail-kind {
+  font-family: var(--font-body, inherit);
+  font-size: 0.6rem;
+  font-weight: 400;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+
 /* Filter bar */
 .filter-bar {
   display: flex;
