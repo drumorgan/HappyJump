@@ -632,6 +632,10 @@ export async function adminUpdatePartner(tornId, updates) {
   return gateway('admin-update-partner', { torn_id: String(tornId), ...updates });
 }
 
+export async function adminTestOperatorKey() {
+  return gateway('admin-test-operator-key');
+}
+
 export async function adminSetOperatorKey(key) {
   return gateway('admin-set-operator-key', { key });
 }
