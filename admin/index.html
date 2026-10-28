@@ -126,27 +126,34 @@
 
       <!-- Partners tab (referral commissions) -->
       <div id="tab-partners" class="tab-content">
-        <div class="partner-operator card-lite">
-          <div class="config-section-label">Your Torn key (for verifying commission payments)</div>
-          <div id="operator-key-status" class="partner-hint">Loading…</div>
-          <div class="filter-bar" style="margin-top:0.5rem">
+        <!-- Operator key: one status line, settings collapsed -->
+        <details class="partner-keybar">
+          <summary><span id="operator-key-status">Torn key: checking…</span><span class="partner-keybar-more">key settings</span></summary>
+          <div class="partner-keybar-body">
             <button id="operator-key-test" class="refresh-btn">Test Key</button>
-          </div>
-          <div id="operator-key-test-result" class="partner-hint"></div>
-          <details class="items-used-diag" style="margin-top:0.5rem">
-            <summary>Or save the key here instead of as a Supabase secret</summary>
-            <div class="filter-bar" style="margin-top:0.5rem">
+            <div id="operator-key-test-result" class="partner-hint"></div>
+            <div class="partner-hint">Pay partners with <strong>Send Money</strong> and put <strong>commission</strong> in the message — those sends are recorded automatically. Any other send to a partner is listed after a scan for you to count by hand.</div>
+            <div class="partner-hint" style="margin-top:0.75rem">Backup: save the key here instead of as a Supabase secret (the secret wins if both are set).</div>
+            <div class="filter-bar" style="margin-top:0.35rem">
               <input type="password" id="operator-key-input" class="client-search-input" placeholder="Custom Key with log access" autocomplete="off" />
               <button id="operator-key-save" class="refresh-btn">Save Key</button>
             </div>
-          </details>
-          <div class="partner-hint">Pay partners with <strong>Send Money</strong> and put <strong>commission</strong> in the message — those sends are recorded automatically. Any other send to a partner shows up below for you to count by hand.</div>
-        </div>
-        <div class="filter-bar">
-          <button id="scan-payments-btn" class="refresh-btn">Verify Payments (scan my log)</button>
+          </div>
+        </details>
+
+        <div class="filter-bar partner-toolbar">
+          <button id="scan-payments-btn" class="refresh-btn">Verify Payments</button>
+          <input type="text" id="partner-search" class="client-search-input" placeholder="Search name or ID…" />
+          <select id="partner-filter">
+            <option value="active" selected>Active</option>
+            <option value="owed">Owed</option>
+            <option value="inactive">Inactive</option>
+            <option value="all">All</option>
+          </select>
           <button id="refresh-partners-btn" class="refresh-btn">Refresh</button>
         </div>
         <div id="partner-scan-result"></div>
+        <div id="partner-summary" class="partner-hint"></div>
         <div id="partner-list"></div>
       </div>
 

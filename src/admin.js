@@ -170,7 +170,7 @@ async function loadStats() {
     // only the Xanax payout, so the same reserve covers far more La Scorta.
     const row = (n, kind) => `<div class="avail-row"><span class="avail-num">${esc(String(n ?? '—'))}</span><span class="avail-kind">${kind}</span></div>`;
     document.getElementById('stat-available').innerHTML = avail.available_xanax_only != null
-      ? row(avail.available, 'Happy Jump') + row(avail.available_xanax_only, 'La Scorta')
+      ? row(avail.available, 'Jump') + row(avail.available_xanax_only, 'Scorta')
       : esc(String(avail.available ?? '—'));
   } catch {
     document.getElementById('stat-available').textContent = '—';
@@ -1355,50 +1355,79 @@ async function loadPartners() {
     return;
   }
 
+  // One-line key status in the collapsed key bar.
   const op = res.operator_key;
   document.getElementById('operator-key-status').innerHTML = !op
-    ? '<span style="color:#e8a735">No key yet — add an <code>OPERATOR_TORN_KEY</code> secret in Supabase (Edge Functions → Secrets), then press Test Key.</span>'
+    ? '<span style="color:#e8a735">⚠ No Torn key — open key settings</span>'
     : op.source === 'secret'
-    ? 'Using the <strong>OPERATOR_TORN_KEY</strong> Supabase secret. Press Test Key to confirm it can read your log.'
-    : `Using the key saved here for <strong>${esc(op.torn_name)}</strong> [${esc(op.torn_id)}] · updated ${esc(new Date(op.updated_at).toLocaleString())}`;
+    ? '<span class="partner-key-ok">✓</span> Torn key: Supabase secret'
+    : `<span class="partner-key-ok">✓</span> Torn key: saved here (${esc(op.torn_name)})`;
+  if (!op) document.querySelector('.partner-keybar').open = true;
 
-  const partners = res.partners || [];
-  if (partners.length === 0) {
+  partnersCache = res.partners || [];
+  renderPartners();
+}
+
+// Filter / search / sort on the cached list — no refetch while typing.
+function renderPartners() {
+  const q = partnerSearch.value.trim().toLowerCase();
+  const filter = partnerFilter.value;
+  const all = partnersCache;
+
+  const totalOwed = all.reduce((s, p) => s + Math.max(0, Number(p.balance || 0)), 0);
+  const owingCount = all.filter((p) => p.balance > 0).length;
+  document.getElementById('partner-summary').innerHTML = all.length
+    ? `${all.length} partner${all.length !== 1 ? 's' : ''} · ${all.filter((p) => p.active).length} active · <strong class="${totalOwed > 0 ? 'partner-owed' : ''}">${$(totalOwed)} owed</strong>${owingCount ? ` to ${owingCount}` : ''}`
+    : '';
+
+  if (all.length === 0) {
     partnerList.innerHTML = '<div class="partner-hint">No partners yet. Anyone signed in on the storefront can press "Get my referral link".</div>';
     return;
   }
 
+  const shown = all
+    .filter((p) => filter === 'all'
+      || (filter === 'active' && p.active)
+      || (filter === 'inactive' && !p.active)
+      || (filter === 'owed' && p.balance > 0))
+    .filter((p) => !q || p.torn_name.toLowerCase().includes(q) || String(p.torn_id).includes(q))
+    // Who you owe first, then biggest earners.
+    .sort((a, b) => (b.balance - a.balance) || (b.earned - a.earned) || a.torn_name.localeCompare(b.torn_name));
+
+  if (shown.length === 0) {
+    partnerList.innerHTML = '<div class="partner-hint">No partners match.</div>';
+    return;
+  }
+
   const link = (id) => `https://happyjump.girovagabondo.com/?ref=${id}`;
-  partnerList.innerHTML = partners.map((p) => {
+  partnerList.innerHTML = shown.map((p) => {
     const pays = (p.payments || []).map((x) =>
       `<li>${esc(new Date(x.sent_at).toLocaleDateString())} — ${$(x.amount)} <span class="items-used-dim">(${esc(x.matched_by)})</span></li>`).join('');
-    return `<div class="client-card ${p.active ? '' : 'client-blocked'}">
-      <div class="client-top">
-        <div>
-          <span class="txn-player">${esc(p.torn_name)}</span>
-          <span class="txn-player-id">[${esc(p.torn_id)}]</span>
-          ${p.active ? '' : '<span class="blocked-badge">INACTIVE</span>'}
+    return `<details class="partner-row ${p.active ? '' : 'partner-inactive'}">
+      <summary>
+        <span class="partner-name">${esc(p.torn_name)} <span class="txn-player-id">[${esc(p.torn_id)}]</span>${p.active ? '' : ' <span class="blocked-badge">INACTIVE</span>'}</span>
+        <span class="partner-cell"><span class="partner-cell-label">Clients</span>${Number(p.referred_clients)}</span>
+        <span class="partner-cell"><span class="partner-cell-label">Earned</span>${$(p.earned)}</span>
+        <span class="partner-cell ${p.balance > 0 ? 'partner-owed' : ''}"><span class="partner-cell-label">Owed</span>${$(p.balance)}</span>
+      </summary>
+      <div class="partner-row-body">
+        <div class="client-stats">
+          <span>Paid policies: ${p.paid_policies}</span>
+          <span>Pending: ${$(p.pending)}</span>
+          <span>Paid out: ${$(p.paid)}</span>
+          <span>Since: ${esc(new Date(p.created_at).toLocaleDateString())}</span>
         </div>
-        <span class="partner-balance ${p.balance > 0 ? 'owed' : ''}">Owed: ${$(p.balance)}</span>
+        <div class="partner-hint">Link: <code>${esc(link(p.torn_id))}</code></div>
+        <div class="client-notes-row">
+          <label class="partner-hint">Share %</label>
+          <input type="number" min="0" max="100" step="1" class="client-notes-input partner-share-input" style="max-width:5rem"
+                 value="${Math.round(p.margin_share * 100)}" data-torn-id="${esc(p.torn_id)}" />
+          <button class="btn-save-notes partner-share-save" data-torn-id="${esc(p.torn_id)}">Save</button>
+          <button class="${p.active ? 'btn-block' : 'btn-unblock'} partner-toggle" data-torn-id="${esc(p.torn_id)}" data-active="${p.active}">${p.active ? 'Deactivate' : 'Activate'}</button>
+        </div>
+        ${pays ? `<details class="items-used-diag"><summary>Payments (${p.payments.length})</summary><ul>${pays}</ul></details>` : '<div class="partner-hint">No payments yet.</div>'}
       </div>
-      <div class="client-stats">
-        <span>Clients: ${p.referred_clients}</span>
-        <span>Paid policies: ${p.paid_policies}</span>
-        <span>Earned: ${$(p.earned)}</span>
-        <span>Pending: ${$(p.pending)}</span>
-        <span>Paid: ${$(p.paid)}</span>
-        <span>Since: ${esc(new Date(p.created_at).toLocaleDateString())}</span>
-      </div>
-      <div class="partner-hint">Link: <code>${esc(link(p.torn_id))}</code></div>
-      <div class="client-notes-row">
-        <label class="partner-hint">Margin share %</label>
-        <input type="number" min="0" max="100" step="1" class="client-notes-input partner-share-input" style="max-width:6rem"
-               value="${Math.round(p.margin_share * 100)}" data-torn-id="${esc(p.torn_id)}" />
-        <button class="btn-save-notes partner-share-save" data-torn-id="${esc(p.torn_id)}">Save</button>
-        <button class="${p.active ? 'btn-block' : 'btn-unblock'} partner-toggle" data-torn-id="${esc(p.torn_id)}" data-active="${p.active}">${p.active ? 'Deactivate' : 'Activate'}</button>
-      </div>
-      ${pays ? `<details class="items-used-diag"><summary>Payments (${p.payments.length})</summary><ul>${pays}</ul></details>` : ''}
-    </div>`;
+    </details>`;
   }).join('');
 
   partnerList.querySelectorAll('.partner-share-save').forEach((btn) => {
@@ -1409,6 +1438,8 @@ async function loadPartners() {
       btn.disabled = true;
       try {
         await adminUpdatePartner(btn.dataset.tornId, { margin_share: pct / 100 });
+        const p = partnersCache.find((x) => String(x.torn_id) === btn.dataset.tornId);
+        if (p) p.margin_share = pct / 100;
         showToast('Share saved — applies to new policies only', 'success');
       } catch (err) {
         showToast('Failed: ' + err.message, 'error');
@@ -1430,6 +1461,12 @@ async function loadPartners() {
     });
   });
 }
+
+let partnersCache = [];
+const partnerSearch = document.getElementById('partner-search');
+const partnerFilter = document.getElementById('partner-filter');
+partnerSearch.addEventListener('input', renderPartners);
+partnerFilter.addEventListener('change', renderPartners);
 
 document.getElementById('refresh-partners-btn').addEventListener('click', loadPartners);
 
@@ -1501,5 +1538,5 @@ document.getElementById('scan-payments-btn').addEventListener('click', async (e)
     partnerScanResult.innerHTML = `<div class="items-used-msg">Error: ${esc(err.message)}</div>`;
   }
   btn.disabled = false;
-  btn.textContent = 'Verify Payments (scan my log)';
+  btn.textContent = 'Verify Payments';
 });
