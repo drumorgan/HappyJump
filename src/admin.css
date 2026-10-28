@@ -143,6 +143,7 @@
 }
 
 .avail-kind {
+  white-space: nowrap;
   font-family: var(--font-body, inherit);
   font-size: 0.6rem;
   font-weight: 400;
@@ -817,4 +818,118 @@
   margin: 0.4rem 0 0;
   padding-left: 1.1rem;
   line-height: 1.5;
+}
+
+/* ============ Partners tab ============ */
+.partner-keybar {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.5rem 0.85rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.85rem;
+}
+
+.partner-keybar > summary {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.75rem;
+  cursor: pointer;
+  list-style: none;
+  color: var(--muted);
+}
+
+.partner-keybar > summary::-webkit-details-marker { display: none; }
+
+.partner-keybar-more {
+  font-size: 0.75rem;
+  color: var(--gold);
+  white-space: nowrap;
+}
+
+.partner-keybar[open] .partner-keybar-more::after { content: ' ▴'; }
+.partner-keybar:not([open]) .partner-keybar-more::after { content: ' ▾'; }
+
+.partner-keybar-body {
+  margin-top: 0.6rem;
+  padding-top: 0.6rem;
+  border-top: 1px solid var(--border);
+}
+
+.partner-key-ok { color: #4caf50; }
+
+.partner-toolbar {
+  flex-wrap: wrap;
+}
+
+.partner-toolbar .client-search-input {
+  flex: 1;
+  min-width: 8rem;
+}
+
+#partner-summary {
+  margin: 0.25rem 0 0.5rem;
+}
+
+.partner-row {
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  margin-bottom: 0.4rem;
+  background: rgba(240, 232, 213, 0.02);
+}
+
+.partner-row > summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) repeat(3, auto);
+  align-items: center;
+  gap: 0.25rem 1.25rem;
+  padding: 0.55rem 0.85rem;
+  cursor: pointer;
+  list-style: none;
+}
+
+.partner-row > summary::-webkit-details-marker { display: none; }
+
+.partner-row[open] > summary {
+  border-bottom: 1px solid var(--border);
+}
+
+.partner-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.partner-cell {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.partner-cell-label {
+  display: block;
+  font-size: 0.6rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  color: var(--muted);
+}
+
+.partner-owed { color: var(--gold-light); font-weight: 600; }
+
+.partner-inactive { opacity: 0.55; }
+
+.partner-row-body {
+  padding: 0.5rem 0.85rem 0.75rem;
+}
+
+/* Phones: name on its own line, numbers below */
+@media (max-width: 520px) {
+  .partner-row > summary {
+    grid-template-columns: repeat(3, 1fr);
+  }
+  .partner-name {
+    grid-column: 1 / -1;
+  }
+  .partner-cell { text-align: left; }
 }
