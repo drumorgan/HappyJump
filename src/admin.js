@@ -444,6 +444,8 @@ async function handleItemsUsed(txnId, btn) {
         ? ''
         : odXanax
         ? `<div class="items-used-xanax">Xanax taken: <strong>${xanaxUsed + 1}</strong> <span class="items-used-dim">— ${xanaxUsed} used successfully + the pill that caused the OD</span></div>`
+        : xanaxUsed > 4
+        ? `<div class="items-used-xanax">Xanax used: <strong>${xanaxUsed}</strong> <span class="items-used-dim">— all 4 covered + ${xanaxUsed - 4} beyond coverage</span></div>`
         : `<div class="items-used-xanax">Xanax used: <strong>${xanaxUsed}</strong> <span class="items-used-dim">of 4 covered</span></div>`;
       const ecstasyLine = odEcstasy
         ? '<div class="items-used-xanax">Ecstasy taken: <strong>1</strong> <span class="items-used-dim">— the pill that caused the OD</span></div>'
@@ -533,7 +535,7 @@ async function handleAutoDetect(txnId, btn) {
   if (res.verified || res.policy_closed) {
     const msg = res.verified
       ? `OD verified (${formatStatus(res.od_type)}) — payout registered, Giro emailed.`
-      : 'Policy closed clean — Happy Jump complete.';
+      : (res.detail || 'Policy closed clean.');
     showToast(msg, 'success');
     await Promise.all([loadStats(), loadTransactions(), loadConfig()]);
     return;
