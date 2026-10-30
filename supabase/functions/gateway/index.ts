@@ -2840,9 +2840,12 @@ async function handleReportOd(body: any) {
   // log entry (the OD is recorded separately in the events endpoint, and the use-log narrative does
   // not always contain "overdose"), so `ecstasyUsed` can be true precisely when the covered Ecstasy OD
   // happened. Falling through to the OD verification path below is what pays that claim out.
-  // Not for La Scorta (Xanax only): Ecstasy isn't part of that policy, so
-  // taking one says nothing about whether its 4 covered Xanax are spent.
-  if (!odDrug && ecstasyUsed && txn.product_type !== 'xanax_only') {
+  // La Scorta (Xanax only) is spent on its 4th successful Xanax instead —
+  // Ecstasy isn't part of that policy. !odDrug means neither the events feed
+  // nor the log shows any OD since purchase, so the covered pills were clean.
+  const isXanaxOnly = txn.product_type === 'xanax_only';
+  const coverageSpent = isXanaxOnly ? xanaxUsedCount >= 4 : ecstasyUsed;
+  if (!odDrug && coverageSpent) {
     const nowIso = new Date().toISOString();
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
@@ -2866,10 +2869,16 @@ async function handleReportOd(body: any) {
     await syncClientStats(supabase, tornId, { torn_name: identData.name });
 
     await sendNotificationEmail(
-      `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
+      isXanaxOnly
+        ? `Happy Jump — Clean Close (4 Xanax Used) — ${identData.name} [${tornId}]`
+        : `Happy Jump — Clean Close (Ecstasy Used) — ${identData.name} [${tornId}]`,
       [
-        `Client tried to claim an OD, but API log shows Ecstasy taken successfully (${xanaxUsedCount} Xanax + Ecstasy in-policy).`,
-        `Policy auto-closed clean — the Happy Jump is complete.`,
+        isXanaxOnly
+          ? `API log shows ${xanaxUsedCount} Xanax taken since purchase with no OD — all 4 covered pills were clean (La Scorta).`
+          : `Client tried to claim an OD, but API log shows Ecstasy taken successfully (${xanaxUsedCount} Xanax + Ecstasy in-policy).`,
+        isXanaxOnly
+          ? `Policy auto-closed clean — coverage is spent.`
+          : `Policy auto-closed clean — the Happy Jump is complete.`,
         ``,
         `Player: ${identData.name} [${tornId}]`,
         `Transaction ID: ${txn_id}`,
@@ -2881,7 +2890,9 @@ async function handleReportOd(body: any) {
       verified: false,
       policy_closed: true,
       torn_id: tornId,
-      detail: `Ecstasy was already taken successfully — your Happy Jump is complete and the policy has been closed clean.`,
+      detail: isXanaxOnly
+        ? `All 4 covered Xanax were taken with no OD — La Scorta has been closed clean.`
+        : `Ecstasy was already taken successfully — your Happy Jump is complete and the policy has been closed clean.`,
     });
   }
 
