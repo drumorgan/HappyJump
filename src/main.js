@@ -610,6 +610,9 @@ function showPlayerView(player, config, history, apiKey) {
     const buyStatus = document.getElementById('buy-status');
     const buySection = document.getElementById('buy-section');
 
+    currentBuyPrice = pricing.suggestedPrice;
+    renderBuyCreditNote();
+
     if (hasActive) {
       buySection.classList.add('hidden');
     } else {
@@ -645,9 +648,19 @@ function showPlayerView(player, config, history, apiKey) {
           }, currentAuth());
           const productLabels = { package: 'La Bella Vita', insurance: 'Protezione Totale', ecstasy_only: "L'Ultimo Miglio", xanax_only: 'La Scorta' };
           const productLabel = productLabels[selectedProduct] || 'package';
-          showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
+          const credit = Number(txn?.credit_applied || 0);
+          if (txn?.status === 'purchased') {
+            showToast(`Paid in full with referral credit — your ${productLabel} policy is active!`, 'success');
+            buyStatus.textContent = `Your ${productLabel} policy is active. ${$(credit)} of referral credit covered the full price.`;
+          } else {
+            showToast(`Request submitted! Giro will initiate a trade with you in-game.`, 'success');
+            buyStatus.textContent = credit > 0
+              ? `Your ${productLabel} request has been submitted. ${$(credit)} of referral credit was applied.`
+              : `Your ${productLabel} request has been submitted. Giro will trade with you in-game.`;
+          }
           buyBtn.textContent = 'Request In Progress';
-          buyStatus.textContent = `Your ${productLabel} request has been submitted. Giro will trade with you in-game.`;
+          // The balance just got spent — refresh the Refer & Earn card + note.
+          renderPartnerCard();
 
           // Refresh history to show active deal
           const updatedHistory = await getPlayerTransactions(player.torn_id);
@@ -742,15 +755,28 @@ function renderActiveDeal(transactions) {
       : 'Trade complete — insurance window active';
     let details = `<div class="deal-status">${esc(statusLabel)}</div>`;
     details += `<div class="deal-detail">Price: ${$(activeTxn.suggested_price)}</div>`;
+    const creditApplied = Number(activeTxn.credit_applied || 0);
+    if (creditApplied > 0) {
+      details += `<div class="deal-detail" style="color:#4caf50">Referral credit applied: <strong>−${$(creditApplied)}</strong></div>`;
+    }
 
     // Payment section for requested transactions
     if (activeTxn.status === 'requested') {
       const isPackage = activeTxn.product_type === 'package';
       const amountPaid = Number(activeTxn.amount_paid || 0);
-      const owed = Number(activeTxn.suggested_price);
+      // Cash owed after referral credit (credit is never counted as cash paid)
+      const owed = Math.max(0, Number(activeTxn.suggested_price) - creditApplied);
       const balanceDue = owed - amountPaid;
 
-      if (isPackage) {
+      if (isPackage && owed === 0) {
+        // Package fully covered by credit: Giro still delivers the items by trade
+        details += `
+          <div class="payment-verify-section">
+            <p class="deal-detail">Fully paid with referral credit — nothing to send.</p>
+            <p class="deal-detail" style="opacity:0.7">Giro will trade your items to you in-game and activate your policy.</p>
+            <div id="payment-verify-status"></div>
+          </div>`;
+      } else if (isPackage) {
         // Package: client must initiate an in-game trade (operator delivers items)
         details += `
           <div class="payment-verify-section">
@@ -1094,6 +1120,35 @@ function renderTierLadder(cleanCount, config) {
 
 
 // --- Refer & Earn (referral partner program) ---
+// Partner balance is applied in full to the next policy (gateway decides the
+// real amount; this is only the preview under the buy button).
+let partnerCreditBalance = 0;
+let currentBuyPrice = 0;
+
+function renderBuyCreditNote() {
+  const buyStatus = document.getElementById('buy-status');
+  if (!buyStatus) return;
+  let note = document.getElementById('buy-credit-note');
+  if (!note) {
+    note = document.createElement('p');
+    note.id = 'buy-credit-note';
+    note.className = 'deal-detail';
+    note.style.color = '#4caf50';
+    buyStatus.insertAdjacentElement('afterend', note);
+  }
+  const credit = Math.min(partnerCreditBalance, currentBuyPrice);
+  if (credit <= 0) {
+    note.classList.add('hidden');
+    note.textContent = '';
+    return;
+  }
+  note.classList.remove('hidden');
+  const cash = currentBuyPrice - credit;
+  note.textContent = cash > 0
+    ? `Your referral balance of ${$(credit)} will be applied — you'll pay ${$(cash)}.`
+    : `Your referral balance covers this in full (${$(credit)}) — nothing to pay.`;
+}
+
 const PARTNER_STATUS_LABELS = { requested: 'awaiting payment', purchased: 'paid', closed_clean: 'paid', od_xanax: 'paid', od_ecstasy: 'paid', payout_sent: 'paid', rejected: 'expired' };
 
 async function renderPartnerCard() {
@@ -1111,6 +1166,9 @@ async function renderPartnerCard() {
     return;
   }
   section.classList.remove('hidden');
+
+  partnerCreditBalance = stats.partner ? Math.max(0, Number(stats.balance || 0)) : 0;
+  renderBuyCreditNote();
 
   if (!stats.partner) {
     body.innerHTML = `
@@ -1153,9 +1211,11 @@ async function renderPartnerCard() {
       <div class="deal-detail">Your share: <strong>${Math.round(p.margin_share * 100)}%</strong> of profit</div>
       <div class="deal-detail">Earned: <strong>${$(stats.earned)}</strong></div>
       <div class="deal-detail">Paid to you: <strong>${$(stats.paid)}</strong></div>
-      <div class="deal-detail">Balance owed: <strong>${$(stats.balance)}</strong></div>
+      ${Number(stats.credit_used || 0) > 0 ? `<div class="deal-detail">Spent on your policies: <strong>${$(stats.credit_used)}</strong></div>` : ''}
+      <div class="deal-detail">Balance: <strong>${$(stats.balance)}</strong></div>
       <div class="deal-detail">Awaiting client payment: <strong>${$(stats.pending)}</strong></div>
     </div>
+    ${Number(stats.balance) > 0 ? '<p class="deal-detail" style="opacity:0.75">Your balance is applied automatically to your next policy. Anything left over stays here for Giro to pay out.</p>' : ''}
     ${policies ? `<details class="items-used-diag" style="margin-top:0.75rem"><summary>Referred policies (${stats.policies.length})</summary>
       <table class="history-table"><thead><tr><th>Date</th><th>Client</th><th>Status</th><th>Commission</th></tr></thead><tbody>${policies}</tbody></table>
     </details>` : ''}`;
