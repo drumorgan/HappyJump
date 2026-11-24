@@ -1,5 +1,5 @@
 import { supabase } from './supabaseClient.js';
-import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect, adminListPartners, adminUpdatePartner, adminSetOperatorKey, adminTestOperatorKey, adminScanPartnerPayments, adminRecordPartnerPayment } from './api.js';
+import { fetchMarketPrices, updateConfig, adminUpdateStatus, getAvailability, adminUpdateClient, adminRejectAndBlock, testApiAccess, adminCheckEcstasy, adminCheckPayment, adminTestDrugCheck, adminTestOdVerify, adminDetectHappyItems, adminActiveConsumed, adminAutoDetect, adminListPartners, adminUpdatePartner, adminSetOperatorKey, adminTestOperatorKey, adminScanPartnerPayments, adminRecordPartnerPayment, adminCheckPackageTrade } from './api.js';
 import { esc, $, getStatusPillClass, formatStatus, showToast as _showToast } from './utils.js';
 
 // --- DOM refs ---
@@ -288,9 +288,10 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         actionsHtml = `<div class="collect-banner">Collect: ${$(cash)}${credit > 0
             ? ` <span style="opacity:0.8">(${$(credit)} referral credit applied${cash === 0 ? ' — just deliver' : ''})</span>` : ''}</div>
           ${expiryHtml}
-          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>
+          <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-product="${esc(t.product_type || 'package')}" data-action="purchased">Mark Purchased</button>
           <button class="btn-reject" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="rejected">Reject</button>
-          <button class="btn-reject-block" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-reject-block="true">Reject &amp; Block</button>`;
+          <button class="btn-reject-block" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-reject-block="true">Reject &amp; Block</button>
+          <div class="trade-check-result" id="trade-check-${t.id}"></div>`;
         break;
       }
       case 'purchased':
@@ -567,7 +568,47 @@ async function handleAutoDetect(txnId, btn) {
   btn.textContent = orig;
 }
 
-async function handleAction(txnId, tornId, newStatus, btn) {
+// La Bella Vita: before Mark Purchased, check Giro's log for the cash that
+// came in from the client. Returns true to go ahead, false to stop and let the
+// admin decide from the inline panel (which has a "Mark Purchased anyway").
+async function checkPackageTradeFirst(txnId, tornId, btn) {
+  const panel = document.getElementById(`trade-check-${txnId}`);
+  const orig = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = 'Checking trade…';
+  let res;
+  try {
+    res = await adminCheckPackageTrade(txnId);
+  } catch (err) {
+    res = { ok: false, enough: false, detail: `Trade check failed: ${err.message}` };
+  }
+  if (res.ok && res.enough) {
+    showToast(res.detail || 'Trade verified', 'success');
+    return true;
+  }
+  btn.disabled = false;
+  btn.textContent = orig;
+  if (!panel) {
+    showToast(res.detail || 'Trade not verified', 'error');
+    return false;
+  }
+  const rows = (list, withAmount) => (list || []).map((e) => `<li>${esc(new Date(e.at).toLocaleString())} — ${esc(e.title)}${withAmount ? ` — <strong>${$(e.amount)}</strong>` : ''}<br><span style="opacity:0.7;font-size:0.85em">${esc(e.data)}</span></li>`).join('');
+  panel.innerHTML = `
+    <div class="items-used-msg" style="color:#e8a735;margin-top:0.5rem">${esc(res.detail || 'Trade not verified')}</div>
+    ${res.matched?.length ? `<details class="items-used-diag"><summary>Money counted (${res.matched.length})</summary><ul>${rows(res.matched, true)}</ul></details>` : ''}
+    ${res.other_entries?.length ? `<details class="items-used-diag"><summary>Other log entries with this player (${res.other_entries.length})</summary><ul>${rows(res.other_entries, false)}</ul></details>` : ''}
+    <button class="btn-purchase trade-check-force" style="margin-top:0.5rem">Mark Purchased anyway</button>`;
+  panel.querySelector('.trade-check-force').onclick = (e) => {
+    panel.innerHTML = '';
+    handleAction(txnId, tornId, 'purchased', btn, { skipTradeCheck: true });
+  };
+  return false;
+}
+
+async function handleAction(txnId, tornId, newStatus, btn, opts = {}) {
+  if (newStatus === 'purchased' && btn.dataset.product === 'package' && !opts.skipTradeCheck) {
+    if (!(await checkPackageTradeFirst(txnId, tornId, btn))) return;
+  }
   btn.disabled = true;
   btn.textContent = 'Updating...';
 
