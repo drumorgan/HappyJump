@@ -337,6 +337,20 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       consumedHtml = `<details class="txn-consumed"><summary>Replacement package to send — ${$(ci.total)}</summary><ul>${lines.join('')}</ul></details>`;
     }
 
+    // Bella Vita (package) requests: the operator supplies the drugs, so show
+    // the exact in-game items to send alongside the Collect amount. Legacy rows
+    // with no product_type render as Bella Vita too (matches the badge logic).
+    const isPackage = !['ecstasy_only', 'xanax_only', 'insurance'].includes(t.product_type);
+    let sendItemsHtml = '';
+    if (isPackage && t.status === 'requested') {
+      const costInfo = t.package_cost ? ` — cost ${$(t.package_cost)}` : '';
+      sendItemsHtml = `<details class="txn-consumed" open><summary>Items to send client${costInfo}</summary><ul>
+        <li>4x Xanax</li>
+        <li>5x Erotic DVD</li>
+        <li>1x Ecstasy</li>
+      </ul></details>`;
+    }
+
     return `<div class="txn-card">
       <div class="txn-top">
         <div>
@@ -355,6 +369,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
         <span>${date}${closesInfo}${payoutInfo}</span>
       </div>
       ${consumedHtml}
+      ${sendItemsHtml}
       ${actionsHtml ? `<div class="txn-actions">${actionsHtml}</div>` : ''}
       ${t.status === 'purchased' || showsPayout ? `<div class="items-used-result" id="items-used-${t.id}"></div>` : ''}
     </div>`;
