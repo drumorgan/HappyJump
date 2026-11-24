@@ -81,6 +81,7 @@ A Happy Jump consumes: 4x Xanax, 5x Erotic DVDs, 1x Ecstasy. Any OD at any step 
   - **Balance is derived, never stored:** `earned − cash partner_payments − credit_applied on the partner's own policies in CREDIT_HELD_STATES (requested + paid states)`. Rejected/expired requests drop out, so credit returns automatically. Balance may go negative after a clawback; it nets against future commissions. `partnerBalance()` / `partnerStatsFor()` / `admin-list-partners` all use this formula.
   - **Activation:** non-package policies fully covered by credit are inserted directly as `purchased` (no verification needed). Partial credit → `verify-payment` checks cash against `cashDue`. **La Bella Vita (`package`) never self-activates** — `verify-payment` rejects package; Giro delivers drugs then clicks Mark Purchased.
   - **Money:** `amount_paid` is **cash only** (that's what folds into `current_reserve`). Every `amount_paid` backfill uses `cashDue()`, never raw `suggested_price`. Revenue stats still use `suggested_price`. Credit never touches the reserve (it was never cash out).
+  - **La Bella Vita trade check:** admin Mark Purchased on a `package` first calls `admin-check-package-trade`, which reads Giro's log (operator key) since the request and totals money IN from that player (titles with "incoming"/"receive", not "outgoing"; `data.money`/`data.amount`). If it's ≥ `cashDue` it proceeds; otherwise an inline panel shows the shortfall, the counted entries, other log entries involving the player (collapsible, for tuning the matcher), and a "Mark Purchased anyway" button. Warn-only, never blocks.
   - **Race guard:** unique partial index `uniq_transactions_one_open_deal` (one requested/purchased row per player); a 23505 on insert returns the "already have an active deal" error.
 
 ### Payout Trade Subject Lines
@@ -255,6 +256,7 @@ Displays: current package price, package contents, Xanax/Ecstasy OD payout amoun
 | `admin-test-operator-key` | Admin   | Check the operator key (secret or saved) works and can read the log |
 | `admin-scan-partner-payments` | Admin | Scan Giro's log for Send Money to partners; auto-record "commission" sends |
 | `admin-record-partner-payment` | Admin | Count an unmatched send as a commission payment |
+| `admin-check-package-trade` | Admin | Before Mark Purchased on La Bella Vita: total money received from the player in Giro's log vs cash due |
 
 ## Torn API Integration
 

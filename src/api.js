@@ -644,6 +644,10 @@ export async function adminScanPartnerPayments() {
   return gateway('admin-scan-partner-payments');
 }
 
+export async function adminCheckPackageTrade(txnId) {
+  return gateway('admin-check-package-trade', { txn_id: txnId });
+}
+
 export async function adminRecordPartnerPayment(send) {
   return gateway('admin-record-partner-payment', send);
 }
