@@ -283,7 +283,10 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
     switch (t.status) {
       case 'requested': {
         const expiryHtml = t.expires_at ? `<div class="request-expiry-timer" data-expires="${t.expires_at}"></div>` : '';
-        actionsHtml = `<div class="collect-banner">Collect: ${$(t.suggested_price)}</div>
+        const credit = Number(t.credit_applied || 0);
+        const cash = Math.max(0, Number(t.suggested_price || 0) - credit);
+        actionsHtml = `<div class="collect-banner">Collect: ${$(cash)}${credit > 0
+            ? ` <span style="opacity:0.8">(${$(credit)} referral credit applied${cash === 0 ? ' — just deliver' : ''})</span>` : ''}</div>
           ${expiryHtml}
           <button class="btn-purchase" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="purchased">Mark Purchased</button>
           <button class="btn-reject" data-id="${t.id}" data-torn-id="${esc(t.torn_id)}" data-action="rejected">Reject</button>
@@ -365,7 +368,7 @@ function renderTransactions(txns, clientsByTornId = new Map()) {
       </div>
       <div class="txn-meta">
         <span>Lvl ${t.torn_level || '?'}${faction}</span>
-        <span>Price: ${$(t.suggested_price)}</span>
+        <span>Price: ${$(t.suggested_price)}${Number(t.credit_applied || 0) > 0 ? ` (${$(t.credit_applied)} credit)` : ''}</span>
         <span>${date}${closesInfo}${payoutInfo}</span>
       </div>
       ${consumedHtml}
@@ -1432,6 +1435,7 @@ function renderPartners() {
           <span>Paid policies: ${p.paid_policies}</span>
           <span>Pending: ${$(p.pending)}</span>
           <span>Paid out: ${$(p.paid)}</span>
+          ${Number(p.credit_used || 0) > 0 ? `<span>Credit spent on own policies: ${$(p.credit_used)}</span>` : ''}
           <span>Since: ${esc(new Date(p.created_at).toLocaleDateString())}</span>
         </div>
         <div class="partner-hint">Link: <code>${esc(link(p.torn_id))}</code></div>
