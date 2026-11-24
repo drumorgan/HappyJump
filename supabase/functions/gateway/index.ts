@@ -1457,7 +1457,7 @@ async function autoCloseExpired(supabase: any) {
   // Auto-close purchased transactions after 3 days
   const { data: expired } = await supabase
     .from('transactions')
-    .select('id, torn_id, torn_name, xanax_payout, ecstasy_payout, suggested_price, amount_paid')
+    .select('id, torn_id, torn_name, xanax_payout, ecstasy_payout, suggested_price, amount_paid, credit_applied')
     .eq('status', 'purchased')
     .lt('closes_at', nowIso);
 
@@ -1466,8 +1466,8 @@ async function autoCloseExpired(supabase: any) {
   for (const txn of expired) {
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
-    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
-      closeUpdate.amount_paid = txn.suggested_price;
+    if (Number(txn.amount_paid || 0) === 0 && cashDue(txn) > 0) {
+      closeUpdate.amount_paid = cashDue(txn);
     }
     await supabase
       .from('transactions')
@@ -2046,6 +2046,10 @@ async function handleCreateTransaction(body: any) {
   // otherwise a partner could file a throwaway request in a prospect's name
   // and claim them before they ever show up.
   let verifiedCallerId: string | null = null;
+  // Referral credit is also only spent when the buyer is verified — otherwise
+  // anyone could file a request in a partner's name and burn their balance.
+  const { data: buyerPartner } = await supabase
+    .from('partners').select('torn_id').eq('torn_id', String(torn_id)).maybeSingle();
   if (body.key || body.api_key || (body.player_id && body.session_token)) {
     const resolved = await resolveApiKey(body);
     // If auth was supplied but invalid (e.g. expired session), resolveApiKey
@@ -2054,8 +2058,8 @@ async function handleCreateTransaction(body: any) {
       livePrices = await fetchLiveItemPrices(resolved.key);
       if (resolved.torn_id) {
         verifiedCallerId = String(resolved.torn_id);
-      } else if (body.ref_code) {
-        // Raw key (no session): look up whose key it is, only when a ref is in play.
+      } else if (body.ref_code || buyerPartner) {
+        // Raw key (no session): look up whose key it is, only when a ref or credit is in play.
         const who = await fetch(`${TORN_API}/user/?selections=basic&key=${resolved.key}`)
           .then((r) => r.json()).catch(() => null);
         if (who && !who.error && who.player_id) verifiedCallerId = String(who.player_id);
@@ -2144,26 +2148,51 @@ async function handleCreateTransaction(body: any) {
     ? Math.max(0, Math.round((suggestedPrice - trueCost) * referral.share))
     : 0;
 
+  // Referral credit: a partner's full available balance is always applied,
+  // capped at the price. Only for a verified buyer.
+  let creditApplied = 0;
+  if (buyerPartner && verifiedCallerId === String(torn_id)) {
+    const bal = await partnerBalance(supabase, String(torn_id));
+    if (bal && bal.balance > 0) creditApplied = Math.min(bal.balance, suggestedPrice);
+  }
+  const cashOwed = suggestedPrice - creditApplied;
+
+  // Fully covered by credit → nothing to verify, so activate right away.
+  // La Bella Vita still waits for Giro to deliver the drugs and Mark Purchased.
+  const activateNow = cashOwed === 0 && productType !== 'package';
+  const nowIso = new Date().toISOString();
+
   // Insert transaction
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
     .insert({
       torn_id, torn_name, torn_faction, torn_level,
       product_type: productType,
-      status: 'requested',
+      status: activateNow ? 'purchased' : 'requested',
       package_cost: snapshotPackageCost,
       suggested_price: suggestedPrice,
       xanax_payout: snapshotXanaxPayout,
       ecstasy_payout: snapshotEcstasyPayout,
-      expires_at: new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      expires_at: activateNow ? null : new Date(Date.now() + 48 * 60 * 60 * 1000).toISOString(),
+      ...(activateNow ? {
+        purchased_at: nowIso,
+        closes_at: new Date(Date.now() + 3 * 24 * 60 * 60 * 1000).toISOString(),
+      } : {}),
       referrer_torn_id: referral?.partnerId ?? null,
       commission_share: referral?.share ?? null,
       commission_amount: commissionAmount,
+      credit_applied: creditApplied,
     })
-    .select('id, status, suggested_price, product_type')
+    .select('id, status, suggested_price, product_type, credit_applied, amount_paid, expires_at, purchased_at, closes_at')
     .single();
 
-  if (txnErr) return json({ error: txnErr.message }, 500);
+  if (txnErr) {
+    // uniq_transactions_one_open_deal (migration 021) — a second tap raced the check above.
+    if ((txnErr as any).code === '23505') {
+      return json({ error: 'You already have an active deal. Wait for it to close before purchasing again.' }, 400);
+    }
+    return json({ error: txnErr.message }, 500);
+  }
 
   // Lock worst-case liability from reserve for this new active sale (atomic)
   await adjustReserve(supabase, -reserveLock);
@@ -2198,12 +2227,20 @@ async function handleCreateTransaction(body: any) {
       `Product: ${productLabel}`,
       ``,
       `Price: ${formatMoney(suggestedPrice)}`,
+      ...(creditApplied > 0 ? [
+        `Referral credit applied: ${formatMoney(creditApplied)}`,
+        `Cash to collect: ${formatMoney(cashOwed)}`,
+      ] : []),
       ...(referral ? [`Referred by: [${referral.partnerId}] — commission ${formatMoney(commissionAmount)} once paid`] : []),
       ...(productType === 'package' ? [`Drug Cost: ${formatMoney(packageCost)}`] : [`Insurance Only — no drug cost`]),
       ``,
       `Transaction ID: ${txn.id}`,
       ``,
-      `Log in to the admin dashboard to mark as purchased.`,
+      activateNow
+        ? `Paid in full with referral credit — auto-activated. 3-day insurance window is running.`
+        : productType === 'package'
+        ? `Deliver the drugs in-game, then Mark Purchased in the admin dashboard.`
+        : `Activates automatically when the client verifies payment (or Mark Purchased in admin).`,
     ].join('\n'),
   );
   console.log('[create-transaction] Email send completed');
@@ -2227,7 +2264,7 @@ async function handleGetPlayerTransactions(body: any) {
   const [txnResult, clientResult] = await Promise.all([
     supabase
       .from('transactions')
-      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, amount_paid, purchased_at, closes_at, closed_at, created_at')
+      .select('id, status, product_type, package_cost, suggested_price, xanax_payout, ecstasy_payout, payout_amount, amount_paid, credit_applied, purchased_at, closes_at, closed_at, created_at')
       .eq('torn_id', String(torn_id))
       .order('created_at', { ascending: false }),
     supabase
@@ -2328,7 +2365,7 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // Always fetch torn_id from the transaction itself (don't rely on request body)
   const { data: txnRecord, error: fetchErr } = await supabase
     .from('transactions')
-    .select('torn_id, torn_name, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout, payout_amount')
+    .select('torn_id, torn_name, status, product_type, suggested_price, amount_paid, credit_applied, xanax_payout, ecstasy_payout, payout_amount')
     .eq('id', txn_id)
     .single();
 
@@ -2360,8 +2397,8 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
     // verify-payment only catches Torn-trade money sends; out-of-band payments (faction
     // bank, friend pays, in-person trade) leave amount_paid at 0. Operator wouldn't mark
     // Purchased without payment received, so backfill amount_paid to suggested_price.
-    if (Number(txnRecord.amount_paid || 0) === 0 && txnRecord.suggested_price) {
-      updates.amount_paid = txnRecord.suggested_price;
+    if (Number(txnRecord.amount_paid || 0) === 0 && cashDue(txnRecord) > 0) {
+      updates.amount_paid = cashDue(txnRecord);
     }
   }
 
@@ -2370,8 +2407,8 @@ async function handleAdminUpdateStatus(req: Request, body: any) {
   // rejected stays at 0 — that's the truthful no-payment-received state.
   if ((new_status === 'closed_clean' || new_status === 'payout_sent')
       && Number(txnRecord.amount_paid || 0) === 0
-      && txnRecord.suggested_price) {
-    updates.amount_paid = txnRecord.suggested_price;
+      && cashDue(txnRecord) > 0) {
+    updates.amount_paid = cashDue(txnRecord);
   }
 
   // Determine reserve transition direction
@@ -2701,7 +2738,7 @@ async function handleReportOd(body: any) {
   // Get the transaction and verify ownership
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, closes_at, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout')
+    .select('id, torn_id, purchased_at, closes_at, status, product_type, suggested_price, amount_paid, credit_applied, xanax_payout, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -2849,8 +2886,8 @@ async function handleReportOd(body: any) {
     const nowIso = new Date().toISOString();
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
-    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
-      closeUpdate.amount_paid = txn.suggested_price;
+    if (Number(txn.amount_paid || 0) === 0 && cashDue(txn) > 0) {
+      closeUpdate.amount_paid = cashDue(txn);
     }
     await supabase
       .from('transactions')
@@ -3071,7 +3108,7 @@ async function handleCheckDrugUsage(body: any) {
 
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, purchased_at, status, product_type, suggested_price, amount_paid, xanax_payout, ecstasy_payout')
+    .select('id, torn_id, purchased_at, status, product_type, suggested_price, amount_paid, credit_applied, xanax_payout, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
@@ -3137,8 +3174,8 @@ async function handleCheckDrugUsage(body: any) {
   if ((ecstasyUsed && !isXanaxOnly) || xanaxOnlyDone) {
     const closeUpdate: Record<string, unknown> = { status: 'closed_clean', closed_at: nowIso };
     // Defensive backstop for legacy purchased rows where amount_paid never got filled.
-    if (Number(txn.amount_paid || 0) === 0 && txn.suggested_price) {
-      closeUpdate.amount_paid = txn.suggested_price;
+    if (Number(txn.amount_paid || 0) === 0 && cashDue(txn) > 0) {
+      closeUpdate.amount_paid = cashDue(txn);
     }
     await supabase
       .from('transactions')
@@ -3631,6 +3668,34 @@ async function handleAdminAutoDetect(req: Request, body: any) {
 // Statuses where the client has paid — commission on these is owed. Requested
 // is pending; rejected (incl. expired requests) never owes anything.
 const COMMISSION_OWED_STATES = ['purchased', 'od_xanax', 'od_ecstasy', 'closed_clean', 'payout_sent'];
+// Referral credit spent on a partner's own policy counts against their balance
+// while the policy is requested (held) or paid (spent). Rejected / expired
+// policies drop out, so their credit returns automatically.
+const CREDIT_HELD_STATES = ['requested', ...COMMISSION_OWED_STATES];
+
+// Cash the buyer owes Giro: price minus any referral credit applied.
+function cashDue(txn: any): number {
+  return Math.max(0, Number(txn.suggested_price || 0) - Number(txn.credit_applied || 0));
+}
+
+// A partner's commission balance: earned − cash paid − credit spent on their
+// own policies. Can go negative if a referred policy is clawed back after the
+// credit was spent; that just nets against future commissions.
+async function partnerBalance(supabase: any, tornId: string) {
+  const [{ data: partner }, { data: earnedRows }, { data: payments }, { data: creditRows }] = await Promise.all([
+    supabase.from('partners').select('torn_id').eq('torn_id', tornId).maybeSingle(),
+    supabase.from('transactions').select('commission_amount')
+      .eq('referrer_torn_id', tornId).in('status', COMMISSION_OWED_STATES),
+    supabase.from('partner_payments').select('amount').eq('partner_torn_id', tornId),
+    supabase.from('transactions').select('credit_applied')
+      .eq('torn_id', tornId).gt('credit_applied', 0).in('status', CREDIT_HELD_STATES),
+  ]);
+  if (!partner) return null;
+  const earned = (earnedRows || []).reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
+  const paid = (payments || []).reduce((s: number, p: any) => s + Number(p.amount || 0), 0);
+  const creditUsed = (creditRows || []).reduce((s: number, t: any) => s + Number(t.credit_applied || 0), 0);
+  return { earned, paid, creditUsed, balance: earned - paid - creditUsed };
+}
 
 // Resolve the caller's Torn identity from a key or HJ session.
 async function identifyCaller(body: any): Promise<{ tornId: string; name: string } | Response> {
@@ -3643,7 +3708,7 @@ async function identifyCaller(body: any): Promise<{ tornId: string; name: string
 }
 
 async function partnerStatsFor(supabase: any, tornId: string) {
-  const [{ data: partner }, { data: txns }, { data: payments }, { count: clientCount }] = await Promise.all([
+  const [{ data: partner }, { data: txns }, { data: payments }, { count: clientCount }, { data: creditRows }] = await Promise.all([
     supabase.from('partners').select('torn_id, torn_name, margin_share, active, created_at').eq('torn_id', tornId).maybeSingle(),
     supabase.from('transactions')
       .select('torn_id, torn_name, product_type, status, created_at, commission_amount')
@@ -3654,8 +3719,11 @@ async function partnerStatsFor(supabase: any, tornId: string) {
       .eq('partner_torn_id', tornId)
       .order('sent_at', { ascending: false }),
     supabase.from('clients').select('torn_id', { count: 'exact', head: true }).eq('referred_by', tornId),
+    supabase.from('transactions').select('credit_applied')
+      .eq('torn_id', tornId).gt('credit_applied', 0).in('status', CREDIT_HELD_STATES),
   ]);
   if (!partner) return null;
+  const creditUsed = (creditRows || []).reduce((s: number, t: any) => s + Number(t.credit_applied || 0), 0);
 
   const rows = txns || [];
   const earned = rows
@@ -3672,7 +3740,8 @@ async function partnerStatsFor(supabase: any, tornId: string) {
     earned,
     pending,
     paid,
-    balance: earned - paid,
+    credit_used: creditUsed,
+    balance: earned - paid - creditUsed,
     policies: rows.slice(0, 50).map((t: any) => ({
       torn_name: t.torn_name,
       product_type: t.product_type,
@@ -3720,15 +3789,19 @@ async function handleAdminListPartners(req: Request) {
   if (!user) return json({ error: 'Not authenticated' }, 401);
   const supabase = serviceClient();
 
-  const [{ data: partners }, { data: txns }, { data: payments }, { data: clients }, { data: op }] = await Promise.all([
+  const [{ data: partners }, { data: txns }, { data: payments }, { data: clients }, { data: op }, { data: creditRows }] = await Promise.all([
     supabase.from('partners').select('torn_id, torn_name, margin_share, active, created_at').order('created_at'),
     supabase.from('transactions').select('referrer_torn_id, status, commission_amount').not('referrer_torn_id', 'is', null),
     supabase.from('partner_payments').select('partner_torn_id, amount, sent_at, matched_by, log_id').order('sent_at', { ascending: false }),
     supabase.from('clients').select('referred_by').not('referred_by', 'is', null),
     supabase.from('operator_secrets').select('torn_id, torn_name, updated_at').eq('id', 1).maybeSingle(),
+    supabase.from('transactions').select('torn_id, credit_applied')
+      .gt('credit_applied', 0).in('status', CREDIT_HELD_STATES),
   ]);
 
   const list = (partners || []).map((p: any) => {
+    const creditUsed = (creditRows || []).filter((t: any) => String(t.torn_id) === String(p.torn_id))
+      .reduce((s: number, t: any) => s + Number(t.credit_applied || 0), 0);
     const mine = (txns || []).filter((t: any) => t.referrer_torn_id === p.torn_id);
     const earned = mine.filter((t: any) => COMMISSION_OWED_STATES.includes(t.status))
       .reduce((s: number, t: any) => s + Number(t.commission_amount || 0), 0);
@@ -3741,7 +3814,7 @@ async function handleAdminListPartners(req: Request) {
       margin_share: Number(p.margin_share),
       referred_clients: (clients || []).filter((c: any) => c.referred_by === p.torn_id).length,
       paid_policies: mine.filter((t: any) => COMMISSION_OWED_STATES.includes(t.status)).length,
-      earned, pending, paid, balance: earned - paid,
+      earned, pending, paid, credit_used: creditUsed, balance: earned - paid - creditUsed,
       payments: pays.slice(0, 20).map((x: any) => ({ ...x, amount: Number(x.amount) })),
     };
   });
@@ -3958,13 +4031,18 @@ async function handleVerifyPayment(body: any) {
   // Get the transaction and verify ownership
   const { data: txn, error: txnErr } = await supabase
     .from('transactions')
-    .select('id, torn_id, status, suggested_price, amount_paid, created_at, ecstasy_payout')
+    .select('id, torn_id, status, product_type, suggested_price, credit_applied, amount_paid, created_at, ecstasy_payout')
     .eq('id', txn_id)
     .single();
 
   if (txnErr || !txn) return json({ error: 'Transaction not found' }, 404);
   if (txn.torn_id !== tornId) return json({ error: 'This transaction does not belong to you' }, 403);
   if (txn.status !== 'requested') return json({ error: 'Transaction is not awaiting payment' }, 400);
+  // La Bella Vita only activates when Giro delivers the drugs and marks it
+  // purchased — never self-serve, even when referral credit covers the price.
+  if (txn.product_type === 'package') {
+    return json({ error: 'La Bella Vita activates once Giro delivers your items in-game.' }, 400);
+  }
 
   // Operator identity — used to match client's "You sent $X to GiroVagabondo" events
   const operatorName = 'GiroVagabondo';
@@ -4016,7 +4094,10 @@ async function handleVerifyPayment(body: any) {
     toParam = `&to=${oldestTs - 1}`;
   }
 
-  const expectedAmount = Number(txn.suggested_price);
+  // Cash owed after any referral credit. Credit is never counted as cash.
+  const expectedAmount = cashDue(txn);
+  const creditApplied = Number(txn.credit_applied || 0);
+  const creditNote = creditApplied > 0 ? ` (after ${formatMoney(creditApplied)} referral credit)` : '';
   const previouslyPaid = Number(txn.amount_paid || 0);
   let totalPaid = 0;
   const matchedEvents: string[] = [];
@@ -4079,8 +4160,8 @@ async function handleVerifyPayment(body: any) {
     matchedEvents.push(evtText);
   }
 
-  // No payments found at all
-  if (totalPaid === 0) {
+  // No payments found at all (a zero cash balance needs none)
+  if (totalPaid === 0 && expectedAmount > 0) {
     const evtCount = eventsData.events ? Object.keys(eventsData.events).length : 0;
     const logCount = allLogEntries.length;
     const diag = `[events: ${evtCount}, log: ${logCount}]`;
@@ -4114,7 +4195,7 @@ async function handleVerifyPayment(body: any) {
       amount_paid: totalPaid,
       balance_due: balanceDue,
       suggested_price: expectedAmount,
-      detail: `You've paid ${formatMoney(totalPaid)} of ${formatMoney(expectedAmount)}. Balance due: ${formatMoney(balanceDue)}.`,
+      detail: `You've paid ${formatMoney(totalPaid)} of ${formatMoney(expectedAmount)}${creditNote}. Balance due: ${formatMoney(balanceDue)}.`,
     });
   }
 
@@ -4151,7 +4232,7 @@ async function handleVerifyPayment(body: any) {
       `Payment auto-verified via Torn API events!`,
       ``,
       `Player: ${identData.name} [${tornId}]`,
-      `Amount paid: ${formatMoney(totalPaid)} (owed: ${formatMoney(expectedAmount)})${overpaidNote}`,
+      `Amount paid: ${formatMoney(totalPaid)} (owed: ${formatMoney(expectedAmount)}${creditNote})${overpaidNote}`,
       `Events: ${matchedEvents.join(' | ')}`,
       ``,
       `Transaction ID: ${txn_id}`,
@@ -4165,7 +4246,9 @@ async function handleVerifyPayment(body: any) {
   return json({
     verified: true,
     torn_id: tornId,
-    detail: `Payment of ${formatMoney(totalPaid)} verified! Your 3-day insurance window is now active.`,
+    detail: totalPaid > 0
+      ? `Payment of ${formatMoney(totalPaid)} verified${creditNote}! Your 3-day insurance window is now active.`
+      : `Paid in full with referral credit! Your 3-day insurance window is now active.`,
   });
 }
 
