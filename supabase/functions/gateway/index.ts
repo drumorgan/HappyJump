@@ -3860,6 +3860,96 @@ async function getOperatorKey(supabase: any): Promise<{ key: string; source: 'se
   return key ? { key, source: 'saved' } : null;
 }
 
+// Before Mark Purchased on a La Bella Vita request: read Giro's log since the
+// request was made and total the money that came IN from that player (trade
+// money incoming, or a plain Send Money). Warn-only — the admin can still mark
+// purchased. Entries that involve the player but weren't counted are returned
+// so the admin can eyeball them (and so the matcher can be tuned if Torn's
+// log wording differs).
+async function handleAdminCheckPackageTrade(req: Request, body: any) {
+  const user = await requireAuth(req);
+  if (!user) return json({ error: 'Not authenticated' }, 401);
+  const { txn_id } = body;
+  if (!txn_id) return json({ error: 'Missing txn_id' }, 400);
+  const supabase = serviceClient();
+
+  const { data: txn } = await supabase
+    .from('transactions')
+    .select('id, torn_id, torn_name, status, product_type, suggested_price, credit_applied, created_at')
+    .eq('id', txn_id).maybeSingle();
+  if (!txn) return json({ error: 'Transaction not found' }, 404);
+
+  const due = cashDue(txn);
+  const credit = Number(txn.credit_applied || 0);
+  const base = { due, credit, received: 0, enough: due === 0, matched: [] as any[], other_entries: [] as any[], scanned: 0 };
+  if (due === 0) return json({ ...base, ok: true, detail: 'Fully covered by referral credit — no cash to collect.' });
+
+  const op = await getOperatorKey(supabase);
+  if (!op) return json({ ...base, ok: false, detail: 'No operator Torn key, so the trade could not be checked. Add OPERATOR_TORN_KEY in Supabase or save a key in the Partners tab.' });
+
+  const clientId = String(txn.torn_id);
+  // 5 min of slack before the request in case they set the trade up early.
+  const fromTs = Math.floor(new Date(txn.created_at).getTime() / 1000) - 300;
+  let received = 0;
+  let toParam = '';
+  let scanError: string | null = null;
+
+  for (let page = 0; page < 10; page++) {
+    const data = await fetch(`${TORN_API}/user/?selections=log&from=${fromTs}${toParam}&key=${op.key}`)
+      .then((r) => r.json()).catch(() => ({ error: { error: 'network error' } }));
+    if (data.error || !data.log) {
+      if (page === 0) scanError = data.error ? `Torn: ${data.error.error}` : 'Torn returned no log data';
+      break;
+    }
+    const entries = Object.entries(data.log) as [string, any][];
+    if (entries.length === 0) break;
+    base.scanned += entries.length;
+
+    for (const [logId, entry] of entries) {
+      const d = entry.data || {};
+      const p = entry.params || {};
+      const involvesClient = [...Object.values(d), ...Object.values(p)].some((v) => String(v) === clientId);
+      if (!involvesClient) continue;
+
+      const title = String(entry.title || entry.log || '');
+      const t = title.toLowerCase();
+      const row = {
+        log_id: String(logId),
+        title,
+        data: JSON.stringify(d).substring(0, 200),
+        at: new Date((entry.timestamp || 0) * 1000).toISOString(),
+      };
+      const incoming = (t.includes('incoming') || t.includes('receive')) && !t.includes('outgoing');
+      const money = Number(d.money ?? d.amount ?? 0);
+      if (incoming && money > 0) {
+        received += money;
+        base.matched.push({ ...row, amount: money });
+      } else if (base.other_entries.length < 15) {
+        base.other_entries.push(row);
+      }
+    }
+
+    const oldest = Math.min(...entries.map(([, e]) => e.timestamp || Infinity));
+    if (entries.length < 100 || oldest <= fromTs) break;
+    toParam = `&to=${oldest - 1}`;
+  }
+
+  if (scanError) return json({ ...base, ok: false, detail: `Couldn't read your log (${scanError}).` });
+
+  const enough = received >= due;
+  return json({
+    ...base,
+    ok: true,
+    received,
+    enough,
+    detail: enough
+      ? `Found ${formatMoney(received)} from ${txn.torn_name} — covers the ${formatMoney(due)} due.`
+      : received > 0
+      ? `Only found ${formatMoney(received)} from ${txn.torn_name}; ${formatMoney(due)} is due (short ${formatMoney(due - received)}).`
+      : `No money from ${txn.torn_name} found in your log since the request. ${formatMoney(due)} is due.`,
+  });
+}
+
 // Admin "Test Key": confirm the operator key works and can read the log.
 async function handleAdminTestOperatorKey(req: Request) {
   const user = await requireAuth(req);
@@ -6791,6 +6881,8 @@ serve(async (req) => {
         return await handleAdminScanPartnerPayments(req);
       case 'admin-record-partner-payment':
         return await handleAdminRecordPartnerPayment(req, body);
+      case 'admin-check-package-trade':
+        return await handleAdminCheckPackageTrade(req, body);
       case 'admin-auto-detect':
         return await handleAdminAutoDetect(req, body);
       case 'create-faction-event':
